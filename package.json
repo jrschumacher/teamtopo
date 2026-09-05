@@ -1,0 +1,25 @@
+{
+  "name": "teamtopo",
+  "version": "0.1.0",
+  "description": "A Mermaid-like text syntax and SVG renderer for Team Topologies diagrams",
+  "type": "module",
+  "main": "src/teamtopo.js",
+  "bin": {
+    "teamtopo": "src/cli.js"
+  },
+  "scripts": {
+    "test": "node --test src/*.test.js",
+    "build": "node build.js",
+    "examples": "node build.js --examples"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jrschumacher/teamtopo.git"
+  },
+  "files": [
+    "src",
+    "examples"
+  ],
+  "exports": "./src/teamtopo.js"
+}

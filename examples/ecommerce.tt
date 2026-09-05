@@ -1,0 +1,26 @@
+teamTopology
+  title E-commerce product organisation
+  flow Flow of change
+  legend
+
+  %% Stream-aligned teams own a slice of the product end to end
+  stream   checkout   "Checkout"            [size=7]
+  stream   search     "Search & Discovery"  [size=6]
+  stream   accounts   "Accounts & Identity" [size=5]
+
+  %% Enabling teams lift the capability of stream teams, then move on
+  enabling devex      "Developer Experience"
+
+  %% Complicated subsystems need deep specialist knowledge
+  subsystem ranking   "Ranking Engine" [note="ML relevance model"]
+
+  %% Platforms reduce cognitive load for the teams above
+  platform  infra     "Infrastructure Platform" [note="Kubernetes, CI, observability"]
+  platform  payments  "Payments Platform"
+
+  %% Interactions
+  infra    --> checkout, search, accounts : Kubernetes & CI
+  payments --> checkout                   : Payments API
+  ranking  --> search                     : Ranking API
+  search   <--> ranking                   : new signals
+  devex    ~~> checkout, accounts         : CI pipelines

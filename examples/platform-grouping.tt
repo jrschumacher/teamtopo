@@ -1,0 +1,23 @@
+teamTopology
+  title Platform grouping
+  flow
+
+  stream mobile "Mobile App"
+  stream web    "Web Storefront"
+  enabling sre  "SRE Coaching"
+
+  %% A platform can itself be a topology of teams
+  platform cloud "Cloud Platform" {
+    stream    k8s   "Kubernetes"
+    stream    obs   "Observability"
+    subsystem net   "Network Fabric"
+    platform  bare  "Bare-metal Fleet"
+
+    bare --> k8s, obs
+    net  --> k8s : overlay networking
+  }
+
+  k8s --> mobile, web       : runtime
+  obs --> mobile, web       : dashboards & alerts
+  sre ~~> web               : incident reviews
+  mobile <--> web           : shared design system

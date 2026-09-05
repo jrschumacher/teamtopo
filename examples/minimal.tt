@@ -1,0 +1,4 @@
+teamTopology
+  stream app "Product Team"
+  platform infra "Platform"
+  infra --> app
