@@ -88,7 +88,18 @@ facilitating overlap. Unlabelled wedges read "XaaS" and unlabelled parallelogram
 "Collaboration", as they do in the reference diagrams.
 
 Either side may be a comma-separated list: `infra --> checkout, search, accounts`.
-A label follows a colon: `infra --> checkout : Kubernetes API`.
+A label follows a colon: `infra --> checkout : Kubernetes API`. Quote the label if it
+contains `[`. Attributes come last in square brackets:
+
+| Attribute | Effect |
+|---|---|
+| `[duration="until Q3"]` | fills the Duration column of the Team API tables |
+| `[soon]` (or `[expected]`) | an interaction expected soon: drawn dashed and faded, listed under "teams we expect to interact with soon" |
+
+```
+devex ~~> checkout : CI pipelines [duration="until Q3"]
+search <--> accounts : personalised results [soon, duration="8 weeks"]
+```
 
 ### Directives
 
@@ -97,6 +108,23 @@ A label follows a colon: `infra --> checkout : Kubernetes API`.
 | `title Text` | diagram title |
 | `flow [Text]` | flow-of-change arrow across the top (default text "Flow of change") |
 | `legend` | key for shapes and interaction modes |
+
+### Team API blocks
+
+```
+api checkout {
+  focus: the checkout experience end to end
+  software: checkout-service, cart-ui
+  SLE: 99.9% availability, p95 < 300 ms
+  chat: #checkout #checkout-alerts
+  working on: migrating to the new payments API
+}
+```
+
+An `api` block holds the [Team API](#team-api) fields the diagram cannot infer, as
+`field: value` lines. Field names are matched loosely (`SLE`, `sle`, `Service Level
+Expectations` all work; the full list is in `TEAM_API_FIELDS`). Inside an `api` block
+only `%%` starts a comment, so URLs with `//` survive.
 
 ### Errors
 
@@ -138,14 +166,46 @@ Team Topologies book, so the domain does most of the work:
 To keep a subsystem or enabling team on the lanes it belongs with, declare it in the
 same block as those lanes.
 
+## Team API
+
+Team Topologies suggests every team publish a *Team API*: a short document telling
+other teams how to interact with it (book pp. 47-49). The
+[Team-API-template](https://github.com/TeamTopologies/Team-API-template) repository
+gives it a standard shape. A diagram already knows most of what that template asks
+for, so `teamtopo` generates one document per team from the diagram:
+
+```bash
+node src/cli.js --api examples/ecommerce.tt                  # every team, Markdown
+node src/cli.js --api --team checkout examples/ecommerce.tt  # one team
+```
+
+| Template field | Where it comes from |
+|---|---|
+| Team name and focus | the team's label, plus `focus` from its `api` block |
+| Team type | the team keyword |
+| Part of a Platform? | whether the team is declared inside a `platform { }` block, plus `platform` from the `api` block |
+| Do we provide a service to other teams? | outgoing `-->` interactions and their labels, plus `service` |
+| Service Level Expectations, software, versioning, wiki, chat, sync | the `api` block (`sle`, `software`, `versioning`, `wiki`, `chat`, `sync`) |
+| What we're currently working on | `working on`, `ways of working`, `improvements` |
+| Teams we currently interact with | every interaction touching the team: the other team, the mode with direction ("we provide" / "we consume", "we facilitate" / "they facilitate us"), the label as Purpose, and `duration` |
+| Teams we expect to interact with soon | the same, for interactions marked `[soon]` |
+
+Fields the diagram cannot fill stay blank, so the output is still a fillable template.
+In the playground, click any team to see its Team API and copy the Markdown.
+
+The document layout follows the Team API template by Team Topologies, licensed
+[CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).
+
 ## API
 
 ```js
-import { parse, layout, render } from './src/teamtopo.js';
+import { parse, layout, render, teamApi, teamApis } from './src/teamtopo.js';
 
 const model = parse(source);              // { title, flow, legend, nodes, teams, interactions, index }
 const lay = layout(model);                // { width, height, boxes, edges, ... }
 const svg = render(source, { theme: 'dark' });   // or render(model, opts)
+const md = teamApi(model, 'checkout', { date: '2026-01-02' });   // one Team API document
+const all = teamApis(model);              // [{ id, label, markdown }] for every team
 ```
 
 `render` options: `theme` (`'light'`, `'dark'`, or a theme object), `legend` (override the

@@ -19,8 +19,25 @@ teamTopology
   platform  payments  "Payments Platform"
 
   %% Interactions
-  infra    --> checkout, search, accounts : Kubernetes & CI
+  infra    --> checkout, search, accounts : Kubernetes & CI [duration=ongoing]
   payments --> checkout                   : Payments API
   ranking  --> search                     : Ranking API
   search   <--> ranking                   : new signals
-  devex    ~~> checkout, accounts         : CI pipelines
+  devex    ~~> checkout, accounts         : CI pipelines [duration="until Q3"]
+
+  %% Expected soon: drawn dashed, listed under "teams we expect to interact with soon"
+  search <--> accounts : personalised results [soon, duration="8 weeks"]
+
+  %% Team API fields the diagram cannot infer (see the Team API panel / --api)
+  api checkout {
+    focus: the checkout experience end to end
+    software: checkout-service, cart-ui
+    SLE: 99.9% availability, p95 < 300 ms
+    versioning: semver, two releases of deprecation notice
+    wiki: checkout, cart, basket
+    chat: #checkout #checkout-alerts
+    sync: 09:30 UTC
+    working on: migrating to the new payments API
+    ways of working: trunk-based development, pairing on Tuesdays
+    improvements: shared on-call rotation with Accounts
+  }

@@ -239,6 +239,32 @@
   }
   .canvas.fit svg { max-width: 100%; height: auto; }
   .canvas .empty { color: var(--muted); padding: 40px; text-align: center; }
+  .canvas .tt-node, .canvas .tt-frame { cursor: pointer; }
+  .canvas .tt-node.selected > :not(title):not(text), .canvas .tt-frame.selected > rect:first-of-type { filter: drop-shadow(0 0 0 var(--accent)) drop-shadow(0 0 3px var(--accent)); }
+
+  /* ── team api ── */
+  details.api { border-top: 1px solid var(--border); background: var(--surface); }
+  details.api summary {
+    cursor: pointer; list-style: none; padding: 7px 14px;
+    display: flex; align-items: center; gap: 10px;
+    font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; font-weight: 500; color: var(--muted);
+  }
+  details.api summary::-webkit-details-marker { display: none; }
+  details.api summary::before { content: "▸"; font-size: 10px; }
+  details.api[open] summary::before { content: "▾"; }
+  details.api summary .spacer { flex: 1; }
+  details.api summary select, details.api summary .btn { text-transform: none; letter-spacing: 0; font-size: 12px; height: 26px; }
+  .api-body { max-height: 42vh; overflow: auto; padding: 6px 18px 18px; max-width: 72ch; }
+  .api-body h2 { font-size: 15px; margin: 8px 0 4px; }
+  .api-body h3 { font-size: 12px; margin: 14px 0 6px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+  .api-body p { margin: 4px 0; color: var(--muted); }
+  .api-body ul { margin: 4px 0; padding-left: 18px; }
+  .api-body li { margin: 2px 0; }
+  .api-body li b { font-weight: 500; color: var(--muted); }
+  .api-body table { border-collapse: collapse; width: 100%; margin: 4px 0; font-size: 12.5px; }
+  .api-body th, .api-body td { text-align: left; padding: 4px 8px 4px 0; border-bottom: 1px solid var(--border); vertical-align: top; }
+  .api-body th { font-weight: 500; color: var(--muted); font-size: 11px; }
+  .api-body .blank { color: var(--border-strong); }
 
   .toast {
     position: fixed;
@@ -299,6 +325,8 @@
             <tr><td>provider --&gt; consumer</td><td>X-as-a-Service: a wedge, wide at the provider, pointed at the consumer. <code>&lt;--</code> reverses it.</td></tr>
             <tr><td>enabler ~~&gt; team</td><td>Facilitating: the dotted patch where the enabling bar crosses the team. <code>&lt;~~</code> reverses it.</td></tr>
             <tr><td>a --&gt; b, c : label</td><td>Comma lists fan out; one wedge spans every consumer. A label after <code>:</code> is drawn on the interaction.</td></tr>
+            <tr><td>a --&gt; b : label [duration="Q3", soon]</td><td>Attributes. <code>duration</code> fills the Team API table; <code>soon</code> marks an interaction expected soon (dashed, faded).</td></tr>
+            <tr><td>api id { field: value … }</td><td>Team API fields the diagram cannot infer: <code>focus</code>, <code>software</code>, <code>SLE</code>, <code>versioning</code>, <code>wiki</code>, <code>chat</code>, <code>sync</code>, <code>working on</code>, <code>ways of working</code>, <code>improvements</code>. Click a team in the diagram to see its Team API.</td></tr>
           </table>
         </div>
         <div>
@@ -331,6 +359,15 @@
   <section class="pane preview" aria-label="Rendered diagram">
     <div class="pane-head"><span>Diagram</span><span class="spacer"></span><span id="dims"></span></div>
     <div class="canvas fit" id="canvas"></div>
+    <details class="api" id="api">
+      <summary>
+        <span>Team API</span>
+        <select id="api-team" aria-label="Team"></select>
+        <span class="spacer"></span>
+        <button class="btn" id="copy-api" type="button">Copy Markdown</button>
+      </summary>
+      <div class="api-body" id="api-body"></div>
+    </details>
   </section>
 </main>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
@@ -343,6 +380,8 @@ const EXAMPLES = /*EXAMPLES*/[];
 const $ = (id) => document.getElementById(id);
 const src = $('src'), gutter = $('gutter'), canvas = $('canvas'), status = $('status'), statusText = $('status-text');
 const examplesSel = $('examples'), dims = $('dims'), toast = $('toast');
+const apiPanel = $('api'), apiTeam = $('api-team'), apiBody = $('api-body');
+let currentModel = null, selectedTeam = null;
 const STORAGE_KEY = 'teamtopo.draft';
 
 // ── theme: follow the host's explicit choice, else the OS ──
@@ -383,6 +422,8 @@ function renderNow() {
     const model = parse(text);
     const svg = render(model, { theme: currentTheme(), idPrefix: 'pg' });
     canvas.innerHTML = svg;
+    currentModel = model;
+    updateApiPanel();
     const el = canvas.querySelector('svg');
     dims.textContent = `${el.getAttribute('width') | 0} × ${el.getAttribute('height') | 0}`;
     const teams = model.teams.length, inters = model.interactions.length;
@@ -399,6 +440,68 @@ function renderNow() {
   updateGutter();
 }
 function scheduleRender() { clearTimeout(timer); timer = setTimeout(renderNow, 120); }
+
+// ── team api panel ──
+const escapeHtml = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+function markdownToHtml(md) {
+  const out = [];
+  let list = null, table = null;
+  const flush = () => {
+    if (list) { out.push(`<ul>${list.join('')}</ul>`); list = null; }
+    if (table) { out.push(`<table>${table.join('')}</table>`); table = null; }
+  };
+  for (const raw of md.split('\n')) {
+    const line = raw.trim();
+    if (line.startsWith('# ')) { flush(); out.push(`<h2>${escapeHtml(line.slice(2))}</h2>`); }
+    else if (line.startsWith('### ')) { flush(); out.push(`<h3>${escapeHtml(line.slice(4))}</h3>`); }
+    else if (line.startsWith('* ')) {
+      if (table) flush();
+      list = list || [];
+      // template lines are "Field: value" or "Question? value"
+      const item = line.slice(2);
+      const cut = ['? ', ': '].map((sep) => item.indexOf(sep)).filter((i) => i >= 0).sort((a, b) => a - b)[0];
+      let key = item, val = '';
+      if (cut !== undefined) { key = item.slice(0, cut + 1); val = item.slice(cut + 2).trim(); }
+      else if (item.endsWith(':') || item.endsWith('?')) key = item;
+      list.push(`<li><b>${escapeHtml(key)}</b> ${val ? escapeHtml(val) : '<span class="blank">—</span>'}</li>`);
+    } else if (line.startsWith('|')) {
+      if (list) flush();
+      if (/^\|\s*-/.test(line)) continue;
+      const cells = line.slice(1, -1).split('|').map((c) => c.trim());
+      table = table || [];
+      const tag = table.length ? 'td' : 'th';
+      table.push(`<tr>${cells.map((c) => `<${tag}>${c === '.' ? '' : escapeHtml(c)}</${tag}>`).join('')}</tr>`);
+    } else if (line) { flush(); out.push(`<p>${escapeHtml(line)}</p>`); }
+    else flush();
+  }
+  flush();
+  return out.join('');
+}
+function updateApiPanel() {
+  if (!currentModel) return;
+  const teams = currentModel.teams.filter((t) => t.type !== 'group');
+  if (!teams.some((t) => t.id === selectedTeam)) selectedTeam = teams[0]?.id ?? null;
+  apiTeam.innerHTML = teams.map((t) => `<option value="${escapeHtml(t.id)}"${t.id === selectedTeam ? ' selected' : ''}>${escapeHtml(t.label)}</option>`).join('');
+  apiBody.innerHTML = selectedTeam ? markdownToHtml(teamApi(currentModel, selectedTeam)) : '<p>No teams yet.</p>';
+  for (const g of canvas.querySelectorAll('.tt-node, .tt-frame')) g.classList.toggle('selected', g.dataset.id === selectedTeam);
+}
+apiTeam.addEventListener('change', () => { selectedTeam = apiTeam.value; updateApiPanel(); });
+apiTeam.addEventListener('click', (e) => e.stopPropagation());
+canvas.addEventListener('click', (e) => {
+  const g = e.target.closest('.tt-node, .tt-frame');
+  if (!g || !currentModel) return;
+  const node = currentModel.index[g.dataset.id];
+  if (!node || node.type === 'group') return;
+  selectedTeam = node.id;
+  apiPanel.open = true;
+  updateApiPanel();
+});
+$('copy-api').addEventListener('click', (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  if (!currentModel || !selectedTeam) return showToast('Nothing to copy yet');
+  copyText(teamApi(currentModel, selectedTeam), 'Team API copied');
+});
 
 function updateGutter() {
   const n = src.value.split('\n').length;
@@ -458,6 +561,6 @@ $('copy-link').addEventListener('click', () => {
 media.addEventListener('change', renderNow);
 new MutationObserver(renderNow).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 
-window.teamtopo = { parse, layout, render };
+window.teamtopo = { parse, layout, render, teamApi, teamApis };
 renderNow();
 </script>

@@ -281,3 +281,83 @@ test('every example renders', () => {
     assert.ok(svg.length > 500, f);
   }
 });
+
+// ── team api ──
+
+import { teamApi, teamApis } from './teamtopo.js';
+
+const API_SRC = `teamTopology
+  stream checkout "Checkout"
+  stream search "Search"
+  platform payments "Payments Platform" {
+    stream ledger "Ledger"
+  }
+  enabling devex "DevEx"
+
+  payments --> checkout : Payments API [duration="ongoing"]
+  devex ~~> checkout : CI pipelines [duration="until Q3"]
+  checkout <--> search : "search relevance [beta]" [soon, duration="6 weeks"]
+
+  api checkout {
+    focus: the checkout experience end to end
+    Software owned and evolved by this team: checkout-service, cart-ui
+    chat: #checkout #checkout-alerts
+    working on: see https://wiki.example.com/checkout %% not a comment
+  }`;
+
+test('parses interaction attributes, quoted labels with brackets, and api blocks', () => {
+  const m = parse(API_SRC);
+  const collab = m.interactions.find((i) => i.mode === 'collaboration');
+  assert.equal(collab.label, 'search relevance [beta]');
+  assert.equal(collab.soon, true);
+  assert.equal(collab.duration, '6 weeks');
+  assert.equal(m.interactions[0].duration, 'ongoing');
+  assert.equal(m.interactions[0].soon, false);
+  assert.deepEqual(m.index.checkout.api, {
+    focus: 'the checkout experience end to end',
+    softwareownedandevolvedbythisteam: 'checkout-service, cart-ui',
+    chat: '#checkout #checkout-alerts',
+    workingon: 'see https://wiki.example.com/checkout',
+  });
+  assert.equal(m.index.search.api, null);
+});
+
+test('api block errors', () => {
+  assert.throws(() => parse('teamTopology\nstream a\napi b {\n}'), /unknown team "b"/);
+  assert.throws(() => parse('teamTopology\nstream a\napi a {\nno colon here'), /expected "field: value"/);
+  assert.throws(() => parse('teamTopology\nstream a\napi a {\nfocus: x'), /never closed/);
+});
+
+test('teamApi fills the template from the diagram and the api block', () => {
+  const md = teamApi(API_SRC, 'checkout', { date: '2026-01-02' });
+  assert.ok(md.startsWith('# Team API: Checkout\n\nDate: 2026-01-02\n'));
+  assert.ok(md.includes('* Team name and focus: Checkout — the checkout experience end to end'));
+  assert.ok(md.includes('* Team type: Stream-Aligned'));
+  assert.ok(md.includes('* Part of a Platform? (y/n) Details: n'));
+  assert.ok(md.includes('* Do we provide a service to other teams? (y/n) Details: n'));
+  assert.ok(md.includes('* Software owned and evolved by this team: checkout-service, cart-ui'));
+  assert.ok(md.includes('* Versioning approaches:\n'), 'unknown fields stay blank');
+  assert.ok(md.includes('| Payments Platform | X-as-a-Service (we consume) | Payments API | ongoing |'));
+  assert.ok(md.includes('| DevEx | Facilitating (they facilitate us) | CI pipelines | until Q3 |'));
+  const soonSection = md.split('### Teams we expect to interact with soon')[1];
+  assert.ok(soonSection.includes('| Search | Collaboration | search relevance [beta] | 6 weeks |'));
+  assert.ok(!md.split('### Teams we expect to interact with soon')[0].includes('| Search |'), 'soon rows are not in the current table');
+
+  const ledger = teamApi(API_SRC, 'ledger', { date: '2026-01-02' });
+  assert.ok(ledger.includes('* Part of a Platform? (y/n) Details: y — part of Payments Platform'));
+  const payments = teamApi(API_SRC, 'payments', { date: '2026-01-02' });
+  assert.ok(payments.includes('* Team type: Platform'));
+  assert.ok(payments.includes('* Do we provide a service to other teams? (y/n) Details: y — to Checkout (Payments API)'));
+  assert.ok(payments.includes('| Checkout / the checkout experience end to end | X-as-a-Service (we provide) | Payments API | ongoing |'));
+});
+
+test('teamApis covers every team except groups', () => {
+  const docs = teamApis('teamTopology\ngroup g {\nstream a\n}\nplatform p');
+  assert.deepEqual(docs.map((d) => d.id), ['a', 'p']);
+  assert.throws(() => teamApi('teamTopology\nstream a', 'zzz'), /unknown team/);
+});
+
+test('interactions expected soon render dashed and faded', () => {
+  const svg = render('teamTopology\nstream a\nplatform p\np --> a [soon]');
+  assert.ok(/<polygon[^>]*stroke-dasharray="5 4"[^>]*opacity="0.55"|<polygon[^>]*opacity="0.55"[^>]*stroke-dasharray="5 4"/.test(svg));
+});

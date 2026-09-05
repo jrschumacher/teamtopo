@@ -244,6 +244,32 @@
   }
   .canvas.fit svg { max-width: 100%; height: auto; }
   .canvas .empty { color: var(--muted); padding: 40px; text-align: center; }
+  .canvas .tt-node, .canvas .tt-frame { cursor: pointer; }
+  .canvas .tt-node.selected > :not(title):not(text), .canvas .tt-frame.selected > rect:first-of-type { filter: drop-shadow(0 0 0 var(--accent)) drop-shadow(0 0 3px var(--accent)); }
+
+  /* ── team api ── */
+  details.api { border-top: 1px solid var(--border); background: var(--surface); }
+  details.api summary {
+    cursor: pointer; list-style: none; padding: 7px 14px;
+    display: flex; align-items: center; gap: 10px;
+    font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; font-weight: 500; color: var(--muted);
+  }
+  details.api summary::-webkit-details-marker { display: none; }
+  details.api summary::before { content: "▸"; font-size: 10px; }
+  details.api[open] summary::before { content: "▾"; }
+  details.api summary .spacer { flex: 1; }
+  details.api summary select, details.api summary .btn { text-transform: none; letter-spacing: 0; font-size: 12px; height: 26px; }
+  .api-body { max-height: 42vh; overflow: auto; padding: 6px 18px 18px; max-width: 72ch; }
+  .api-body h2 { font-size: 15px; margin: 8px 0 4px; }
+  .api-body h3 { font-size: 12px; margin: 14px 0 6px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+  .api-body p { margin: 4px 0; color: var(--muted); }
+  .api-body ul { margin: 4px 0; padding-left: 18px; }
+  .api-body li { margin: 2px 0; }
+  .api-body li b { font-weight: 500; color: var(--muted); }
+  .api-body table { border-collapse: collapse; width: 100%; margin: 4px 0; font-size: 12.5px; }
+  .api-body th, .api-body td { text-align: left; padding: 4px 8px 4px 0; border-bottom: 1px solid var(--border); vertical-align: top; }
+  .api-body th { font-weight: 500; color: var(--muted); font-size: 11px; }
+  .api-body .blank { color: var(--border-strong); }
 
   .toast {
     position: fixed;
@@ -305,6 +331,8 @@
             <tr><td>provider --&gt; consumer</td><td>X-as-a-Service: a wedge, wide at the provider, pointed at the consumer. <code>&lt;--</code> reverses it.</td></tr>
             <tr><td>enabler ~~&gt; team</td><td>Facilitating: the dotted patch where the enabling bar crosses the team. <code>&lt;~~</code> reverses it.</td></tr>
             <tr><td>a --&gt; b, c : label</td><td>Comma lists fan out; one wedge spans every consumer. A label after <code>:</code> is drawn on the interaction.</td></tr>
+            <tr><td>a --&gt; b : label [duration="Q3", soon]</td><td>Attributes. <code>duration</code> fills the Team API table; <code>soon</code> marks an interaction expected soon (dashed, faded).</td></tr>
+            <tr><td>api id { field: value … }</td><td>Team API fields the diagram cannot infer: <code>focus</code>, <code>software</code>, <code>SLE</code>, <code>versioning</code>, <code>wiki</code>, <code>chat</code>, <code>sync</code>, <code>working on</code>, <code>ways of working</code>, <code>improvements</code>. Click a team in the diagram to see its Team API.</td></tr>
           </table>
         </div>
         <div>
@@ -337,6 +365,15 @@
   <section class="pane preview" aria-label="Rendered diagram">
     <div class="pane-head"><span>Diagram</span><span class="spacer"></span><span id="dims"></span></div>
     <div class="canvas fit" id="canvas"></div>
+    <details class="api" id="api">
+      <summary>
+        <span>Team API</span>
+        <select id="api-team" aria-label="Team"></select>
+        <span class="spacer"></span>
+        <button class="btn" id="copy-api" type="button">Copy Markdown</button>
+      </summary>
+      <div class="api-body" id="api-body"></div>
+    </details>
   </section>
 </main>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
@@ -411,16 +448,18 @@ const RE_NODE = new RegExp(
   `^(stream-aligned|stream|sa|enabling|en|complicated-subsystem|subsystem|cs|platform|pf|group)(?:\\s+(${ID}))?(.*)$`, 'i');
 const RE_QUOTED = /^\s*"((?:[^"\\]|\\.)*)"/;
 const RE_ATTRS = /^\s*\[([^\]]*)\]/;
-const RE_ATTR_PAIR = /([A-Za-z_][\w-]*)\s*=\s*(?:"((?:[^"\\]|\\.)*)"|([^,\s\]]+))/g;
+const RE_ATTR_PAIR = /([A-Za-z_][\w-]*)(?:\s*=\s*(?:"((?:[^"\\]|\\.)*)"|([^,\s\]]+)))?/g;
 const RE_INTERACTION = new RegExp(
-  `^(${ID}(?:\\s*,\\s*${ID})*)\\s*(<-->|<->|-->|<--|~~>|<~~)\\s*(${ID}(?:\\s*,\\s*${ID})*)\\s*(?::\\s*(.*?))?\\s*$`);
+  `^(${ID}(?:\\s*,\\s*${ID})*)\\s*(<-->|<->|-->|<--|~~>|<~~)\\s*(${ID}(?:\\s*,\\s*${ID})*)\\s*(?::\\s*("(?:[^"\\\\]|\\\\.)*"|[^\\[]*?))?\\s*(?:\\[([^\\]]*)\\])?\\s*$`);
+const RE_API_OPEN = new RegExp(`^api\\s+(${ID})\\s*\\{$`, 'i');
+const RE_API_FIELD = /^([^:]+?)\s*:\s*(.*)$/;
 
-function stripComment(line) {
+function stripComment(line, slashes = true) {
   let inQuote = false;
   for (let i = 0; i < line.length; i++) {
     const c = line[i];
     if (c === '"' && line[i - 1] !== '\\') inQuote = !inQuote;
-    else if (!inQuote && ((c === '%' && line[i + 1] === '%') || (c === '/' && line[i + 1] === '/'))) {
+    else if (!inQuote && ((c === '%' && line[i + 1] === '%') || (slashes && c === '/' && line[i + 1] === '/'))) {
       return line.slice(0, i);
     }
   }
@@ -434,7 +473,7 @@ function unescape(s) {
 function parseAttrs(src) {
   const attrs = {};
   for (const m of src.matchAll(RE_ATTR_PAIR)) {
-    attrs[m[1]] = m[2] !== undefined ? unescape(m[2]) : m[3];
+    attrs[m[1]] = m[2] !== undefined ? unescape(m[2]) : (m[3] ?? 'true');
   }
   return attrs;
 }
@@ -443,9 +482,9 @@ function parseAttrs(src) {
  * Parse diagram source into a model:
  * {
  *   title, flow, legend,
- *   nodes:        top-level node tree (each node: id, type, label, attrs, children, parent, line)
+ *   nodes:        top-level node tree (each node: id, type, label, attrs, api, children, parent, line)
  *   teams:        flat list of every node (containers included), declaration order
- *   interactions: [{ mode, from, to, label, line }]
+ *   interactions: [{ mode, from, to, label, attrs, soon, duration, line }]
  *   index:        id → node
  * }
  * For `xaas`, `from` is the provider and `to` the consumer.
@@ -455,13 +494,24 @@ export function parse(source) {
   if (typeof source !== 'string') throw new TypeError('parse() expects a string');
   const model = { title: '', flow: null, legend: false, nodes: [], teams: [], interactions: [], index: {} };
   const stack = [];   // open containers
+  const apis = [];    // { id, fields, line }
+  let api = null;     // open api block
   let sawHeader = false;
 
   const lines = source.split(/\r?\n/);
   for (let i = 0; i < lines.length; i++) {
     const lineNo = i + 1;
-    const line = stripComment(lines[i]).trim();
+    // inside an api block only %% starts a comment, so URLs survive
+    const line = stripComment(lines[i], !api).trim();
     if (!line) continue;
+
+    if (api) {
+      if (line === '}') { api = null; continue; }
+      const fm = RE_API_FIELD.exec(line);
+      if (!fm) throw new ParseError(`expected "field: value" inside the api block for "${api.id}"`, lineNo);
+      api.fields[apiKey(fm[1])] = stripQuotes(fm[2]);
+      continue;
+    }
 
     if (!sawHeader) {
       if (!RE_HEADER.test(line)) throw new ParseError('diagram must start with "teamTopology"', lineNo);
@@ -481,16 +531,25 @@ export function parse(source) {
       continue;
     }
 
+    // team api block
+    if ((m = RE_API_OPEN.exec(line))) {
+      api = { id: m[1], fields: {}, line: lineNo };
+      apis.push(api);
+      continue;
+    }
+
     // interaction
     if ((m = RE_INTERACTION.exec(line))) {
       const left = m[1].split(',').map((s) => s.trim());
       const op = OPERATORS[m[2]];
       const right = m[3].split(',').map((s) => s.trim());
       const label = m[4] ? stripQuotes(m[4]) : '';
+      const attrs = m[5] ? parseAttrs(m[5]) : {};
+      const soon = 'soon' in attrs || 'expected' in attrs;
       for (const l of left) {
         for (const r of right) {
           const [from, to] = op.leftIsFrom ? [l, r] : [r, l];
-          model.interactions.push({ mode: op.mode, from, to, label, line: lineNo });
+          model.interactions.push({ mode: op.mode, from, to, label, attrs, soon, duration: attrs.duration || '', line: lineNo });
         }
       }
       continue;
@@ -527,7 +586,7 @@ export function parse(source) {
       }
 
       const parent = stack.length ? stack[stack.length - 1] : null;
-      const node = { id, type, label, attrs, children: [], parent: parent ? parent.id : null, line: lineNo };
+      const node = { id, type, label, attrs, api: null, children: [], parent: parent ? parent.id : null, line: lineNo };
       (parent ? parent.children : model.nodes).push(node);
       model.teams.push(node);
       model.index[id] = node;
@@ -539,9 +598,15 @@ export function parse(source) {
   }
 
   if (!sawHeader) throw new ParseError('diagram must start with "teamTopology"', lines.length || 1);
+  if (api) throw new ParseError(`api block for "${api.id}" opened on line ${api.line} is never closed with "}"`, lines.length);
   if (stack.length) {
     const open = stack[stack.length - 1];
     throw new ParseError(`block for "${open.id}" opened on line ${open.line} is never closed with "}"`, lines.length);
+  }
+  for (const a of apis) {
+    const node = model.index[a.id];
+    if (!node) throw new ParseError(`api block for unknown team "${a.id}"`, a.line);
+    node.api = { ...(node.api || {}), ...a.fields };
   }
 
   // validate interactions
@@ -561,6 +626,11 @@ function stripQuotes(s) {
   s = s.trim();
   const q = RE_QUOTED.exec(s);
   return q && q[0].length === s.length ? unescape(q[1]) : s;
+}
+
+/** Normalise a Team API field name: "Ways of working" → "waysofworking". */
+function apiKey(s) {
+  return s.toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
 function isAncestor(model, maybeAncestor, id) {
@@ -1114,23 +1184,24 @@ function labelSVG(label, color, T, extra = {}) {
 function edgeSVG({ inter, inters, geo }, lay, T, prefix) {
   const A = lay.boxes[inter.from];
   const targets = (inters || [inter]).map((i) => lay.boxes[i.to].node.label).join(', ');
-  const title = el('title', {}, esc(`${MODES[inter.mode].name}: ${A.node.label} -> ${targets}${inter.label ? ` (${inter.label})` : ''}`));
+  const title = el('title', {}, esc(`${MODES[inter.mode].name}${inter.soon ? ' (expected soon)' : ''}: ${A.node.label} -> ${targets}${inter.label ? ` (${inter.label})` : ''}`));
   const parts = [title];
+  const soon = inter.soon ? { opacity: 0.55, 'stroke-dasharray': '5 4' } : {};
   switch (geo.kind) {
     case 'wedge':
-      parts.push(el('polygon', { points: pts(geo.points), fill: T.xaas.fill, stroke: T.xaas.stroke, 'stroke-width': 1, 'stroke-linejoin': 'round' }));
+      parts.push(el('polygon', { points: pts(geo.points), fill: T.xaas.fill, stroke: inter.soon ? T.xaas.text : T.xaas.stroke, 'stroke-width': 1, 'stroke-linejoin': 'round', ...soon }));
       parts.push(labelSVG(geo.label, T.xaas.text, T, { stroke: 'none' }));
       break;
     case 'bridge':
-      parts.push(el('polygon', { points: pts(geo.points), fill: T.collab.fill, stroke: T.collab.stroke, 'stroke-width': 1.5, 'stroke-linejoin': 'round' }));
+      parts.push(el('polygon', { points: pts(geo.points), fill: T.collab.fill, stroke: T.collab.stroke, 'stroke-width': 1.5, 'stroke-linejoin': 'round', ...soon }));
       parts.push(labelSVG(geo.label, T.collab.text, T, { stroke: 'none' }));
       break;
     case 'patch':
-      parts.push(el('rect', { x: geo.rect.x, y: geo.rect.y, width: geo.rect.w, height: geo.rect.h, fill: `url(#${prefix}-dots)` }));
+      parts.push(el('rect', { x: geo.rect.x, y: geo.rect.y, width: geo.rect.w, height: geo.rect.h, fill: `url(#${prefix}-dots)`, stroke: inter.soon ? T.facil.dot : null, ...soon }));
       parts.push(labelSVG(geo.label, T.facil.text, T));
       break;
     case 'band':
-      parts.push(el('polygon', { points: pts(geo.points), fill: `url(#${prefix}-dots)`, stroke: T.facil.dot, 'stroke-width': 1, 'stroke-dasharray': '2 3' }));
+      parts.push(el('polygon', { points: pts(geo.points), fill: `url(#${prefix}-dots)`, stroke: T.facil.dot, 'stroke-width': 1, 'stroke-dasharray': '2 3', opacity: inter.soon ? 0.55 : null }));
       parts.push(labelSVG(geo.label, T.facil.text, T));
       break;
   }
@@ -1222,20 +1293,135 @@ export function render(input, opts = {}) {
   }, [defs, ...body]);
 }
 
+// ───────────────────────── Team API ─────────────────────────
+//
+// Generates the Team API document from the TeamTopologies/Team-API-template
+// (CC BY-SA 4.0). What the diagram knows is filled in: team type, platform
+// membership, services provided, and the interaction tables. Everything else
+// comes from an `api <id> { field: value }` block and stays blank otherwise.
+
+const API_TYPE_NAMES = { stream: 'Stream-Aligned', enabling: 'Enabling', subsystem: 'Complicated Subsystem', platform: 'Platform', group: 'Group' };
+
+/** Fields a team can set in its api block, with the spellings accepted for each. */
+export const TEAM_API_FIELDS = [
+  { key: 'focus',         aliases: ['focus', 'teamnameandfocus'] },
+  { key: 'platform',      aliases: ['platform', 'partofaplatform', 'platformdetails'] },
+  { key: 'service',       aliases: ['service', 'services', 'servicedetails', 'doweprovideaservicetootherteams'] },
+  { key: 'sle',           aliases: ['sle', 'sles', 'servicelevel', 'servicelevelexpectations'] },
+  { key: 'software',      aliases: ['software', 'softwareowned', 'softwareownedandevolvedbythisteam'] },
+  { key: 'versioning',    aliases: ['versioning', 'versioningapproaches'] },
+  { key: 'wiki',          aliases: ['wiki', 'wikisearchterms'] },
+  { key: 'chat',          aliases: ['chat', 'channels', 'chattoolchannels'] },
+  { key: 'sync',          aliases: ['sync', 'dailysync', 'timeofdailysyncmeeting'] },
+  { key: 'workingon',     aliases: ['workingon', 'working', 'servicesandsystems', 'ourservicesandsystems'] },
+  { key: 'waysofworking', aliases: ['waysofworking', 'ways'] },
+  { key: 'improvements',  aliases: ['improvements', 'crossteamimprovements', 'widercrossteamororganisationalimprovements'] },
+];
+
+function apiField(node, key) {
+  const spec = TEAM_API_FIELDS.find((f) => f.key === key);
+  for (const a of spec.aliases) if (node.api && node.api[a] !== undefined) return node.api[a];
+  return '';
+}
+
+function apiRow(model, self, inter) {
+  const otherId = inter.from === self.id ? inter.to : inter.from;
+  const other = model.index[otherId];
+  const focus = apiField(other, 'focus');
+  let mode = MODES[inter.mode].name;
+  if (inter.mode === 'xaas') mode += inter.from === self.id ? ' (we provide)' : ' (we consume)';
+  if (inter.mode === 'facilitating') mode += inter.from === self.id ? ' (we facilitate)' : ' (they facilitate us)';
+  const cell = (v) => String(v || '').replace(/\|/g, '\\|');
+  return `| ${cell(other.label)}${focus ? ` / ${cell(focus)}` : ''} | ${mode} | ${cell(inter.label)} | ${cell(inter.duration)} |`;
+}
+
+function apiTable(rows) {
+  const head = '| Team name/focus | Interaction Mode | Purpose | Duration |\n| --------------- | ---------------- | ------- | -------- |';
+  return rows.length ? `${head}\n${rows.join('\n')}` : `${head}\n| . |  |  |  |`;
+}
+
+/**
+ * The Team API document for one team, as Markdown following the Team API template.
+ * opts: { date: string }
+ */
+export function teamApi(input, id, opts = {}) {
+  const model = typeof input === 'string' ? parse(input) : input;
+  const node = model.index[id];
+  if (!node) throw new Error(`unknown team "${id}"`);
+  const date = opts.date ?? new Date().toISOString().slice(0, 10);
+  const yn = (cond) => (cond ? 'y' : 'n');
+
+  const platformParent = (() => {
+    let cur = node;
+    while (cur.parent) { cur = model.index[cur.parent]; if (cur.type === 'platform') return cur; }
+    return null;
+  })();
+  const platformDetails = [platformParent ? `part of ${platformParent.label}` : '', apiField(node, 'platform')].filter(Boolean).join('; ');
+
+  const provided = model.interactions.filter((it) => it.mode === 'xaas' && it.from === node.id && !it.soon);
+  const consumers = provided.map((it) => `${model.index[it.to].label}${it.label ? ` (${it.label})` : ''}`);
+  const serviceDetails = [consumers.length ? `to ${consumers.join(', ')}` : '', apiField(node, 'service')].filter(Boolean).join('; ');
+
+  const mine = model.interactions.filter((it) => it.from === node.id || it.to === node.id);
+  const now = mine.filter((it) => !it.soon).map((it) => apiRow(model, node, it));
+  const soon = mine.filter((it) => it.soon).map((it) => apiRow(model, node, it));
+  const focus = apiField(node, 'focus');
+
+  return [
+    `# Team API: ${node.label}`,
+    '',
+    `Date: ${date}`,
+    '',
+    `* Team name and focus: ${node.label}${focus ? ` — ${focus}` : ''}`,
+    `* Team type: ${API_TYPE_NAMES[node.type]}`,
+    `* Part of a Platform? (y/n) Details: ${yn(platformParent || apiField(node, 'platform'))}${platformDetails ? ` — ${platformDetails}` : ''}`,
+    `* Do we provide a service to other teams? (y/n) Details: ${yn(provided.length || apiField(node, 'service'))}${serviceDetails ? ` — ${serviceDetails}` : ''}`,
+    `* What kind of Service Level Expectations do other teams have of us? ${apiField(node, 'sle')}`.trimEnd(),
+    `* Software owned and evolved by this team: ${apiField(node, 'software')}`.trimEnd(),
+    `* Versioning approaches: ${apiField(node, 'versioning')}`.trimEnd(),
+    `* Wiki search terms: ${apiField(node, 'wiki')}`.trimEnd(),
+    `* Chat tool channels: ${apiField(node, 'chat')}`.trimEnd(),
+    `* Time of daily sync meeting: ${apiField(node, 'sync')}`.trimEnd(),
+    '',
+    '### What we\'re currently working on',
+    '',
+    `* Our services and systems: ${apiField(node, 'workingon')}`.trimEnd(),
+    `* Ways of working: ${apiField(node, 'waysofworking')}`.trimEnd(),
+    `* Wider cross-team or organisational improvements: ${apiField(node, 'improvements')}`.trimEnd(),
+    '',
+    '### Teams we currently interact with',
+    '',
+    apiTable(now),
+    '',
+    '### Teams we expect to interact with soon',
+    '',
+    apiTable(soon),
+    '',
+  ].join('\n');
+}
+
+/** Team API documents for every team in the diagram (groups excluded): [{ id, label, markdown }]. */
+export function teamApis(input, opts = {}) {
+  const model = typeof input === 'string' ? parse(input) : input;
+  return model.teams.filter((t) => t.type !== 'group').map((t) => ({ id: t.id, label: t.label, markdown: teamApi(model, t.id, opts) }));
+}
+
 function depth(model, node) {
   let d = 0;
   while (node.parent) { d++; node = model.index[node.parent]; }
   return d;
 }
 
-export default { parse, layout, render, textWidth, wrapText, VERSION, THEMES, TEAM_TYPES, MODES, ParseError };
+export default { parse, layout, render, teamApi, teamApis, textWidth, wrapText, VERSION, THEMES, TEAM_TYPES, MODES, TEAM_API_FIELDS, ParseError };
 
 
-const EXAMPLES = [{"name":"org-groups","title":"Product organisation","source":"teamTopology\n  title Product organisation\n\n  group customer \"Customer Group\" {\n    stream accounts \"Accounts\"\n    stream business \"Business\"\n    stream success  \"Customer Success\"\n    stream billing  \"Billing\"\n    subsystem data1 \"Data\"\n    subsystem sec1  \"Security\"\n    enabling ux1    \"UX Research\"\n    platform frontend \"Frontend Platform\"\n\n    data1 --> accounts\n    sec1  --> accounts\n    frontend --> accounts, billing\n    ux1 ~~> accounts, business, success, billing\n  }\n\n  group content \"Content Group\" {\n    stream runtime   \"Runtime\"\n    stream registry  \"Registry\"\n    stream build     \"Build\"\n    stream consumer  \"Content Consumer\"\n    stream publisher \"Content Publisher\"\n    subsystem data2  \"Data\"\n    enabling ux2     \"UX Research\"\n\n    data2 --> publisher\n    ux2 ~~> runtime, registry, build, consumer, publisher\n  }\n\n  group devexp \"Developer Experience Group\" {\n    stream pos   \"Programmable OS\"\n    stream inner \"Inner Loop\"\n    subsystem data3 \"Data\"\n    enabling ux3    \"UX Research\"\n    platform desktop \"Desktop Platform\"\n\n    data3 --> inner\n    desktop --> pos\n    ux3 ~~> pos, inner\n  }\n\n  platform cloud \"Cloud Group\" {\n    platform saas  \"SaaS Platform\"\n    platform infra \"Infrastructure\"\n    subsystem sec2 \"Security\"\n    subsystem data4 \"Data\"\n    infra --> saas\n  }\n\n  ux1 <--> content\n  ux2 <--> devexp\n  saas --> frontend, desktop\n  saas --> content\n"},{"name":"ecommerce","title":"E-commerce product organisation","source":"teamTopology\n  title E-commerce product organisation\n  flow Flow of change\n  legend\n\n  %% Stream-aligned teams own a slice of the product end to end\n  stream   checkout   \"Checkout\"            [size=7]\n  stream   search     \"Search & Discovery\"  [size=6]\n  stream   accounts   \"Accounts & Identity\" [size=5]\n\n  %% Enabling teams lift the capability of stream teams, then move on\n  enabling devex      \"Developer Experience\"\n\n  %% Complicated subsystems need deep specialist knowledge\n  subsystem ranking   \"Ranking Engine\" [note=\"ML relevance model\"]\n\n  %% Platforms reduce cognitive load for the teams above\n  platform  infra     \"Infrastructure Platform\" [note=\"Kubernetes, CI, observability\"]\n  platform  payments  \"Payments Platform\"\n\n  %% Interactions\n  infra    --> checkout, search, accounts : Kubernetes & CI\n  payments --> checkout                   : Payments API\n  ranking  --> search                     : Ranking API\n  search   <--> ranking                   : new signals\n  devex    ~~> checkout, accounts         : CI pipelines\n"},{"name":"minimal","title":"minimal","source":"teamTopology\n  stream app \"Product Team\"\n  platform infra \"Platform\"\n  infra --> app\n"},{"name":"platform-grouping","title":"Platform grouping","source":"teamTopology\n  title Platform grouping\n  flow\n\n  stream mobile \"Mobile App\"\n  stream web    \"Web Storefront\"\n  enabling sre  \"SRE Coaching\"\n\n  %% A platform can itself be a topology of teams\n  platform cloud \"Cloud Platform\" {\n    stream    k8s   \"Kubernetes\"\n    stream    obs   \"Observability\"\n    subsystem net   \"Network Fabric\"\n    platform  bare  \"Bare-metal Fleet\"\n\n    bare --> k8s, obs\n    net  --> k8s : overlay networking\n  }\n\n  k8s --> mobile, web       : runtime\n  obs --> mobile, web       : dashboards & alerts\n  sre ~~> web               : incident reviews\n  mobile <--> web           : shared design system\n"},{"name":"value-streams","title":"Two value streams sharing one platform","source":"teamTopology\n  title Two value streams sharing one platform\n  flow\n\n  group retail \"Retail\" [kind=\"value stream\"] {\n    stream storefront \"Storefront\"\n    stream fulfilment \"Fulfilment\"\n    storefront <--> fulfilment : order events\n  }\n\n  group b2b \"Business\" [kind=\"value stream\"] {\n    stream catalog \"Catalog\"\n    stream invoicing \"Invoicing\"\n  }\n\n  enabling  security \"Security Enablement\"\n  subsystem tax      \"Tax Calculation\"\n  platform  core     \"Core Platform\" [note=\"identity, billing, data\"]\n\n  core --> storefront, fulfilment, catalog, invoicing\n  tax  --> invoicing, storefront : tax rules API\n  security ~~> catalog, storefront : threat modelling\n"}];
+const EXAMPLES = [{"name":"org-groups","title":"Product organisation","source":"teamTopology\n  title Product organisation\n\n  group customer \"Customer Group\" {\n    stream accounts \"Accounts\"\n    stream business \"Business\"\n    stream success  \"Customer Success\"\n    stream billing  \"Billing\"\n    subsystem data1 \"Data\"\n    subsystem sec1  \"Security\"\n    enabling ux1    \"UX Research\"\n    platform frontend \"Frontend Platform\"\n\n    data1 --> accounts\n    sec1  --> accounts\n    frontend --> accounts, billing\n    ux1 ~~> accounts, business, success, billing\n  }\n\n  group content \"Content Group\" {\n    stream runtime   \"Runtime\"\n    stream registry  \"Registry\"\n    stream build     \"Build\"\n    stream consumer  \"Content Consumer\"\n    stream publisher \"Content Publisher\"\n    subsystem data2  \"Data\"\n    enabling ux2     \"UX Research\"\n\n    data2 --> publisher\n    ux2 ~~> runtime, registry, build, consumer, publisher\n  }\n\n  group devexp \"Developer Experience Group\" {\n    stream pos   \"Programmable OS\"\n    stream inner \"Inner Loop\"\n    subsystem data3 \"Data\"\n    enabling ux3    \"UX Research\"\n    platform desktop \"Desktop Platform\"\n\n    data3 --> inner\n    desktop --> pos\n    ux3 ~~> pos, inner\n  }\n\n  platform cloud \"Cloud Group\" {\n    platform saas  \"SaaS Platform\"\n    platform infra \"Infrastructure\"\n    subsystem sec2 \"Security\"\n    subsystem data4 \"Data\"\n    infra --> saas\n  }\n\n  ux1 <--> content\n  ux2 <--> devexp\n  saas --> frontend, desktop\n  saas --> content\n"},{"name":"ecommerce","title":"E-commerce product organisation","source":"teamTopology\n  title E-commerce product organisation\n  flow Flow of change\n  legend\n\n  %% Stream-aligned teams own a slice of the product end to end\n  stream   checkout   \"Checkout\"            [size=7]\n  stream   search     \"Search & Discovery\"  [size=6]\n  stream   accounts   \"Accounts & Identity\" [size=5]\n\n  %% Enabling teams lift the capability of stream teams, then move on\n  enabling devex      \"Developer Experience\"\n\n  %% Complicated subsystems need deep specialist knowledge\n  subsystem ranking   \"Ranking Engine\" [note=\"ML relevance model\"]\n\n  %% Platforms reduce cognitive load for the teams above\n  platform  infra     \"Infrastructure Platform\" [note=\"Kubernetes, CI, observability\"]\n  platform  payments  \"Payments Platform\"\n\n  %% Interactions\n  infra    --> checkout, search, accounts : Kubernetes & CI [duration=ongoing]\n  payments --> checkout                   : Payments API\n  ranking  --> search                     : Ranking API\n  search   <--> ranking                   : new signals\n  devex    ~~> checkout, accounts         : CI pipelines [duration=\"until Q3\"]\n\n  %% Expected soon: drawn dashed, listed under \"teams we expect to interact with soon\"\n  search <--> accounts : personalised results [soon, duration=\"8 weeks\"]\n\n  %% Team API fields the diagram cannot infer (see the Team API panel / --api)\n  api checkout {\n    focus: the checkout experience end to end\n    software: checkout-service, cart-ui\n    SLE: 99.9% availability, p95 < 300 ms\n    versioning: semver, two releases of deprecation notice\n    wiki: checkout, cart, basket\n    chat: #checkout #checkout-alerts\n    sync: 09:30 UTC\n    working on: migrating to the new payments API\n    ways of working: trunk-based development, pairing on Tuesdays\n    improvements: shared on-call rotation with Accounts\n  }\n"},{"name":"minimal","title":"minimal","source":"teamTopology\n  stream app \"Product Team\"\n  platform infra \"Platform\"\n  infra --> app\n"},{"name":"platform-grouping","title":"Platform grouping","source":"teamTopology\n  title Platform grouping\n  flow\n\n  stream mobile \"Mobile App\"\n  stream web    \"Web Storefront\"\n  enabling sre  \"SRE Coaching\"\n\n  %% A platform can itself be a topology of teams\n  platform cloud \"Cloud Platform\" {\n    stream    k8s   \"Kubernetes\"\n    stream    obs   \"Observability\"\n    subsystem net   \"Network Fabric\"\n    platform  bare  \"Bare-metal Fleet\"\n\n    bare --> k8s, obs\n    net  --> k8s : overlay networking\n  }\n\n  k8s --> mobile, web       : runtime\n  obs --> mobile, web       : dashboards & alerts\n  sre ~~> web               : incident reviews\n  mobile <--> web           : shared design system\n"},{"name":"value-streams","title":"Two value streams sharing one platform","source":"teamTopology\n  title Two value streams sharing one platform\n  flow\n\n  group retail \"Retail\" [kind=\"value stream\"] {\n    stream storefront \"Storefront\"\n    stream fulfilment \"Fulfilment\"\n    storefront <--> fulfilment : order events\n  }\n\n  group b2b \"Business\" [kind=\"value stream\"] {\n    stream catalog \"Catalog\"\n    stream invoicing \"Invoicing\"\n  }\n\n  enabling  security \"Security Enablement\"\n  subsystem tax      \"Tax Calculation\"\n  platform  core     \"Core Platform\" [note=\"identity, billing, data\"]\n\n  core --> storefront, fulfilment, catalog, invoicing\n  tax  --> invoicing, storefront : tax rules API\n  security ~~> catalog, storefront : threat modelling\n"}];
 
 const $ = (id) => document.getElementById(id);
 const src = $('src'), gutter = $('gutter'), canvas = $('canvas'), status = $('status'), statusText = $('status-text');
 const examplesSel = $('examples'), dims = $('dims'), toast = $('toast');
+const apiPanel = $('api'), apiTeam = $('api-team'), apiBody = $('api-body');
+let currentModel = null, selectedTeam = null;
 const STORAGE_KEY = 'teamtopo.draft';
 
 // ── theme: follow the host's explicit choice, else the OS ──
@@ -1276,6 +1462,8 @@ function renderNow() {
     const model = parse(text);
     const svg = render(model, { theme: currentTheme(), idPrefix: 'pg' });
     canvas.innerHTML = svg;
+    currentModel = model;
+    updateApiPanel();
     const el = canvas.querySelector('svg');
     dims.textContent = `${el.getAttribute('width') | 0} × ${el.getAttribute('height') | 0}`;
     const teams = model.teams.length, inters = model.interactions.length;
@@ -1292,6 +1480,68 @@ function renderNow() {
   updateGutter();
 }
 function scheduleRender() { clearTimeout(timer); timer = setTimeout(renderNow, 120); }
+
+// ── team api panel ──
+const escapeHtml = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+function markdownToHtml(md) {
+  const out = [];
+  let list = null, table = null;
+  const flush = () => {
+    if (list) { out.push(`<ul>${list.join('')}</ul>`); list = null; }
+    if (table) { out.push(`<table>${table.join('')}</table>`); table = null; }
+  };
+  for (const raw of md.split('\n')) {
+    const line = raw.trim();
+    if (line.startsWith('# ')) { flush(); out.push(`<h2>${escapeHtml(line.slice(2))}</h2>`); }
+    else if (line.startsWith('### ')) { flush(); out.push(`<h3>${escapeHtml(line.slice(4))}</h3>`); }
+    else if (line.startsWith('* ')) {
+      if (table) flush();
+      list = list || [];
+      // template lines are "Field: value" or "Question? value"
+      const item = line.slice(2);
+      const cut = ['? ', ': '].map((sep) => item.indexOf(sep)).filter((i) => i >= 0).sort((a, b) => a - b)[0];
+      let key = item, val = '';
+      if (cut !== undefined) { key = item.slice(0, cut + 1); val = item.slice(cut + 2).trim(); }
+      else if (item.endsWith(':') || item.endsWith('?')) key = item;
+      list.push(`<li><b>${escapeHtml(key)}</b> ${val ? escapeHtml(val) : '<span class="blank">—</span>'}</li>`);
+    } else if (line.startsWith('|')) {
+      if (list) flush();
+      if (/^\|\s*-/.test(line)) continue;
+      const cells = line.slice(1, -1).split('|').map((c) => c.trim());
+      table = table || [];
+      const tag = table.length ? 'td' : 'th';
+      table.push(`<tr>${cells.map((c) => `<${tag}>${c === '.' ? '' : escapeHtml(c)}</${tag}>`).join('')}</tr>`);
+    } else if (line) { flush(); out.push(`<p>${escapeHtml(line)}</p>`); }
+    else flush();
+  }
+  flush();
+  return out.join('');
+}
+function updateApiPanel() {
+  if (!currentModel) return;
+  const teams = currentModel.teams.filter((t) => t.type !== 'group');
+  if (!teams.some((t) => t.id === selectedTeam)) selectedTeam = teams[0]?.id ?? null;
+  apiTeam.innerHTML = teams.map((t) => `<option value="${escapeHtml(t.id)}"${t.id === selectedTeam ? ' selected' : ''}>${escapeHtml(t.label)}</option>`).join('');
+  apiBody.innerHTML = selectedTeam ? markdownToHtml(teamApi(currentModel, selectedTeam)) : '<p>No teams yet.</p>';
+  for (const g of canvas.querySelectorAll('.tt-node, .tt-frame')) g.classList.toggle('selected', g.dataset.id === selectedTeam);
+}
+apiTeam.addEventListener('change', () => { selectedTeam = apiTeam.value; updateApiPanel(); });
+apiTeam.addEventListener('click', (e) => e.stopPropagation());
+canvas.addEventListener('click', (e) => {
+  const g = e.target.closest('.tt-node, .tt-frame');
+  if (!g || !currentModel) return;
+  const node = currentModel.index[g.dataset.id];
+  if (!node || node.type === 'group') return;
+  selectedTeam = node.id;
+  apiPanel.open = true;
+  updateApiPanel();
+});
+$('copy-api').addEventListener('click', (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  if (!currentModel || !selectedTeam) return showToast('Nothing to copy yet');
+  copyText(teamApi(currentModel, selectedTeam), 'Team API copied');
+});
 
 function updateGutter() {
   const n = src.value.split('\n').length;
@@ -1351,7 +1601,7 @@ $('copy-link').addEventListener('click', () => {
 media.addEventListener('change', renderNow);
 new MutationObserver(renderNow).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 
-window.teamtopo = { parse, layout, render };
+window.teamtopo = { parse, layout, render, teamApi, teamApis };
 renderNow();
 </script>
 </body>
