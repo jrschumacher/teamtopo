@@ -1,0 +1,56 @@
+teamTopology
+  title Product organisation
+
+  group customer "Customer Group" {
+    stream accounts "Accounts"
+    stream business "Business"
+    stream success  "Customer Success"
+    stream billing  "Billing"
+    subsystem data1 "Data"
+    subsystem sec1  "Security"
+    enabling ux1    "UX Research"
+    platform frontend "Frontend Platform"
+
+    data1 --> accounts
+    sec1  --> accounts
+    frontend --> accounts, billing
+    ux1 ~~> accounts, business, success, billing
+  }
+
+  group content "Content Group" {
+    stream runtime   "Runtime"
+    stream registry  "Registry"
+    stream build     "Build"
+    stream consumer  "Content Consumer"
+    stream publisher "Content Publisher"
+    subsystem data2  "Data"
+    enabling ux2     "UX Research"
+
+    data2 --> publisher
+    ux2 ~~> runtime, registry, build, consumer, publisher
+  }
+
+  group devexp "Developer Experience Group" {
+    stream pos   "Programmable OS"
+    stream inner "Inner Loop"
+    subsystem data3 "Data"
+    enabling ux3    "UX Research"
+    platform desktop "Desktop Platform"
+
+    data3 --> inner
+    desktop --> pos
+    ux3 ~~> pos, inner
+  }
+
+  platform cloud "Cloud Group" {
+    platform saas  "SaaS Platform"
+    platform infra "Infrastructure"
+    subsystem sec2 "Security"
+    subsystem data4 "Data"
+    infra --> saas
+  }
+
+  ux1 <--> content
+  ux2 <--> devexp
+  saas --> frontend, desktop
+  saas --> content

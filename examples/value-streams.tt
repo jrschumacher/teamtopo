@@ -1,0 +1,22 @@
+teamTopology
+  title Two value streams sharing one platform
+  flow
+
+  group retail "Retail" [kind="value stream"] {
+    stream storefront "Storefront"
+    stream fulfilment "Fulfilment"
+    storefront <--> fulfilment : order events
+  }
+
+  group b2b "Business" [kind="value stream"] {
+    stream catalog "Catalog"
+    stream invoicing "Invoicing"
+  }
+
+  enabling  security "Security Enablement"
+  subsystem tax      "Tax Calculation"
+  platform  core     "Core Platform" [note="identity, billing, data"]
+
+  core --> storefront, fulfilment, catalog, invoicing
+  tax  --> invoicing, storefront : tax rules API
+  security ~~> catalog, storefront : threat modelling

@@ -1,0 +1,566 @@
+<title>TeamTopo</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --bg: #f2f4f7;
+    --surface: #ffffff;
+    --surface-2: #f7f8fa;
+    --text: #1b2130;
+    --muted: #66717f;
+    --border: #d9dee6;
+    --border-strong: #b8c0cc;
+    --accent: #2f6db5;
+    --accent-ink: #ffffff;
+    --accent-soft: rgba(47, 109, 181, 0.12);
+    --ok: #2f7a38;
+    --error: #b42318;
+    --error-soft: rgba(180, 35, 24, 0.08);
+    --gutter: #9aa4b1;
+    --shadow: 0 1px 2px rgba(27, 33, 48, 0.06), 0 8px 24px rgba(27, 33, 48, 0.06);
+    --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0f141c;
+      --surface: #171e29;
+      --surface-2: #1c2431;
+      --text: #e4e8ee;
+      --muted: #8e99a8;
+      --border: #273140;
+      --border-strong: #3a4657;
+      --accent: #6fa3dc;
+      --accent-ink: #0b1a2e;
+      --accent-soft: rgba(111, 163, 220, 0.16);
+      --ok: #6fcf7a;
+      --error: #f28b82;
+      --error-soft: rgba(242, 139, 130, 0.12);
+      --gutter: #556170;
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f141c;
+    --surface: #171e29;
+    --surface-2: #1c2431;
+    --text: #e4e8ee;
+    --muted: #8e99a8;
+    --border: #273140;
+    --border-strong: #3a4657;
+    --accent: #6fa3dc;
+    --accent-ink: #0b1a2e;
+    --accent-soft: rgba(111, 163, 220, 0.16);
+    --ok: #6fcf7a;
+    --error: #f28b82;
+    --error-soft: rgba(242, 139, 130, 0.12);
+    --gutter: #556170;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 13px;
+    line-height: 1.45;
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+  }
+  button, select, textarea { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* ── header ── */
+  .bar {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 10px 18px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+  .brand { display: flex; align-items: baseline; gap: 10px; margin-right: auto; }
+  .brand h1 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+  .brand p { margin: 0; color: var(--muted); }
+  .brand .swatches { display: inline-flex; gap: 3px; margin-right: 4px; vertical-align: middle; }
+  .brand .swatches i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; }
+  .controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .controls label { color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
+  select, .btn {
+    height: 30px;
+    padding: 0 10px;
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    background: var(--surface);
+    cursor: pointer;
+  }
+  .btn:hover, select:hover { border-color: var(--accent); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 500; }
+  .btn[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); }
+
+  /* ── workspace ── */
+  .work {
+    flex: 1;
+    display: grid;
+    grid-template-columns: minmax(320px, 2fr) minmax(0, 3fr);
+    min-height: 0;
+  }
+  @media (max-width: 860px) {
+    .work { grid-template-columns: 1fr; grid-template-rows: minmax(300px, 45vh) 1fr; }
+  }
+  .pane { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+  .pane.editor { border-right: 1px solid var(--border); background: var(--surface); }
+  @media (max-width: 860px) { .pane.editor { border-right: 0; border-bottom: 1px solid var(--border); } }
+  .pane-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 14px;
+    border-bottom: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    font-weight: 500;
+  }
+  .pane-head .spacer { flex: 1; }
+  .pane-head .link { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; text-transform: none; letter-spacing: 0; font-size: 12px; }
+
+  .code {
+    position: relative;
+    flex: 1;
+    display: grid;
+    grid-template-columns: 44px 1fr;
+    min-height: 0;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    line-height: 20px;
+  }
+  .gutter {
+    padding: 12px 0;
+    color: var(--gutter);
+    text-align: right;
+    user-select: none;
+    overflow: hidden;
+    border-right: 1px solid var(--border);
+    background: var(--surface-2);
+    white-space: pre;
+  }
+  .gutter span { display: block; padding-right: 10px; }
+  .gutter span.err { color: var(--error); background: var(--error-soft); font-weight: 500; }
+  textarea.src {
+    margin: 0;
+    padding: 12px 14px;
+    border: 0;
+    resize: none;
+    background: transparent;
+    white-space: pre;
+    overflow: auto;
+    outline: none;
+    tab-size: 2;
+    min-height: 0;
+  }
+  .status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 14px;
+    border-top: 1px solid var(--border);
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--muted);
+    min-height: 34px;
+  }
+  .status .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); flex: none; }
+  .status.error { color: var(--error); background: var(--error-soft); }
+  .status.error .dot { background: var(--error); }
+
+  /* ── syntax reference ── */
+  details.ref { border-top: 1px solid var(--border); background: var(--surface-2); }
+  details.ref summary {
+    cursor: pointer;
+    padding: 7px 14px;
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    font-weight: 500;
+    color: var(--muted);
+    list-style: none;
+    display: flex; gap: 8px; align-items: center;
+  }
+  details.ref summary::-webkit-details-marker { display: none; }
+  details.ref summary::before { content: "▸"; font-size: 10px; }
+  details.ref[open] summary::before { content: "▾"; }
+  .ref-body {
+    max-height: 38vh;
+    overflow: auto;
+    padding: 4px 14px 14px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px 20px;
+  }
+  @media (max-width: 1100px) { .ref-body { grid-template-columns: 1fr; } }
+  .ref h3 { margin: 8px 0 6px; font-size: 12px; font-weight: 600; }
+  .ref table { border-collapse: collapse; width: 100%; }
+  .ref td { padding: 3px 0; vertical-align: top; }
+  .ref td:first-child { font-family: var(--mono); font-size: 12px; white-space: nowrap; padding-right: 14px; color: var(--text); }
+  .ref td:last-child { color: var(--muted); }
+  .ref .mode { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+  .ref pre {
+    margin: 0;
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 18px;
+    color: var(--text);
+    white-space: pre;
+    overflow-x: auto;
+  }
+
+  /* ── preview ── */
+  .pane.preview { background: var(--bg); }
+  .canvas {
+    flex: 1;
+    overflow: auto;
+    padding: 24px;
+    min-height: 0;
+  }
+  .canvas svg {
+    display: block;
+    border-radius: 10px;
+    box-shadow: var(--shadow);
+    border: 1px solid var(--border);
+  }
+  .canvas.fit svg { max-width: 100%; height: auto; }
+  .canvas .empty { color: var(--muted); padding: 40px; text-align: center; }
+  .canvas .tt-node, .canvas .tt-frame { cursor: pointer; }
+  .canvas .tt-node.selected > :not(title):not(text), .canvas .tt-frame.selected > rect:first-of-type { filter: drop-shadow(0 0 0 var(--accent)) drop-shadow(0 0 3px var(--accent)); }
+
+  /* ── team api ── */
+  details.api { border-top: 1px solid var(--border); background: var(--surface); }
+  details.api summary {
+    cursor: pointer; list-style: none; padding: 7px 14px;
+    display: flex; align-items: center; gap: 10px;
+    font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; font-weight: 500; color: var(--muted);
+  }
+  details.api summary::-webkit-details-marker { display: none; }
+  details.api summary::before { content: "▸"; font-size: 10px; }
+  details.api[open] summary::before { content: "▾"; }
+  details.api summary .spacer { flex: 1; }
+  details.api summary select, details.api summary .btn { text-transform: none; letter-spacing: 0; font-size: 12px; height: 26px; }
+  .api-body { max-height: 42vh; overflow: auto; padding: 6px 18px 18px; max-width: 72ch; }
+  .api-body h2 { font-size: 15px; margin: 8px 0 4px; }
+  .api-body h3 { font-size: 12px; margin: 14px 0 6px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+  .api-body p { margin: 4px 0; color: var(--muted); }
+  .api-body ul { margin: 4px 0; padding-left: 18px; }
+  .api-body li { margin: 2px 0; }
+  .api-body li b { font-weight: 500; color: var(--muted); }
+  .api-body table { border-collapse: collapse; width: 100%; margin: 4px 0; font-size: 12.5px; }
+  .api-body th, .api-body td { text-align: left; padding: 4px 8px 4px 0; border-bottom: 1px solid var(--border); vertical-align: top; }
+  .api-body th { font-weight: 500; color: var(--muted); font-size: 11px; }
+  .api-body .blank { color: var(--border-strong); }
+
+  .toast {
+    position: fixed;
+    left: 50%;
+    bottom: 22px;
+    transform: translateX(-50%) translateY(8px);
+    background: var(--text);
+    color: var(--bg);
+    padding: 8px 14px;
+    border-radius: 6px;
+    font-size: 12.5px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.18s, transform 0.18s;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  @media (prefers-reduced-motion: reduce) { .toast { transition: none; } }
+</style>
+<!--BODY-->
+<header class="bar">
+  <div class="brand">
+    <h1><span class="swatches" aria-hidden="true"><i style="background:#FFE082"></i><i style="background:#C9BAEA"></i><i style="background:#F8B98A"></i><i style="background:#A9CCEF"></i></span>TeamTopo</h1>
+    <p>Team Topologies diagrams from text, drawn the way the book draws them.</p>
+  </div>
+  <div class="controls">
+    <label>Example <select id="examples" aria-label="Load an example"></select></label>
+    <button class="btn" id="fit" aria-pressed="true" title="Scale the diagram to the pane width">Fit</button>
+    <button class="btn" id="copy-svg">Copy SVG</button>
+    <button class="btn primary" id="copy-link">Copy link</button>
+  </div>
+</header>
+
+<main class="work">
+  <section class="pane editor" aria-label="Diagram source">
+    <div class="pane-head"><span>Source</span><span class="spacer"></span><button class="link" id="reset">Reset to example</button></div>
+    <div class="code">
+      <div class="gutter" id="gutter" aria-hidden="true"></div>
+      <textarea class="src" id="src" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="Diagram source"></textarea>
+    </div>
+    <div class="status" id="status"><span class="dot"></span><span id="status-text">Ready</span></div>
+    <details class="ref" id="ref">
+      <summary>Syntax reference</summary>
+      <div class="ref-body">
+        <div>
+          <h3>Teams</h3>
+          <table>
+            <tr><td>stream id "Label"</td><td><span class="mode" style="background:#FFE082"></span>Stream-aligned team: a full-width lane. Lanes stack in declaration order. Also <code>stream-aligned</code>, <code>sa</code>.</td></tr>
+            <tr><td>enabling id "Label"</td><td><span class="mode" style="background:#C9BAEA"></span>Enabling team: a tall bar crossing the lanes it facilitates. Also <code>en</code>.</td></tr>
+            <tr><td>subsystem id "Label"</td><td><span class="mode" style="background:#F8B98A"></span>Complicated-subsystem team: an octagon embedded on the first lane it serves. Also <code>cs</code>.</td></tr>
+            <tr><td>platform id "Label"</td><td><span class="mode" style="background:#A9CCEF"></span>Platform team: a full-width bar beneath the lanes. Also <code>pf</code>.</td></tr>
+            <tr><td>platform id "Label" { … }</td><td>Platform grouping: a platform made of inner teams.</td></tr>
+            <tr><td>group id "Label" [kind="value stream"] { … }</td><td>Any other boundary around teams.</td></tr>
+            <tr><td>[size=7, note="text"]</td><td>Attributes after the label. <code>note</code> shows under the name; everything else is a tooltip.</td></tr>
+          </table>
+          <h3>Interactions</h3>
+          <table>
+            <tr><td>a &lt;--&gt; b</td><td>Collaboration: a parallelogram bridging the two teams.</td></tr>
+            <tr><td>provider --&gt; consumer</td><td>X-as-a-Service: a wedge, wide at the provider, pointed at the consumer. <code>&lt;--</code> reverses it.</td></tr>
+            <tr><td>enabler ~~&gt; team</td><td>Facilitating: the dotted patch where the enabling bar crosses the team. <code>&lt;~~</code> reverses it.</td></tr>
+            <tr><td>a --&gt; b, c : label</td><td>Comma lists fan out; one wedge spans every consumer. A label after <code>:</code> is drawn on the interaction.</td></tr>
+            <tr><td>a --&gt; b : label [duration="Q3", soon]</td><td>Attributes. <code>duration</code> fills the Team API table; <code>soon</code> marks an interaction expected soon (dashed, faded).</td></tr>
+            <tr><td>api id { field: value … }</td><td>Team API fields the diagram cannot infer: <code>focus</code>, <code>software</code>, <code>SLE</code>, <code>versioning</code>, <code>wiki</code>, <code>chat</code>, <code>sync</code>, <code>working on</code>, <code>ways of working</code>, <code>improvements</code>. Click a team in the diagram to see its Team API.</td></tr>
+          </table>
+        </div>
+        <div>
+          <h3>Directives</h3>
+          <table>
+            <tr><td>teamTopology</td><td>Must be the first line.</td></tr>
+            <tr><td>title Text</td><td>Diagram title.</td></tr>
+            <tr><td>flow [Text]</td><td>Draws the flow-of-change arrow. Defaults to "Flow of change".</td></tr>
+            <tr><td>legend</td><td>Adds a key for shapes and interaction modes.</td></tr>
+            <tr><td>%% or //</td><td>Comment to end of line.</td></tr>
+          </table>
+          <h3>Example</h3>
+<pre>teamTopology
+  title Checkout domain
+  flow
+
+  stream   checkout "Checkout"
+  enabling devex    "DevEx"
+  platform infra    "Infrastructure" {
+    stream k8s "Kubernetes"
+  }
+
+  k8s   --> checkout : runtime
+  devex ~~> checkout : CI coaching</pre>
+        </div>
+      </div>
+    </details>
+  </section>
+
+  <section class="pane preview" aria-label="Rendered diagram">
+    <div class="pane-head"><span>Diagram</span><span class="spacer"></span><span id="dims"></span></div>
+    <div class="canvas fit" id="canvas"></div>
+    <details class="api" id="api">
+      <summary>
+        <span>Team API</span>
+        <select id="api-team" aria-label="Team"></select>
+        <span class="spacer"></span>
+        <button class="btn" id="copy-api" type="button">Copy Markdown</button>
+      </summary>
+      <div class="api-body" id="api-body"></div>
+    </details>
+  </section>
+</main>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script type="module">
+/*LIB*/
+
+const EXAMPLES = /*EXAMPLES*/[];
+
+const $ = (id) => document.getElementById(id);
+const src = $('src'), gutter = $('gutter'), canvas = $('canvas'), status = $('status'), statusText = $('status-text');
+const examplesSel = $('examples'), dims = $('dims'), toast = $('toast');
+const apiPanel = $('api'), apiTeam = $('api-team'), apiBody = $('api-body');
+let currentModel = null, selectedTeam = null;
+const STORAGE_KEY = 'teamtopo.draft';
+
+// ── theme: follow the host's explicit choice, else the OS ──
+const media = window.matchMedia('(prefers-color-scheme: dark)');
+const currentTheme = () => {
+  const stamped = document.documentElement.getAttribute('data-theme');
+  if (stamped === 'dark' || stamped === 'light') return stamped;
+  return media.matches ? 'dark' : 'light';
+};
+
+// ── examples ──
+for (const ex of EXAMPLES) {
+  const opt = document.createElement('option');
+  opt.value = ex.name;
+  opt.textContent = ex.title;
+  examplesSel.appendChild(opt);
+}
+
+// ── source persistence: url hash → saved draft → first example ──
+const b64encode = (s) => btoa(unescape(encodeURIComponent(s))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const b64decode = (s) => decodeURIComponent(escape(atob(s.replace(/-/g, '+').replace(/_/g, '/'))));
+function initialSource() {
+  const m = /[#&]src=([^&]+)/.exec(location.hash);
+  if (m) { try { return b64decode(m[1]); } catch { /* fall through */ } }
+  try { const saved = localStorage.getItem(STORAGE_KEY); if (saved) return saved; } catch { /* storage unavailable */ }
+  return EXAMPLES[0]?.source ?? 'teamTopology\n  stream app "Product"\n  platform infra "Platform"\n  infra --> app\n';
+}
+src.value = initialSource();
+const matching = EXAMPLES.find((e) => e.source === src.value);
+if (matching) examplesSel.value = matching.name;
+
+// ── rendering ──
+let timer = null, lastError = null;
+function renderNow() {
+  const text = src.value;
+  try { localStorage.setItem(STORAGE_KEY, text); } catch { /* ignore */ }
+  try {
+    const model = parse(text);
+    const svg = render(model, { theme: currentTheme(), idPrefix: 'pg' });
+    canvas.innerHTML = svg;
+    currentModel = model;
+    updateApiPanel();
+    const el = canvas.querySelector('svg');
+    dims.textContent = `${el.getAttribute('width') | 0} × ${el.getAttribute('height') | 0}`;
+    const teams = model.teams.length, inters = model.interactions.length;
+    statusText.textContent = `${teams} team${teams === 1 ? '' : 's'}, ${inters} interaction${inters === 1 ? '' : 's'}`;
+    status.classList.remove('error');
+    lastError = null;
+  } catch (e) {
+    if (!(e instanceof ParseError)) throw e;
+    statusText.textContent = e.message;
+    status.classList.add('error');
+    lastError = e.line;
+    if (!canvas.querySelector('svg')) canvas.innerHTML = '<p class="empty">Fix the source to see the diagram.</p>';
+  }
+  updateGutter();
+}
+function scheduleRender() { clearTimeout(timer); timer = setTimeout(renderNow, 120); }
+
+// ── team api panel ──
+const escapeHtml = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+function markdownToHtml(md) {
+  const out = [];
+  let list = null, table = null;
+  const flush = () => {
+    if (list) { out.push(`<ul>${list.join('')}</ul>`); list = null; }
+    if (table) { out.push(`<table>${table.join('')}</table>`); table = null; }
+  };
+  for (const raw of md.split('\n')) {
+    const line = raw.trim();
+    if (line.startsWith('# ')) { flush(); out.push(`<h2>${escapeHtml(line.slice(2))}</h2>`); }
+    else if (line.startsWith('### ')) { flush(); out.push(`<h3>${escapeHtml(line.slice(4))}</h3>`); }
+    else if (line.startsWith('* ')) {
+      if (table) flush();
+      list = list || [];
+      // template lines are "Field: value" or "Question? value"
+      const item = line.slice(2);
+      const cut = ['? ', ': '].map((sep) => item.indexOf(sep)).filter((i) => i >= 0).sort((a, b) => a - b)[0];
+      let key = item, val = '';
+      if (cut !== undefined) { key = item.slice(0, cut + 1); val = item.slice(cut + 2).trim(); }
+      else if (item.endsWith(':') || item.endsWith('?')) key = item;
+      list.push(`<li><b>${escapeHtml(key)}</b> ${val ? escapeHtml(val) : '<span class="blank">—</span>'}</li>`);
+    } else if (line.startsWith('|')) {
+      if (list) flush();
+      if (/^\|\s*-/.test(line)) continue;
+      const cells = line.slice(1, -1).split('|').map((c) => c.trim());
+      table = table || [];
+      const tag = table.length ? 'td' : 'th';
+      table.push(`<tr>${cells.map((c) => `<${tag}>${c === '.' ? '' : escapeHtml(c)}</${tag}>`).join('')}</tr>`);
+    } else if (line) { flush(); out.push(`<p>${escapeHtml(line)}</p>`); }
+    else flush();
+  }
+  flush();
+  return out.join('');
+}
+function updateApiPanel() {
+  if (!currentModel) return;
+  const teams = currentModel.teams.filter((t) => t.type !== 'group');
+  if (!teams.some((t) => t.id === selectedTeam)) selectedTeam = teams[0]?.id ?? null;
+  apiTeam.innerHTML = teams.map((t) => `<option value="${escapeHtml(t.id)}"${t.id === selectedTeam ? ' selected' : ''}>${escapeHtml(t.label)}</option>`).join('');
+  apiBody.innerHTML = selectedTeam ? markdownToHtml(teamApi(currentModel, selectedTeam)) : '<p>No teams yet.</p>';
+  for (const g of canvas.querySelectorAll('.tt-node, .tt-frame')) g.classList.toggle('selected', g.dataset.id === selectedTeam);
+}
+apiTeam.addEventListener('change', () => { selectedTeam = apiTeam.value; updateApiPanel(); });
+apiTeam.addEventListener('click', (e) => e.stopPropagation());
+canvas.addEventListener('click', (e) => {
+  const g = e.target.closest('.tt-node, .tt-frame');
+  if (!g || !currentModel) return;
+  const node = currentModel.index[g.dataset.id];
+  if (!node || node.type === 'group') return;
+  selectedTeam = node.id;
+  apiPanel.open = true;
+  updateApiPanel();
+});
+$('copy-api').addEventListener('click', (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  if (!currentModel || !selectedTeam) return showToast('Nothing to copy yet');
+  copyText(teamApi(currentModel, selectedTeam), 'Team API copied');
+});
+
+function updateGutter() {
+  const n = src.value.split('\n').length;
+  let html = '';
+  for (let i = 1; i <= n; i++) html += `<span${i === lastError ? ' class="err"' : ''}>${i}</span>`;
+  gutter.innerHTML = html;
+  gutter.scrollTop = src.scrollTop;
+}
+
+src.addEventListener('input', () => { updateGutter(); scheduleRender(); });
+src.addEventListener('scroll', () => { gutter.scrollTop = src.scrollTop; });
+src.addEventListener('keydown', (e) => {
+  if (e.key === 'Tab') {
+    e.preventDefault();
+    const { selectionStart: s, selectionEnd: t } = src;
+    src.setRangeText('  ', s, t, 'end');
+    src.dispatchEvent(new Event('input'));
+  }
+});
+
+examplesSel.addEventListener('change', () => {
+  const ex = EXAMPLES.find((e) => e.name === examplesSel.value);
+  if (ex) { src.value = ex.source; history.replaceState(null, '', location.pathname); renderNow(); }
+});
+$('reset').addEventListener('click', () => {
+  const ex = EXAMPLES.find((e) => e.name === examplesSel.value) ?? EXAMPLES[0];
+  if (ex) { src.value = ex.source; renderNow(); }
+});
+$('fit').addEventListener('click', (e) => {
+  const on = e.currentTarget.getAttribute('aria-pressed') !== 'true';
+  e.currentTarget.setAttribute('aria-pressed', String(on));
+  canvas.classList.toggle('fit', on);
+});
+
+function showToast(msg) {
+  toast.textContent = msg;
+  toast.classList.add('show');
+  clearTimeout(showToast.t);
+  showToast.t = setTimeout(() => toast.classList.remove('show'), 1800);
+}
+async function copyText(text, done) {
+  try { await navigator.clipboard.writeText(text); showToast(done); }
+  catch { showToast('Clipboard blocked. Select and copy manually.'); }
+}
+$('copy-svg').addEventListener('click', () => {
+  const el = canvas.querySelector('svg');
+  if (!el) return showToast('Nothing to copy yet');
+  copyText(render(src.value, { theme: currentTheme() }), 'SVG copied');
+});
+$('copy-link').addEventListener('click', () => {
+  const url = `${location.origin}${location.pathname}#src=${b64encode(src.value)}`;
+  history.replaceState(null, '', `#src=${b64encode(src.value)}`);
+  copyText(url, 'Link copied');
+});
+
+// re-render when the theme changes under us
+media.addEventListener('change', renderNow);
+new MutationObserver(renderNow).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
+window.teamtopo = { parse, layout, render, teamApi, teamApis };
+renderNow();
+</script>
