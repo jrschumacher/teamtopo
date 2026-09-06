@@ -314,7 +314,7 @@ export function wrapText(text, maxWidth, fontSize) {
 
 const L = {
   laneH: 48, laneGap: 14, platH: 56, platGap: 14, lanesToPlat: 64,
-  subW: 112, subH: 56, enW: 68, wedgeW: 64, slotGap: 22, labelMin: 170,
+  subW: 112, subH: 56, enW: 68, vertPlatW: 96, wedgeW: 64, sideTab: 52, slotGap: 22, labelMin: 170,
   pad: 24, frameTop: 26, frameBottom: 36, bandGap: 44, sideGap: 32, minW: 240,
   margin: 32, lineH: 1.25, noteFs: 11, titleH: 40, flowH: 46, legendH: 64, labelFs: 11,
   fs: { stream: 14, platform: 14, subsystem: 12, enabling: 12, group: 13 },
@@ -348,7 +348,8 @@ function rankOf(node) {
 function structure(children, model, forcedW = 0) {
   const leaf = (t) => children.filter((c) => !c.children.length && c.type === t);
   const lanes = [...leaf('stream'), ...leaf('group')];   // an empty group is drawn as a lane
-  const plats = leaf('platform');
+  const plats = leaf('platform').filter((n) => n.attrs.orient !== 'vertical');
+  const vertPlats = leaf('platform').filter((n) => n.attrs.orient === 'vertical');
   const subs = leaf('subsystem');
   const enab = leaf('enabling');
   const frames = children.filter((c) => c.children.length);
@@ -380,10 +381,28 @@ function structure(children, model, forcedW = 0) {
     ...plats.map((n) => textWidth(n.label, L.fs.platform) + 48));
 
   const topLays = topFrames.map((c) => frame(c, model));
-  const topBandW = topLays.reduce((a, l) => a + l.w, 0) + Math.max(0, topLays.length - 1) * L.sideGap;
+  const frameLay = new Map(topFrames.map((c, i) => [c.id, topLays[i]]));
+  // a vertical platform sits in the band beside the frames it's declared between, in declaration
+  // order, sized to the union of its neighbours' lane extents (it "spans the lanes it serves")
+  const bandNodes = children.filter((c) => frameLay.has(c.id) || vertPlats.includes(c));
+  const bandLays = bandNodes.map((c, i) => {
+    if (frameLay.has(c.id)) { const l = frameLay.get(c.id); return { isVert: false, node: c, w: l.w, h: l.h, inner: l.inner }; }
+    const neighbours = [bandNodes[i - 1], bandNodes[i + 1]].filter((n) => n && frameLay.has(n.id));
+    const ranges = neighbours.map((n) => {
+      const l = frameLay.get(n.id);
+      return l.inner.lanesRange ? [l.inner.oy + l.inner.lanesRange[0], l.inner.oy + l.inner.lanesRange[1]] : [0, l.h];
+    });
+    const y0 = ranges.length ? Math.min(...ranges.map((r) => r[0])) : 0;
+    const y1 = ranges.length ? Math.max(...ranges.map((r) => r[1])) : Math.max(L.platH, ...topLays.map((l) => l.h));
+    const h = Math.max(y1 - y0, L.platH);
+    const lines = wrapText(c.label, L.vertPlatW - 10, L.fs.platform);
+    const rotate = !(lines.every((ln) => textWidth(ln, L.fs.platform) <= L.vertPlatW - 10) && lines.length * L.fs.platform * L.lineH < h - 16);
+    return { isVert: true, node: c, w: L.vertPlatW, h, yOff: y0, lines: rotate ? [c.label] : lines, rotate };
+  });
+  const topBandW = bandLays.reduce((a, l) => a + l.w, 0) + Math.max(0, bandLays.length - 1) * L.sideGap;
   let botLays = botFrames.map((c) => frame(c, model));
   // slot columns always get their own room beside a band of child frames
-  const innerW = Math.max(forcedW, hasStack ? leftW + labelW + rightW : 0, topBandW + (topLays.length ? leftW + rightW : 0),
+  const innerW = Math.max(forcedW, hasStack ? leftW + labelW + rightW : 0, topBandW + (bandLays.length ? leftW + rightW : 0),
     ...botLays.map((l) => l.w), hasStack ? L.minW : 0);
   botLays = botFrames.map((c) => frame(c, model, innerW - 2 * L.pad));   // platform groupings stretch full width
 
@@ -395,10 +414,14 @@ function structure(children, model, forcedW = 0) {
 
   const items = [];
   let y = 0;
-  if (topLays.length) {
+  if (bandLays.length) {
     let bx = leftW || rightW ? leftW : (innerW - topBandW) / 2;
-    const bandH = Math.max(...topLays.map((l) => l.h));
-    for (const l of topLays) { items.push({ kind: 'frame', node: l.node, x: bx, y, w: l.w, h: l.h, inner: l.inner }); bx += l.w + L.sideGap; }
+    const bandH = Math.max(...bandLays.map((l) => (l.isVert ? l.yOff + l.h : l.h)));
+    for (const l of bandLays) {
+      if (l.isVert) items.push({ kind: 'plat', vertical: true, node: l.node, x: bx, y: l.yOff, w: l.w, h: l.h, lines: l.lines, rotate: l.rotate, labelZone: [bx, bx + l.w] });
+      else items.push({ kind: 'frame', node: l.node, x: bx, y, w: l.w, h: l.h, inner: l.inner });
+      bx += l.w + L.sideGap;
+    }
     y += bandH;
     if (lanes.length || plats.length || botLays.length) y += L.bandGap;
   }
@@ -519,6 +542,8 @@ export function layout(model, opts = {}) {
           note: it.node.attrs.note ? wrapText(it.node.attrs.note, it.w - 48, L.noteFs).slice(0, 1) : [],
           fs: it.kind === 'lane' ? L.fs.stream : L.fs.platform,
           labelZone: [x0 + it.labelZone[0], x0 + it.labelZone[1]],
+          rotate: it.rotate,
+          vertical: it.vertical,
         };
       }
     }
@@ -595,15 +620,18 @@ export function layout(model, opts = {}) {
         }
       }
       const f = facing(P, Q, xOverride);
+      const sideways = f.axis === 'h' && (P.vertical || Q.vertical);
       if (Q.kind !== 'frame') {
-        // the point reaches the far edge of a team, so the wedge covers it
+        // the point reaches the far edge of a team, so the wedge covers it — except a vertical
+        // platform's service into a lane, which is a short sideways tab, not a full-width wedge
         if (f.axis === 'v') f.to = { x: f.to.x, y: P.y < Q.y ? Q.y + Q.h : Q.y };
+        else if (sideways) f.to = { x: f.from.x + (P.x < Q.x ? 1 : -1) * L.sideTab, y: f.to.y };
         else if (f.axis === 'h') f.to = { x: P.x < Q.x ? Q.x + Q.w : Q.x, y: f.to.y };
       }
       const dx = f.to.x - f.from.x, dy = f.to.y - f.from.y, len = Math.hypot(dx, dy);
       if (len < 2) continue;
       const ux = dx / len, uy = dy / len, nx = -uy, ny = ux;
-      const hw = Math.min((slot ? slot.w : L.wedgeW) / 2, len * 0.35);
+      const hw = Math.min((slot ? slot.w : sideways ? L.sideTab * 0.6 : L.wedgeW) / 2, len * 0.35);
       const points = [
         { x: f.from.x + nx * hw, y: f.from.y + ny * hw },
         { x: f.from.x - nx * hw, y: f.from.y - ny * hw },

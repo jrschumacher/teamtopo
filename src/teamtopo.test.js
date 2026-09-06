@@ -216,6 +216,42 @@ test('wedges between frames are spread apart', () => {
   assert.equal(new Set(xs).size, 4, 'four wedges, four columns');
 });
 
+test('a platform [orient=vertical] sits between the frames it is declared beside, spanning their lane extents', () => {
+  const lay = layout(parse(`teamTopology
+    group a {
+      stream x
+    }
+    platform mid "Mid" [orient=vertical]
+    group b {
+      stream y1
+      stream y2
+    }
+    mid --> y1, y2
+    a --> mid`));
+  const { mid, a, b } = lay.boxes;
+  assert.equal(mid.kind, 'plat');
+  assert.ok(mid.vertical, 'flagged as a vertical platform, not a full-width bar');
+  assert.ok(mid.x > a.x + a.w && mid.x + mid.w < b.x, 'column sits in the gap between the two frames');
+  assert.ok(mid.h < a.h && mid.h < b.h, 'height follows the lanes it serves, not the whole frame');
+
+  const wedges = lay.edges.filter((e) => e.geo.kind === 'wedge');
+  assert.equal(wedges.length, 3, 'one wedge per interaction, not one fan-out per side');
+  for (const { geo } of wedges) assert.equal(geo.axis, 'h', 'sideways into a lane, not a diagonal spike');
+});
+
+test('a vertical platform wedge into a lane is a short tab, not a full-width wedge', () => {
+  const lay = layout(parse(`teamTopology
+    platform mid "Mid" [orient=vertical]
+    group b {
+      stream y1 "A rather long lane label that would otherwise stretch the wedge"
+    }
+    mid --> y1`));
+  const { mid, y1 } = lay.boxes;
+  const [{ geo }] = lay.edges;
+  const apexX = geo.points[2].x;
+  assert.ok(apexX < y1.x + y1.w * 0.3, 'point stops well short of the far edge of the lane');
+});
+
 test('root-level overlays get their own column beside a band of frames', () => {
   const lay = layout(parse(`teamTopology
     group g1 {
