@@ -8,9 +8,10 @@
     "teamtopo": "src/cli.js"
   },
   "scripts": {
-    "test": "node --test src/*.test.js",
+    "test": "node --test src/*.test.js scripts/*.test.mjs",
     "build": "node build.js",
-    "examples": "node build.js --examples"
+    "examples": "node build.js --examples",
+    "articles": "node scripts/articles.mjs"
   },
   "license": "MIT",
   "repository": {
