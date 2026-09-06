@@ -1,0 +1,6 @@
+dist
+node_modules
+.wrangler
+public/catalog.json
+package-lock.json
+worker-configuration.d.ts

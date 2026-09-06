@@ -1,0 +1,32 @@
+{
+	"name": "teamtopo-app",
+	"private": true,
+	"version": "0.1.0",
+	"type": "module",
+	"scripts": {
+		"dev": "vite",
+		"build": "npm run catalog && vite build",
+		"preview": "vite preview",
+		"deploy": "npm run build && wrangler d1 migrations apply DB --remote && wrangler deploy",
+		"test": "vitest run --reporter=dot",
+		"typecheck": "tsc --noEmit",
+		"lint": "prettier --check . --log-level warn && eslint . --quiet",
+		"format": "prettier --write . --log-level warn",
+		"catalog": "node scripts/catalog.mjs",
+		"types": "wrangler types"
+	},
+	"devDependencies": {
+		"@cloudflare/vite-plugin": "1.54.2",
+		"@cloudflare/vitest-pool-workers": "0.22.0",
+		"@cloudflare/workers-types": "5.20260829.1",
+		"eslint": "10.9.1",
+		"eslint-config-prettier": "10.1.8",
+		"happy-dom": "20.11.15",
+		"prettier": "3.9.6",
+		"typescript": "5.9.3",
+		"typescript-eslint": "8.68.0",
+		"vite": "8.2.2",
+		"vitest": "4.1.11",
+		"wrangler": "4.127.1"
+	}
+}

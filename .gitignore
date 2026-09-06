@@ -1,1 +1,6 @@
 node_modules/
+app/dist
+app/node_modules
+app/.wrangler
+app/.dev.vars
+app/worker-configuration.d.ts

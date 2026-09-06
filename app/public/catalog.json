@@ -1,0 +1,27 @@
+[
+	{
+		"name": "ecommerce",
+		"title": "E-commerce product organisation",
+		"source": "teamTopology\n  title E-commerce product organisation\n  flow Flow of change\n  legend\n\n  %% Stream-aligned teams own a slice of the product end to end\n  stream   checkout   \"Checkout\"            [size=7]\n  stream   search     \"Search & Discovery\"  [size=6]\n  stream   accounts   \"Accounts & Identity\" [size=5]\n\n  %% Enabling teams lift the capability of stream teams, then move on\n  enabling devex      \"Developer Experience\"\n\n  %% Complicated subsystems need deep specialist knowledge\n  subsystem ranking   \"Ranking Engine\" [note=\"ML relevance model\"]\n\n  %% Platforms reduce cognitive load for the teams above\n  platform  infra     \"Infrastructure Platform\" [note=\"Kubernetes, CI, observability\"]\n  platform  payments  \"Payments Platform\"\n\n  %% Interactions\n  infra    --> checkout, search, accounts : Kubernetes & CI [duration=ongoing]\n  payments --> checkout                   : Payments API\n  ranking  --> search                     : Ranking API\n  search   <--> ranking                   : new signals\n  devex    ~~> checkout, accounts         : CI pipelines [duration=\"until Q3\"]\n\n  %% Expected soon: drawn dashed, listed under \"teams we expect to interact with soon\"\n  search <--> accounts : personalised results [soon, duration=\"8 weeks\"]\n\n  %% Team API fields the diagram cannot infer (see the Team API panel / --api)\n  api checkout {\n    focus: the checkout experience end to end\n    software: checkout-service, cart-ui\n    SLE: 99.9% availability, p95 < 300 ms\n    versioning: semver, two releases of deprecation notice\n    wiki: checkout, cart, basket\n    chat: #checkout #checkout-alerts\n    sync: 09:30 UTC\n    working on: migrating to the new payments API\n    ways of working: trunk-based development, pairing on Tuesdays\n    improvements: shared on-call rotation with Accounts\n  }\n"
+	},
+	{
+		"name": "minimal",
+		"title": "minimal",
+		"source": "teamTopology\n  stream app \"Product Team\"\n  platform infra \"Platform\"\n  infra --> app\n"
+	},
+	{
+		"name": "org-groups",
+		"title": "Product organisation",
+		"source": "teamTopology\n  title Product organisation\n\n  group customer \"Customer Group\" {\n    stream accounts \"Accounts\"\n    stream business \"Business\"\n    stream success  \"Customer Success\"\n    stream billing  \"Billing\"\n    subsystem data1 \"Data\"\n    subsystem sec1  \"Security\"\n    enabling ux1    \"UX Research\"\n    platform frontend \"Frontend Platform\"\n\n    data1 --> accounts\n    sec1  --> accounts\n    frontend --> accounts, billing\n    ux1 ~~> accounts, business, success, billing\n  }\n\n  group content \"Content Group\" {\n    stream runtime   \"Runtime\"\n    stream registry  \"Registry\"\n    stream build     \"Build\"\n    stream consumer  \"Content Consumer\"\n    stream publisher \"Content Publisher\"\n    subsystem data2  \"Data\"\n    enabling ux2     \"UX Research\"\n\n    data2 --> publisher\n    ux2 ~~> runtime, registry, build, consumer, publisher\n  }\n\n  group devexp \"Developer Experience Group\" {\n    stream pos   \"Programmable OS\"\n    stream inner \"Inner Loop\"\n    subsystem data3 \"Data\"\n    enabling ux3    \"UX Research\"\n    platform desktop \"Desktop Platform\"\n\n    data3 --> inner\n    desktop --> pos\n    ux3 ~~> pos, inner\n  }\n\n  platform cloud \"Cloud Group\" {\n    platform saas  \"SaaS Platform\"\n    platform infra \"Infrastructure\"\n    subsystem sec2 \"Security\"\n    subsystem data4 \"Data\"\n    infra --> saas\n  }\n\n  ux1 <--> content\n  ux2 <--> devexp\n  saas --> frontend, desktop\n  saas --> content\n"
+	},
+	{
+		"name": "platform-grouping",
+		"title": "Platform grouping",
+		"source": "teamTopology\n  title Platform grouping\n  flow\n\n  stream mobile \"Mobile App\"\n  stream web    \"Web Storefront\"\n  enabling sre  \"SRE Coaching\"\n\n  %% A platform can itself be a topology of teams\n  platform cloud \"Cloud Platform\" {\n    stream    k8s   \"Kubernetes\"\n    stream    obs   \"Observability\"\n    subsystem net   \"Network Fabric\"\n    platform  bare  \"Bare-metal Fleet\"\n\n    bare --> k8s, obs\n    net  --> k8s : overlay networking\n  }\n\n  k8s --> mobile, web       : runtime\n  obs --> mobile, web       : dashboards & alerts\n  sre ~~> web               : incident reviews\n  mobile <--> web           : shared design system\n"
+	},
+	{
+		"name": "value-streams",
+		"title": "Two value streams sharing one platform",
+		"source": "teamTopology\n  title Two value streams sharing one platform\n  flow\n\n  group retail \"Retail\" [kind=\"value stream\"] {\n    stream storefront \"Storefront\"\n    stream fulfilment \"Fulfilment\"\n    storefront <--> fulfilment : order events\n  }\n\n  group b2b \"Business\" [kind=\"value stream\"] {\n    stream catalog \"Catalog\"\n    stream invoicing \"Invoicing\"\n  }\n\n  enabling  security \"Security Enablement\"\n  subsystem tax      \"Tax Calculation\"\n  platform  core     \"Core Platform\" [note=\"identity, billing, data\"]\n\n  core --> storefront, fulfilment, catalog, invoicing\n  tax  --> invoicing, storefront : tax rules API\n  security ~~> catalog, storefront : threat modelling\n"
+	}
+]
