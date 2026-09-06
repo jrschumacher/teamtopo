@@ -214,6 +214,39 @@ directive), `idPrefix` (when several diagrams share a page), `fontFamily`.
 `layout` returns absolute boxes per team plus one geometry per interaction
 (`wedge`, `bridge`, `patch` or `band`), which is what the tests assert against.
 
+## Articles
+
+`content/articles/*.md` are long-form articles built into a small static site with
+the same zero-dependency approach as the rest of the project:
+
+```bash
+npm run articles                                     # → public/articles/
+node scripts/articles.mjs --out dist/blog --base /blog   # from another build, e.g. the hosted app
+```
+
+The build writes `<out>/<slug>/index.html` per article (slug = filename without
+`.md`), `<out>/index.html` listing non-draft articles newest first, and
+`<out>/feed.xml` (RSS 2.0). Markdown is rendered by `scripts/markdown.mjs`
+(headings with ids, lists, tables, fenced code, blockquotes; raw HTML is escaped).
+A fenced block tagged ` ```teamtopo ` is rendered through `render()` into inline SVG;
+a diagram that fails to parse fails the build, naming the article and line.
+
+Each article starts with a front matter block:
+
+```
+---
+title: Agentic Teams on Team Topologies
+date: 2026-09-05
+author: Ryan Schumacher
+summary: One sentence, used for the listing, meta description and feed.
+tags: team-topologies, ai-agents, org-design
+draft: true        # optional; still built, but left out of the index and feed
+---
+```
+
+`title`, `date` (YYYY-MM-DD), `author`, `summary` and `tags` (comma-separated) are
+required. The title is rendered from front matter, so the body should start at `##`.
+
 ## Files
 
 ```
@@ -223,6 +256,8 @@ teamtopo/
 ├── src/cli.js             file or stdin → SVG
 ├── src/playground.html    playground template (library inlined at build time)
 ├── build.js               → public/index.html, public/teamtopo.js, examples/*.svg
+├── scripts/articles.mjs   articles build (+ markdown.mjs, article-template.mjs, tests)
+├── content/articles/*.md  articles with front matter
 ├── examples/*.tt          sample diagrams (+ rendered .svg)
 └── public/                static playground, self-contained
 ```
@@ -231,6 +266,7 @@ teamtopo/
 npm test          # run the tests
 npm run build     # rebuild public/ from src/
 npm run examples  # rebuild public/ and re-render examples/*.svg
+npm run articles  # build content/articles/ → public/articles/
 ```
 
 ## Findings

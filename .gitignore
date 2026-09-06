@@ -4,3 +4,4 @@ app/node_modules
 app/.wrangler
 app/.dev.vars
 app/worker-configuration.d.ts
+public/articles/
