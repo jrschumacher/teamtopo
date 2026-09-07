@@ -14,12 +14,14 @@ Open items after the first deploy (2026-09-05). Live at https://teamtopo.abnl.wo
   it. Wire the generated file into tsconfig or keep the cast.
 - **Preview URLs** are on by default for the workers.dev route. Set `preview_urls: false`
   if unwanted.
-- **Deploy** is `npm run deploy` in `app/` (build, remote D1 migrate, wrangler deploy).
-  Nothing deploys from CI yet.
+- **Deploy.** Cloudflare Workers Builds is connected to the GitHub repo (2026-09-07); its
+  root directory, build and deploy commands are set in the dashboard, not in the repo.
+  Manual fallback: `npm run deploy` in `app/` (build, remote D1 migrate, wrangler deploy).
 
 ## Product
 
-- Landing page restyle from the design brief (`docs/landing-design.md`).
+- Landing page: the "Skill for coding agents" card returns when #3 ships; "compare versions"
+  copy returns with #4; CLI/library card is backed by #2 (npm publish).
 - Wire the articles pipeline into the app build: call `build({ out: 'dist/client/articles',
   base: 'https://<host>/articles' })` from `scripts/articles.mjs` so `/articles` is served.
 - Team API fields for agents (scope, reviewing agent, concurrency cap) per the first article.
