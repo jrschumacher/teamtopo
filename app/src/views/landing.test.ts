@@ -80,8 +80,6 @@ describe('renderLanding', () => {
 			'cta-editor',
 			'cta-examples',
 			'trust-note',
-			'examples',
-			'examples-list',
 			'features',
 			'features-list',
 			'free',
@@ -93,9 +91,20 @@ describe('renderLanding', () => {
 			expect(root.querySelector(`#${id}`), id).not.toBeNull();
 		}
 		expect(q<HTMLAnchorElement>('#cta-editor').getAttribute('href')).toBe('/new');
-		expect(q<HTMLAnchorElement>('#cta-examples').getAttribute('href')).toBe('#examples');
+		expect(q<HTMLAnchorElement>('#cta-examples').getAttribute('href')).toBe('#hero-demo');
 		expect(root.querySelectorAll('.feature')).toHaveLength(7);
-		expect(q('#attribution').textContent).toContain('Not affiliated with or endorsed by');
+		for (const id of [
+			'feature-syntax',
+			'feature-layout',
+			'feature-team-api',
+			'feature-share',
+			'feature-private',
+			'feature-history',
+			'feature-library'
+		]) {
+			expect(root.querySelector(`#${id}`), id).not.toBeNull();
+		}
+		expect(q('#attribution').textContent).toContain('not affiliated with or endorsed by');
 		expect(q<HTMLAnchorElement>('#footer-github').getAttribute('href')).toBe(
 			'https://github.com/jrschumacher/teamtopo'
 		);
@@ -170,6 +179,31 @@ describe('renderLanding', () => {
 		expect(q('#hero-source').textContent?.length).toBeGreaterThan(paused?.length ?? 0);
 	});
 
+	it('shows a status line with team and interaction counts while typing', async () => {
+		renderLanding(root);
+		await flush();
+		vi.advanceTimersByTime(24 * 30);
+		const status = q('#hero-status-text').textContent ?? '';
+		expect(status).toMatch(/Rendering…\s+\d+\s+teams?,\s+\d+\s+interactions?/);
+	});
+
+	it('shows the finished status text and no ellipsis once typing completes', async () => {
+		renderLanding(root);
+		await flush();
+		vi.advanceTimersByTime(24 * 100);
+		expect(q('#hero-source').textContent).toBe(catalog[0].source);
+		const status = q('#hero-status-text').textContent ?? '';
+		expect(status).toMatch(/^\d+\s+teams?,\s+\d+\s+interactions?$/);
+	});
+
+	it('shows Paused in the status line while the pause control is engaged', async () => {
+		renderLanding(root);
+		await flush();
+		vi.advanceTimersByTime(24 * 3);
+		q<HTMLButtonElement>('#hero-pause').click();
+		expect(q('#hero-status-text').textContent).toBe('Paused');
+	});
+
 	it('clicking the second tab switches the source', async () => {
 		renderLanding(root);
 		await flush();
@@ -197,23 +231,6 @@ describe('renderLanding', () => {
 		expect(q('#hero-source').textContent).toBe(catalog[1].source);
 		expect(q('#hero-diagram').innerHTML).toMatch(/^<svg/);
 		expect(vi.getTimerCount()).toBe(0);
-	});
-
-	it('lists every catalog entry with a diagram and an Open in editor link', async () => {
-		renderLanding(root);
-		await flush();
-		const items = root.querySelectorAll('#examples-list .example');
-		expect(items).toHaveLength(2);
-		expect(items[0].querySelector('.example-title')?.textContent).toBe(
-			'E-commerce product organisation'
-		);
-		expect(items[0].querySelector('.example-diagram svg')).not.toBeNull();
-		expect(items[0].querySelector<HTMLAnchorElement>('.example-open')?.getAttribute('href')).toBe(
-			'/new?example=ecommerce'
-		);
-		expect(items[1].querySelector<HTMLAnchorElement>('.example-open')?.getAttribute('href')).toBe(
-			'/new?example=minimal'
-		);
 	});
 
 	it('fills the Team API snippet from the e-commerce example', async () => {
