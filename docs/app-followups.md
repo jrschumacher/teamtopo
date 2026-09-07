@@ -14,9 +14,11 @@ Open items after the first deploy (2026-09-05). Live at https://teamtopo.abnl.wo
   it. Wire the generated file into tsconfig or keep the cast.
 - **Preview URLs** are on by default for the workers.dev route. Set `preview_urls: false`
   if unwanted.
-- **Deploy.** Cloudflare Workers Builds is connected to the GitHub repo (2026-09-07); its
-  root directory, build and deploy commands are set in the dashboard, not in the repo.
-  Manual fallback: `npm run deploy` in `app/` (build, remote D1 migrate, wrangler deploy).
+- **Deploy.** Cloudflare Workers Builds is connected to the GitHub repo (2026-09-07) with
+  root directory `app`, build `npm run build`, production deploy `npm run deploy:prod`
+  (remote D1 migrate + wrangler deploy) and non-production deploy `npm run deploy:preview`
+  (`wrangler versions upload`). The dashboard only names npm scripts; the steps live in
+  `app/package.json`. Manual fallback: `npm run deploy` in `app/`.
 
 ## Product
 
