@@ -23,5 +23,46 @@
 	],
 	"send_email": [{ "name": "EMAIL", "remote": true }],
 	"vars": { "EMAIL_FROM": "hello@example.invalid" },
-	"observability": { "logs": { "enabled": true, "invocation_logs": true, "persist": true } }
+	"observability": { "logs": { "enabled": true, "invocation_logs": true, "persist": true } },
+
+	// Promotion doors — NEVER use any of these with `--env preview`. `--env preview` pairs
+	// only with `wrangler versions upload`; a version made that way binds the disposable
+	// preview D1/R2 and must never take production traffic.
+	//   1. `wrangler deploy --env preview`
+	//   2. `wrangler versions deploy --version-id <preview-version>`
+	//   3. `wrangler rollback <preview-version-id>` targeting a preview-tagged version
+	//   4. Dashboard → Worker → Versions → deploy a `preview-*` tagged version
+	//
+	// `-c wrangler.jsonc` is load-bearing on every `wrangler deploy` / `versions upload` in
+	// package.json. After `npm run build`, @cloudflare/vite-plugin leaves a "redirected"
+	// config at dist/teamtopo/wrangler.json that wrangler auto-prefers over this file — and
+	// that generated file drops the env.preview block entirely (verified wrangler 4.127.1),
+	// silently deploying preview builds against PRODUCTION bindings. `-c wrangler.jsonc`
+	// forces wrangler to read this file instead of the redirect. Never remove it from a
+	// deploy/versions-upload script.
+	"env": {
+		"preview": {
+			"name": "teamtopo",
+			"assets": {
+				"directory": "./dist/client",
+				"not_found_handling": "single-page-application",
+				"run_worker_first": ["/api/*"]
+			},
+			"r2_buckets": [{ "binding": "DOCS", "bucket_name": "teamtopo-docs-preview" }],
+			"d1_databases": [
+				{
+					"binding": "DB",
+					"database_name": "teamtopo-preview",
+					"database_id": "a7b62186-04f9-461a-99b6-d69a74a11b42",
+					"migrations_dir": "migrations"
+				}
+			],
+			"ratelimits": [
+				{ "name": "WRITE_LIMIT", "namespace_id": "1001", "simple": { "limit": 30, "period": 60 } }
+			],
+			"send_email": [{ "name": "EMAIL", "remote": true }],
+			"vars": { "EMAIL_FROM": "hello@example.invalid", "STAGE": "preview" },
+			"observability": { "logs": { "enabled": true, "invocation_logs": true, "persist": true } }
+		}
+	}
 }

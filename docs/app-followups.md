@@ -16,9 +16,20 @@ Open items after the first deploy (2026-09-05). Live at https://teamtopo.abnl.wo
   if unwanted.
 - **Deploy.** Cloudflare Workers Builds is connected to the GitHub repo (2026-09-07) with
   root directory `app`, build `npm run build`, production deploy `npm run deploy:prod`
-  (remote D1 migrate + wrangler deploy) and non-production deploy `npm run deploy:preview`
-  (`wrangler versions upload`). The dashboard only names npm scripts; the steps live in
-  `app/package.json`. Manual fallback: `npm run deploy` in `app/`.
+  (remote D1 migrate + `wrangler deploy`) and non-production deploy `npm run deploy:preview`
+  (reset the preview D1, remote-migrate it, then `wrangler versions upload --env preview`
+  tagged `preview-$WORKERS_CI_BRANCH`). The dashboard only names npm scripts; the steps live
+  in `app/package.json`. Manual fallback: `npm run deploy` in `app/`.
+- **Preview environment.** `env.preview` in `app/wrangler.jsonc` reuses the same Worker
+  (`name: "teamtopo"`) with its own disposable D1 (`teamtopo-preview`) and R2 bucket
+  (`teamtopo-docs-preview`). The preview database is reset (every table, including
+  `d1_migrations`, dropped and migrations reapplied) on every `deploy:preview` run via
+  `app/scripts/d1-reset.mjs` — it holds nothing worth keeping, and a preview URL is only
+  valid until the next preview build resets it. `STAGE=preview` is set only in `env.preview`;
+  `worker/index.ts` refuses with 503 if a preview-staged version ever answers the production
+  hostname. Never run `wrangler deploy --env preview`, `versions deploy`, or `rollback`
+  against a `preview-*` tagged version — those are the promotion doors, and using any of them
+  ships preview bindings to production traffic.
 
 ## Product
 

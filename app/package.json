@@ -8,14 +8,19 @@
 		"build": "npm run catalog && vite build",
 		"preview": "vite preview",
 		"deploy": "npm run build && npm run deploy:prod",
-		"deploy:prod": "wrangler d1 migrations apply DB --remote && wrangler deploy",
-		"deploy:preview": "wrangler versions upload",
+		"deploy:prod": "wrangler d1 migrations apply DB --remote -c wrangler.jsonc && wrangler deploy -c wrangler.jsonc",
+		"db:reset:preview": "node scripts/d1-reset.mjs",
+		"deploy:preview": "npm run db:reset:preview && wrangler d1 migrations apply DB --remote --env preview -c wrangler.jsonc && wrangler versions upload --env preview -c wrangler.jsonc --tag \"preview-${WORKERS_CI_BRANCH:-local}\"",
+		"migrate": "wrangler d1 migrations apply DB --local",
+		"migrate:local": "wrangler d1 migrations apply DB --local",
+		"migrate:new": "wrangler d1 migrations create DB",
 		"test": "vitest run --reporter=dot",
 		"typecheck": "tsc --noEmit",
 		"lint": "prettier --check . --log-level warn && eslint . --quiet",
 		"format": "prettier --write . --log-level warn",
 		"catalog": "node scripts/catalog.mjs",
-		"types": "wrangler types"
+		"types": "wrangler types",
+		"check": "npm run typecheck && npm run lint && npm run test"
 	},
 	"devDependencies": {
 		"@cloudflare/vite-plugin": "1.54.2",
