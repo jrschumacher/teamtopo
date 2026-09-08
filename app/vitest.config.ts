@@ -15,7 +15,16 @@ export default defineConfig({
 			{
 				resolve: { alias: { '@lib/teamtopo': lib } },
 				server: { fs: { allow: [repoRoot] } },
-				test: { name: 'client', environment: 'happy-dom', include: ['src/**/*.test.ts'] }
+				test: {
+					name: 'client',
+					environment: 'happy-dom',
+					// External <script src> (the Web Analytics beacon) is never fetched in tests;
+					// treat the disabled load as success instead of logging a NotSupportedError.
+					environmentOptions: {
+						happyDOM: { settings: { handleDisabledFileLoadingAsSuccess: true } }
+					},
+					include: ['src/**/*.test.ts']
+				}
 			},
 			{
 				test: { name: 'scripts', environment: 'node', include: ['scripts/**/*.test.ts'] }

@@ -3,7 +3,7 @@
  * `OpenedDoc` contract in ./types.ts that the views consume.
  */
 
-import { createDoc, getDoc, getVersion, saveDoc } from './api';
+import { createDoc, getDoc, getVersion, saveDoc, type GetDocOptions } from './api';
 import { CryptoError, decrypt, deriveKeys, encrypt, importViewKey, newSecret } from './crypto';
 import { editLink, parseFragment, viewLink } from './links';
 import type { OpenedDoc, Version } from './types';
@@ -104,9 +104,13 @@ function attachSave(doc: OpenedDoc, key: CryptoKey, writeToken: string): OpenedD
 	return doc;
 }
 
-export async function openDocument(id: string, hash: string): Promise<OpenedDoc> {
+export async function openDocument(
+	id: string,
+	hash: string,
+	opts: GetDocOptions = {}
+): Promise<OpenedDoc> {
 	const opener = await openKeys(hash);
-	const res = await getDoc(id);
+	const res = await getDoc(id, opts);
 	const source = await decryptOrLinkError(opener.key, res.payload);
 	const doc = buildDoc(id, source, res.version, res.versions, opener);
 	return opener.writeToken ? attachSave(doc, opener.key, opener.writeToken) : doc;

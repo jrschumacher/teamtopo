@@ -1,5 +1,6 @@
 import type { Env } from './index';
 import { error, json, redirect } from './http';
+import { ROUTES, track } from './analytics';
 
 const MAX_EMAIL_LENGTH = 254;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -127,12 +128,15 @@ async function handleSignup(
 				.run();
 		}
 		ctx.waitUntil(sendConfirmationMail(env, url, email, token));
+		// Counted only when a confirmation actually goes out; a repeat POST from an already
+		// confirmed address is a no-op, not a signup.
+		track(env, ctx, { type: 'subscribe', route: ROUTES.subscribe });
 	}
 
 	return json({ ok: true }, 202);
 }
 
-async function handleConfirm(env: Env, url: URL): Promise<Response> {
+async function handleConfirm(env: Env, ctx: ExecutionContext, url: URL): Promise<Response> {
 	const token = url.searchParams.get('t');
 	const expired = redirect(`${url.origin}/?subscribe=expired`);
 	if (!token) return expired;
@@ -148,6 +152,7 @@ async function handleConfirm(env: Env, url: URL): Promise<Response> {
 	await env.DB.prepare('UPDATE subscribers SET confirmed_at = ? WHERE token = ?')
 		.bind(new Date().toISOString(), token)
 		.run();
+	track(env, ctx, { type: 'subscribe_confirm', route: ROUTES.confirm });
 	return redirect(`${url.origin}/?subscribed=1`);
 }
 
@@ -176,7 +181,7 @@ export async function handleSubscribe(
 
 	if (segments.length === 1 && segments[0] === 'confirm') {
 		if (request.method !== 'GET') return error('method_not_allowed', 'method not allowed', 405);
-		return handleConfirm(env, url);
+		return handleConfirm(env, ctx, url);
 	}
 
 	if (segments.length === 1 && segments[0] === 'unsubscribe') {

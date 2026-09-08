@@ -33,6 +33,16 @@ describe('api', () => {
 		expect(JSON.parse(String(init?.body))).toEqual({ payload: '{"v":1}' });
 	});
 
+	it('getDoc marks team-page reads with ?view=team and nothing else', async () => {
+		fetchMock.mockResolvedValue(
+			jsonResponse(200, { id: 'doc1', version: V, versions: [V], payload: 'p' })
+		);
+		await getDoc('doc1');
+		expect(fetchMock.mock.calls[0][0]).toBe('/api/docs/doc1');
+		await getDoc('doc1', { view: 'team' });
+		expect(fetchMock.mock.calls[1][0]).toBe('/api/docs/doc1?view=team');
+	});
+
 	it('getDoc returns versions newest first as given and normalizes timestamps', async () => {
 		const older = { id: '00000000000000-zzzz', at: 1_600_000_000_000, size: 10 };
 		fetchMock.mockResolvedValue(

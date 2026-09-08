@@ -6,6 +6,7 @@
 import { render, teamApi } from '@lib/teamtopo';
 import { countInteractions, countTeams, highlight } from '../lib/highlight';
 import { escapeHtml } from '../lib/markdown';
+import { mountWebAnalytics, webAnalyticsToken } from '../lib/webAnalytics';
 import { renderSignup } from './subscribe';
 import './landing.css';
 
@@ -31,6 +32,7 @@ const disposers = new WeakMap<HTMLElement, () => void>();
 export function renderLanding(root: HTMLElement): void {
 	disposers.get(root)?.();
 	root.innerHTML = shell();
+	mountWebAnalytics(webAnalyticsToken());
 
 	let live = true;
 	const cleanups: (() => void)[] = [() => (live = false)];

@@ -88,7 +88,7 @@ async function show(route: Route | null, root: HTMLElement): Promise<void> {
 				return;
 			}
 			case 'team': {
-				const doc = await openDocument(route.params.id, location.hash);
+				const doc = await openDocument(route.params.id, location.hash, { view: 'team' });
 				if (stale()) return;
 				renderTeamView(root, doc, route.params.teamId);
 				return;

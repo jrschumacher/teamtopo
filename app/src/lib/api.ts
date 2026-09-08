@@ -78,8 +78,14 @@ export async function createDoc(payload: string, writeToken: string): Promise<Do
 	return toRef(await request('/api/docs', jsonInit('POST', { payload }, writeToken)));
 }
 
-export async function getDoc(id: string): Promise<DocResponse> {
-	const body = await request(`/api/docs/${encodeURIComponent(id)}`, { method: 'GET' });
+/** Which page is asking. The response is identical; the worker only uses it for usage analytics. */
+export interface GetDocOptions {
+	view?: 'team';
+}
+
+export async function getDoc(id: string, opts: GetDocOptions = {}): Promise<DocResponse> {
+	const query = opts.view ? `?view=${opts.view}` : '';
+	const body = await request(`/api/docs/${encodeURIComponent(id)}${query}`, { method: 'GET' });
 	const versions = Array.isArray(body.versions) ? body.versions.map(normalizeVersion) : [];
 	return { ...toRef(body), versions, payload: String(body.payload ?? '') };
 }

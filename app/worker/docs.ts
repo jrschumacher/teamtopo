@@ -1,5 +1,6 @@
 import type { Env } from './index';
 import { json } from './http';
+import { ROUTES, track } from './analytics';
 
 const MAX_PAYLOAD_BYTES = 262144;
 const MAX_VERSIONS = 100;
@@ -133,7 +134,7 @@ function payloadValidationFailure(reason: string): Response {
 		: fail('bad_request', reason, 400);
 }
 
-async function createDoc(request: Request, env: Env): Promise<Response> {
+async function createDoc(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
 	const token = bearerToken(request);
 	if (!token) return fail('unauthorized', 'missing bearer token', 401);
 
@@ -156,10 +157,22 @@ async function createDoc(request: Request, env: Env): Promise<Response> {
 	const meta: DocMeta = { id, tokenHash, createdAt: at, latest: vid, versions: [version] };
 	await writeMeta(env, meta);
 
+	track(env, ctx, {
+		type: 'doc_create',
+		route: ROUTES.docs,
+		docId: id,
+		payloadBytes: version.size,
+		versionCount: 1
+	});
 	return noStore({ id, version }, 201);
 }
 
-async function getDoc(env: Env, id: string): Promise<Response> {
+async function getDoc(
+	env: Env,
+	ctx: ExecutionContext,
+	id: string,
+	view: 'doc_view' | 'team_view'
+): Promise<Response> {
 	const meta = await readMeta(env, id);
 	if (!meta) return fail('not_found', 'no such document', 404);
 
@@ -168,10 +181,22 @@ async function getDoc(env: Env, id: string): Promise<Response> {
 	if (!latestVersion || !payloadObj) return fail('not_found', 'no such version', 404);
 
 	const payload = await payloadObj.text();
+	track(env, ctx, {
+		type: view,
+		route: ROUTES.doc,
+		docId: id,
+		payloadBytes: latestVersion.size,
+		versionCount: meta.versions.length
+	});
 	return noStore({ id: meta.id, version: latestVersion, versions: meta.versions, payload }, 200);
 }
 
-async function getVersion(env: Env, id: string, vid: string): Promise<Response> {
+async function getVersion(
+	env: Env,
+	ctx: ExecutionContext,
+	id: string,
+	vid: string
+): Promise<Response> {
 	const meta = await readMeta(env, id);
 	if (!meta) return fail('not_found', 'no such document', 404);
 
@@ -180,10 +205,22 @@ async function getVersion(env: Env, id: string, vid: string): Promise<Response> 
 	if (!version || !obj) return fail('not_found', 'no such version', 404);
 
 	const payload = await obj.text();
+	track(env, ctx, {
+		type: 'version_view',
+		route: ROUTES.version,
+		docId: id,
+		payloadBytes: version.size,
+		versionCount: meta.versions.length
+	});
 	return noStore({ id: meta.id, version, payload }, 200);
 }
 
-async function putDoc(request: Request, env: Env, id: string): Promise<Response> {
+async function putDoc(
+	request: Request,
+	env: Env,
+	ctx: ExecutionContext,
+	id: string
+): Promise<Response> {
 	const meta = await readMeta(env, id);
 	if (!meta) return fail('not_found', 'no such document', 404);
 
@@ -226,20 +263,27 @@ async function putDoc(request: Request, env: Env, id: string): Promise<Response>
 	}
 
 	await writeMeta(env, meta);
+	track(env, ctx, {
+		type: 'doc_save',
+		route: ROUTES.doc,
+		docId: id,
+		payloadBytes: version.size,
+		versionCount: meta.versions.length
+	});
 	return noStore({ id, version }, 200);
 }
 
 export async function handleDocs(
 	request: Request,
 	env: Env,
-	_ctx: ExecutionContext,
+	ctx: ExecutionContext,
 	url: URL
 ): Promise<Response> {
 	const segments = url.pathname.split('/').filter(Boolean).slice(2);
 
 	if (segments.length === 0) {
 		if (request.method !== 'POST') return fail('method_not_allowed', 'method not allowed', 405);
-		return createDoc(request, env);
+		return createDoc(request, env, ctx);
 	}
 
 	const idResult = validateId(segments[0]);
@@ -247,14 +291,19 @@ export async function handleDocs(
 	const id = idResult.value;
 
 	if (segments.length === 1) {
-		if (request.method === 'GET') return getDoc(env, id);
-		if (request.method === 'PUT') return putDoc(request, env, id);
+		if (request.method === 'GET') {
+			// The team page fetches the same document; the client marks it with `?view=team`
+			// so usage analytics can tell the two apart. The response is identical.
+			const view = url.searchParams.get('view') === 'team' ? 'team_view' : 'doc_view';
+			return getDoc(env, ctx, id, view);
+		}
+		if (request.method === 'PUT') return putDoc(request, env, ctx, id);
 		return fail('method_not_allowed', 'method not allowed', 405);
 	}
 
 	if (segments.length === 3 && segments[1] === 'versions') {
 		if (request.method !== 'GET') return fail('method_not_allowed', 'method not allowed', 405);
-		return getVersion(env, id, segments[2]);
+		return getVersion(env, ctx, id, segments[2]);
 	}
 
 	return fail('not_found', 'no such route', 404);
