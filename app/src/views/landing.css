@@ -349,11 +349,16 @@
 	user-select: none;
 }
 
+/* `.hero-code` is the only scroller, on both axes (same shape as the editor's `.ed-code` /
+   `.ed-code-main`): the source `pre` never clips, and `min-width: 0` keeps its long lines
+   from widening the 1fr column (or the stacked pane above it), so they spill into the grid
+   container's scrollable area instead of growing a second scrollbar of their own. */
 .hero-source {
 	margin: 0;
 	padding: 12px 14px;
+	min-width: 0;
 	white-space: pre;
-	overflow-x: auto;
+	overflow: visible;
 	color: var(--fg);
 }
 
