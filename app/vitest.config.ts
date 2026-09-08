@@ -9,7 +9,15 @@ export default defineConfig({
 	test: {
 		projects: [
 			{
-				plugins: [cloudflareTest({ wrangler: { configPath: './wrangler.jsonc' } })],
+				plugins: [
+					cloudflareTest({
+						wrangler: { configPath: './wrangler.jsonc' },
+						// `send_email` carries `remote: true` for `wrangler dev`. The pool honours it
+						// too (default `remoteBindings: true`), which would connect the test Worker to
+						// the live Email binding and send real confirmation mail. Keep tests local.
+						remoteBindings: false
+					})
+				],
 				test: { name: 'worker', include: ['worker/**/*.test.ts'] }
 			},
 			{
