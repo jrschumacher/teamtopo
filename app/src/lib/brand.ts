@@ -1,3 +1,9 @@
+/** Browser tab title: "<diagram title> · teamtopo" when the source names one, else "teamtopo". */
+export function pageTitle(title?: string | null): string {
+	const t = title?.trim();
+	return t ? `${t} · teamtopo` : 'teamtopo';
+}
+
 /** Four-square wordmark, shared by the editor and viewer header shells (see editor.css). */
 export function brandMarkHtml(): string {
 	return (

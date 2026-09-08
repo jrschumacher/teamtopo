@@ -4,7 +4,7 @@
  */
 
 import { parse, render, type Model } from '@lib/teamtopo';
-import { brandMarkHtml } from '../lib/brand';
+import { brandMarkHtml, pageTitle } from '../lib/brand';
 import { docPath, teamLink, versionLink } from '../lib/links';
 import { escapeHtml } from '../lib/markdown';
 import { setupPopovers } from '../lib/popover';
@@ -117,6 +117,7 @@ export function renderViewer(root: HTMLElement, doc: OpenedDoc, opts: ViewerOpti
 		diagram = `<p class="empty">This diagram has a syntax error: ${escapeHtml(e instanceof Error ? e.message : String(e))}</p>`;
 	}
 	const title = model?.title || 'Untitled diagram';
+	document.title = pageTitle(model?.title);
 
 	root.innerHTML = `
 	<div class="ed-shell">

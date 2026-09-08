@@ -45,6 +45,14 @@ describe('renderTeamView', () => {
 		root = document.createElement('div');
 	});
 
+	it('sets the tab title from the diagram title', () => {
+		renderTeamView(root, makeDoc(), 'checkout');
+		expect(document.title).toBe('teamtopo');
+		const titled = SRC.replace('teamTopology', 'teamTopology\n  title Shop');
+		renderTeamView(root, makeDoc({ source: titled }), 'checkout');
+		expect(document.title).toBe('Shop · teamtopo');
+	});
+
 	it('renders the team focus text and a breadcrumb back to the diagram', () => {
 		renderTeamView(root, makeDoc(), 'checkout');
 		expect(root.textContent).toContain('the checkout experience end to end');

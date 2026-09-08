@@ -8,7 +8,7 @@
 
 import { parse, ParseError, render, teamApi, type Model, type Node } from '@lib/teamtopo';
 import { ApiError } from '../lib/api';
-import { brandMarkHtml } from '../lib/brand';
+import { brandMarkHtml, pageTitle } from '../lib/brand';
 import { createDocument } from '../lib/doc';
 import { highlight } from '../lib/highlight';
 import { teamLink, versionLink } from '../lib/links';
@@ -203,6 +203,7 @@ export function renderEditor(
 	opts: EditorOptions = {}
 ): void {
 	disposers.get(root)?.();
+	document.title = pageTitle();
 	root.innerHTML = shell(doc);
 
 	const $ = <T extends HTMLElement>(sel: string) => root.querySelector<T>(sel)!;
@@ -302,6 +303,7 @@ export function renderEditor(
 			status.classList.remove('error');
 			lastError = null;
 			titleEl.textContent = model.title?.trim() || 'Untitled diagram';
+			document.title = pageTitle(model.title);
 			const t1 = typeof performance !== 'undefined' ? performance.now() : Date.now();
 			renderStatus.textContent = `rendered in ${Math.max(0, Math.round(t1 - t0))} ms`;
 			renderApiGrid();
