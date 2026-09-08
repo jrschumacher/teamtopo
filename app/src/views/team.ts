@@ -268,22 +268,24 @@ function interactionsHtml(model: Model, doc: OpenedDoc, teamId: string): string 
 	`;
 }
 
+function teamRowHtml(doc: OpenedDoc, t: Node, isCurrent: boolean): string {
+	const rowInner = `
+			${chipHtml(t.type, 'sm')}
+			<span class="tm-other-name">${escapeHtml(t.label)}</span>
+			<span class="tm-other-id">${escapeHtml(t.id)}</span>
+	`;
+	if (isCurrent) {
+		return `<div class="tm-other-link tm-other-current" aria-current="page">${rowInner}</div>`;
+	}
+	return `<a class="tm-other-link" href="${teamLink(doc.id, t.id, doc.fragment)}">${rowInner}</a>`;
+}
+
 function asideHtml(model: Model, doc: OpenedDoc, teamId: string, teamLabel: string): string {
 	const docHref = `${docPath(doc.id)}${doc.fragment}`;
-	const others = otherTeams(model, teamId);
-	const teamLinksHtml = others.length
-		? others
-				.map(
-					(t) => `
-			<a class="tm-other-link" href="${teamLink(doc.id, t.id, doc.fragment)}">
-				${chipHtml(t.type, 'sm')}
-				<span class="tm-other-name">${escapeHtml(t.label)}</span>
-				<span class="tm-other-id">${escapeHtml(t.id)}</span>
-			</a>
-		`
-				)
-				.join('')
-		: '<p class="tm-empty-value">No other teams.</p>';
+	const teams = model.teams.filter((t) => t.type !== 'group');
+	const teamLinksHtml = teams.length
+		? teams.map((t) => teamRowHtml(doc, t, t.id === teamId)).join('')
+		: '<p class="tm-empty-value">No teams.</p>';
 
 	return `
 		<aside class="tm-aside">
@@ -295,7 +297,7 @@ function asideHtml(model: Model, doc: OpenedDoc, teamId: string, teamLabel: stri
 				<p class="tm-diagram-caption">${escapeHtml(teamLabel)} highlighted. Click any team in the live diagram to open its Team API page.</p>
 			</section>
 			<section class="tm-card">
-				<h2 class="tm-section-title">Other teams</h2>
+				<h2 class="tm-section-title">Teams</h2>
 				<div class="tm-other-list">${teamLinksHtml}</div>
 			</section>
 			<p class="tm-attribution">Team API template &middot; <a href="https://creativecommons.org/licenses/by-sa/4.0/">CC BY-SA 4.0</a></p>

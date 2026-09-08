@@ -303,6 +303,12 @@
 	display: contents;
 }
 
+#api-body {
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+}
+
 /* ── sticky save/cancel bar ── */
 .tm-sticky-bar {
 	position: sticky;
@@ -443,6 +449,12 @@
 
 .tm-other-link:hover {
 	background: var(--accent-soft);
+}
+
+.tm-other-current {
+	background: var(--accent-soft);
+	color: var(--fg);
+	cursor: default;
 }
 
 .tm-other-name {

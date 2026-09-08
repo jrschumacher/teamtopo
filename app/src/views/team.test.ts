@@ -53,13 +53,24 @@ describe('renderTeamView', () => {
 		expect(back!.getAttribute('href')).toBe('/d/doc1#k=abc');
 	});
 
-	it('lists every other team with fragment-preserving hrefs', () => {
+	it('lists every team including the current one, in declaration order, with fragment-preserving hrefs', () => {
 		renderTeamView(root, makeDoc(), 'checkout');
-		const links = Array.from(root.querySelectorAll('a')).map((a) => a.getAttribute('href'));
-		expect(links).toContain('/d/doc1/team/search#k=abc');
-		expect(links).toContain('/d/doc1/team/infra#k=abc');
-		// the current team is not listed as "another team"
-		expect(links).not.toContain('/d/doc1/team/checkout#k=abc');
+		const rows = Array.from(root.querySelectorAll('.tm-other-list > *'));
+		const ids = rows.map((el) => el.querySelector('.tm-other-id')?.textContent);
+		// declaration order from SRC: checkout, search, infra
+		expect(ids).toEqual(['checkout', 'search', 'infra']);
+
+		const current = root.querySelector('.tm-other-list [aria-current="page"]');
+		expect(current).not.toBeNull();
+		expect(current!.tagName).not.toBe('A');
+		expect(current!.querySelector('.tm-other-id')?.textContent).toBe('checkout');
+
+		const links = Array.from(root.querySelectorAll('.tm-other-list a'));
+		const linkHrefs = links.map((a) => a.getAttribute('href'));
+		expect(linkHrefs).toContain('/d/doc1/team/search#k=abc');
+		expect(linkHrefs).toContain('/d/doc1/team/infra#k=abc');
+		// the current team is not rendered as a link
+		expect(linkHrefs).not.toContain('/d/doc1/team/checkout#k=abc');
 	});
 
 	it('shows no edit form for a read-only doc', () => {

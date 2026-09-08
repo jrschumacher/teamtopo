@@ -121,6 +121,10 @@ header shell and the `.tt-node`/`.tt-frame`/`data-id` diagram vocabulary from `e
   document. The current team's shape gets the `.tt-team-highlight` class (same class the
   editor's click target styling already knows about via `styles.css`/now `team.css`), giving
   it an accent outline and soft glow.
+- The aside's "Teams" card lists every team in the document (declaration order), including the
+  current one, so the list never reorders or shifts between pages. The current team's row is a
+  non-interactive element (`aria-current="page"`, `.tm-other-current` — accent-soft background,
+  no hover) instead of a link; every other row is an `<a>` preserving the fragment as before.
 - Buttons and links carry `data-action` (`enter-edit`, `cancel-edit`, `save`, `copy-markdown`)
   handled by one delegated click listener on `.team-page`, re-attached each time the page
   re-renders (entering/leaving edit mode, or after a save).
