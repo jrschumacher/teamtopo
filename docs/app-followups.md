@@ -4,8 +4,9 @@ Open items after the first deploy (2026-09-05). Live at https://teamtopo.abnl.wo
 
 ## Operations
 
-- **Email Sending domain.** `EMAIL_FROM` is a placeholder. Onboard a domain with
-  `npx wrangler email sending enable <domain>`, set SPF/DKIM, then set `EMAIL_FROM`.
+- **Email Sending.** Done 2026-09-08: `teamtopo.dev` is enabled for Email Sending and
+  `EMAIL_FROM` is `hello@teamtopo.dev` in both environments. Preview builds send real
+  confirmation mail too (the binding has no dev instance), so use throwaway addresses there.
 - **Tests hit the remote Email binding.** `send_email` has `remote: true` for `wrangler dev`.
   The Vitest worker project connects to it too, so once a domain is live `npm test` could
   send real mail. Disable remote bindings in the Vitest worker project only.
