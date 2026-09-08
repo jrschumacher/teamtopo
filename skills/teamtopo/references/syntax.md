@@ -100,16 +100,19 @@ Attributes with meaning:
 
 ### Blocks
 
-```
-platform cloud "Cloud Platform" {
-  stream   k8s "Kubernetes"
-  platform bare "Bare-metal Fleet"
-  bare --> k8s
-}
+```tt
+teamTopology
+  platform cloud "Cloud Platform" {
+    stream   k8s "Kubernetes"
+    platform bare "Bare-metal Fleet"
+    bare --> k8s
+  }
 
-group retail "Retail" [kind="value stream"] {
-  stream storefront "Storefront"
-}
+  group retail "Retail" [kind="value stream"] {
+    stream storefront "Storefront"
+  }
+
+  k8s --> storefront : runtime
 ```
 
 - Only `platform` and `group` may open a block; `stream ... {`, `enabling ... {` and
@@ -169,19 +172,22 @@ group), and a team inside one block can interact with a team inside another.
 
 ## `api` blocks
 
-```
-api checkout {
-  focus: the checkout experience end to end
-  software: checkout-service, cart-ui
-  SLE: 99.9% availability, p95 < 300 ms
-  versioning: semver, two releases of deprecation notice
-  wiki: checkout, cart, basket
-  chat: #checkout #checkout-alerts
-  sync: 09:30 UTC
-  working on: migrating to the new payments API
-  ways of working: trunk-based development, pairing on Tuesdays
-  improvements: shared on-call rotation with Accounts
-}
+```tt
+teamTopology
+  stream checkout "Checkout"
+
+  api checkout {
+    focus: the checkout experience end to end
+    software: checkout-service, cart-ui
+    SLE: 99.9% availability, p95 < 300 ms
+    versioning: semver, two releases of deprecation notice
+    wiki: checkout, cart, basket
+    chat: #checkout #checkout-alerts
+    sync: 09:30 UTC
+    working on: migrating to the new payments API
+    ways of working: trunk-based development, pairing on Tuesdays
+    improvements: shared on-call rotation with Accounts
+  }
 ```
 
 - `api <id> {` on one line; `}` alone on its line; the id must be declared somewhere

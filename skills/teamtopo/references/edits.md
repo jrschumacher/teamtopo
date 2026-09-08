@@ -1,8 +1,9 @@
 # Common edits
 
 Each recipe assumes you have read the whole file first. After every edit, validate
-(`references/validate.md`) and report the ids you added or changed. Worked, parser-
-verified diffs for each recipe are in `references/examples.md`.
+(`references/validate.md`) and report the ids you added or changed. The reasoning
+behind structural edits (when a platform, when a subsystem, how collaboration becomes
+a service) and an end-to-end worked example are in `references/modeling.md`.
 
 ## Create a topology from scratch
 

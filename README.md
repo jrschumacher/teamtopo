@@ -237,9 +237,13 @@ git clone --depth 1 https://github.com/jrschumacher/teamtopo /tmp/teamtopo
 mkdir -p .claude/skills && cp -r /tmp/teamtopo/skills/teamtopo .claude/skills/
 ```
 
-`SKILL.md` holds the rules an agent must respect; `references/` holds the full syntax,
-layout rules, edit recipes, validation commands and one worked prompt-and-diff per
-`examples/*.tt`. Until the npm package ships (#2), the skill validates with
+`SKILL.md` has three entry points (model an organisation from a description or the
+repo, evolve an existing file, review a file for health) plus the parser rules;
+`references/` holds the modeling guidance (vocabulary translation, patterns by org
+shape, interaction evolution), the discovery and Team API question scripts, a smell
+checklist, edit recipes, the full syntax and layout rules, and validation commands.
+Every `.tt` snippet in the skill is parsed by `npm test`, so the docs cannot drift from
+the grammar. Until the npm package ships (#2), the skill validates with
 `node src/cli.js --json file.tt` inside this repository or
 `npx --yes github:jrschumacher/teamtopo --json file.tt` elsewhere.
 
