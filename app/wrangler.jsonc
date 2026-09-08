@@ -22,7 +22,7 @@
 		{ "name": "WRITE_LIMIT", "namespace_id": "1001", "simple": { "limit": 30, "period": 60 } }
 	],
 	"send_email": [{ "name": "EMAIL", "remote": true }],
-	"vars": { "EMAIL_FROM": "hello@example.invalid" },
+	"vars": { "EMAIL_FROM": "hello@teamtopo.dev" },
 	"observability": { "logs": { "enabled": true, "invocation_logs": true, "persist": true } },
 
 	// Promotion doors — NEVER use any of these with `--env preview`. `--env preview` pairs
@@ -61,7 +61,7 @@
 				{ "name": "WRITE_LIMIT", "namespace_id": "1001", "simple": { "limit": 30, "period": 60 } }
 			],
 			"send_email": [{ "name": "EMAIL", "remote": true }],
-			"vars": { "EMAIL_FROM": "hello@example.invalid", "STAGE": "preview" },
+			"vars": { "EMAIL_FROM": "hello@teamtopo.dev", "STAGE": "preview" },
 			"observability": { "logs": { "enabled": true, "invocation_logs": true, "persist": true } }
 		}
 	}
