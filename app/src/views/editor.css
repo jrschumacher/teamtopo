@@ -128,10 +128,15 @@
 	font: inherit;
 	font-size: 13px;
 	cursor: pointer;
+	/* also used on <a>: no underline, and centre the label like a button */
+	display: inline-flex;
+	align-items: center;
+	text-decoration: none;
 }
 
 .ed-btn:hover {
 	border-color: var(--accent);
+	text-decoration: none;
 }
 
 .ed-btn.ed-btn-outline {
