@@ -7,6 +7,7 @@ import { render, teamApi } from '@lib/teamtopo';
 import { countInteractions, countTeams, highlight } from '../lib/highlight';
 import { escapeHtml } from '../lib/markdown';
 import { mountWebAnalytics, webAnalyticsToken } from '../lib/webAnalytics';
+import { footerHtml, navHtml } from './chrome';
 import { renderSignup } from './subscribe';
 import './landing.css';
 
@@ -23,9 +24,6 @@ const CHARS_PER_TICK = 3;
 const TICK_MS = 24;
 /** How long a finished diagram stays on screen before the demo moves to the next example. */
 const HOLD_MS = 5000;
-
-const GITHUB_URL = 'https://github.com/jrschumacher/teamtopo';
-const LICENSE_URL = 'https://github.com/jrschumacher/teamtopo/blob/main/LICENSE';
 
 const disposers = new WeakMap<HTMLElement, () => void>();
 
@@ -456,17 +454,7 @@ const FEATURES: Feature[] = [
 
 function shell(): string {
 	return `<div class="landing">
-	<nav class="landing-nav" id="landing-nav">
-		<a class="nav-brand" href="/">
-			<span class="brand-mark" aria-hidden="true"><i class="sq sq-stream"></i><i class="sq sq-enabling"></i><i class="sq sq-subsystem"></i><i class="sq sq-platform"></i></span>
-			teamtopo
-		</a>
-		<span class="free-pill">Free</span>
-		<span class="nav-spacer"></span>
-		<a class="nav-link" href="#features">Features</a>
-		<a class="nav-link" href="${GITHUB_URL}">GitHub</a>
-		<a class="nav-cta" href="/new">Open the editor</a>
-	</nav>
+	${navHtml('#features')}
 
 	<header class="hero" id="hero">
 		<div class="hero-copy">
@@ -519,22 +507,7 @@ function shell(): string {
 		</div>
 	</section>
 
-	<footer class="site-footer" id="site-footer">
-		<div class="footer-inner">
-			<div class="footer-brand">
-				<div class="footer-wordmark"><span class="brand-mark" aria-hidden="true"><i class="sq sq-stream"></i><i class="sq sq-enabling"></i><i class="sq sq-subsystem"></i><i class="sq sq-platform"></i></span>teamtopo</div>
-				<p class="attribution" id="attribution">Team shapes and the Team API template are from <a href="https://teamtopologies.com">Team Topologies</a> (<a href="https://creativecommons.org/licenses/by-sa/4.0/">CC BY-SA 4.0</a>). This project is not affiliated with or endorsed by Team Topologies.</p>
-			</div>
-			<div class="footer-meta">
-				<p class="footer-links">
-					<a id="footer-github" href="${GITHUB_URL}">GitHub</a>
-					<a href="${LICENSE_URL}">MIT license</a>
-					<a href="#feature-private">Privacy</a>
-				</p>
-				<p class="footer-made">Made with <span class="footer-made-mark" aria-hidden="true"><i class="sq sq-stream"></i><i class="sq sq-enabling"></i><i class="sq sq-subsystem"></i><i class="sq sq-platform"></i></span> at <a href="https://aboldnewlook.com">aboldnewlook.com</a></p>
-			</div>
-		</div>
-	</footer>
+	${footerHtml()}
 </div>`;
 }
 

@@ -1,0 +1,52 @@
+/* Privacy and terms pages. Nav and footer come from landing.css (the `.landing` wrapper);
+   this file only styles the document column: a readable measure on the landing type scale,
+   following prefers-color-scheme through the shared tokens in styles.css. */
+
+.legal-main {
+	padding: 16px 24px 72px;
+}
+
+.legal-doc {
+	max-width: 65ch;
+	margin: 0 auto;
+	font-size: 15px;
+	line-height: 1.6;
+}
+
+.legal-title {
+	font-size: 1.9rem;
+	letter-spacing: -0.01em;
+	margin: 32px 0 6px;
+}
+
+.legal-effective {
+	margin: 0 0 28px;
+	color: var(--muted);
+	font-size: 13.5px;
+}
+
+.legal-doc h2 {
+	font-size: 1.15rem;
+	margin: 32px 0 8px;
+}
+
+.legal-doc p {
+	margin: 0 0 14px;
+}
+
+.legal-doc ul {
+	margin: 0 0 14px;
+	padding-left: 1.3rem;
+}
+
+.legal-doc li {
+	margin: 0 0 6px;
+}
+
+.legal-doc code {
+	font-size: 0.92em;
+	padding: 0 4px;
+	border: 1px solid var(--border);
+	border-radius: 4px;
+	background: var(--surface-2);
+}

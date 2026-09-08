@@ -97,6 +97,7 @@ overwritten on re-signup. From address is var `EMAIL_FROM`.
 |---|---|
 | `/` | landing: catalog demo, features, free, signup |
 | `/new` | editor, unsaved; first save POSTs and redirects to the edit link |
+| `/privacy`, `/terms` | legal pages (`views/legal.ts`), landing chrome, Markdown body |
 | `/d/:id` | editor if `#s=`, viewer if `#k=`, otherwise "link missing key" |
 | `/d/:id/v/:vid` | read-only view of a version, same fragment rules |
 | `/d/:id/team/:teamId` | Team API page for one team |

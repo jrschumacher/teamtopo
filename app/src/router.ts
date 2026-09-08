@@ -1,6 +1,8 @@
 export type Route =
 	| { name: 'home'; params: Record<string, never> }
 	| { name: 'new'; params: Record<string, never> }
+	| { name: 'privacy'; params: Record<string, never> }
+	| { name: 'terms'; params: Record<string, never> }
 	| { name: 'doc'; params: { id: string } }
 	| { name: 'version'; params: { id: string; vid: string } }
 	| { name: 'team'; params: { id: string; teamId: string } };
@@ -9,6 +11,8 @@ const SEG = '([^/]+)';
 const TABLE: { name: Route['name']; re: RegExp; keys: string[] }[] = [
 	{ name: 'home', re: /^\/$/, keys: [] },
 	{ name: 'new', re: /^\/new$/, keys: [] },
+	{ name: 'privacy', re: /^\/privacy$/, keys: [] },
+	{ name: 'terms', re: /^\/terms$/, keys: [] },
 	{ name: 'doc', re: new RegExp(`^/d/${SEG}$`), keys: ['id'] },
 	{ name: 'version', re: new RegExp(`^/d/${SEG}/v/${SEG}$`), keys: ['id', 'vid'] },
 	{ name: 'team', re: new RegExp(`^/d/${SEG}/team/${SEG}$`), keys: ['id', 'teamId'] }

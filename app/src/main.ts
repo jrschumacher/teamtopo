@@ -6,6 +6,7 @@ import type { OpenedDoc } from './lib/types';
 import { matchRoute, startRouter, type Route } from './router';
 import { renderEditor } from './views/editor';
 import { renderLanding } from './views/landing';
+import { renderLegal } from './views/legal';
 import { renderTeamView } from './views/team';
 import { renderViewer } from './views/viewer';
 
@@ -145,6 +146,10 @@ async function show(route: Route | null, root: HTMLElement): Promise<void> {
 	}
 	if (route.name === 'home') {
 		renderLanding(root);
+		return;
+	}
+	if (route.name === 'privacy' || route.name === 'terms') {
+		renderLegal(root, route.name);
 		return;
 	}
 

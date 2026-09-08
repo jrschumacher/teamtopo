@@ -40,7 +40,8 @@ widget with a one-sentence privacy note and double opt-in mentioned.
 
 Footer: wordmark, attribution "Team shapes and the Team API template are from Team Topologies
 (CC BY-SA 4.0); not affiliated with or endorsed by Team Topologies." Links to GitHub, the MIT
-license, and privacy (points at the free section). "Made with [squares] at aboldnewlook.com".
+license, privacy (`/privacy`) and terms (`/terms`). "Made with [squares] at aboldnewlook.com".
+The nav and footer are shared with the legal pages (`app/src/views/chrome.ts`).
 
 Constraints: light and dark themes via `prefers-color-scheme` only; responsive — the demo
 panes stack under ~56rem, the nav wraps, the page body never scrolls horizontally; the
