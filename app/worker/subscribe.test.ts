@@ -1,6 +1,6 @@
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 import { env as rawEnv, SELF } from 'cloudflare:test';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from './index';
 
 // `cloudflare:test`'s `env` types as `Cloudflare.Env`, which is only populated by the
@@ -21,6 +21,17 @@ beforeAll(async () => {
 	await env.DB.exec(
 		'CREATE TABLE IF NOT EXISTS subscribers (email TEXT PRIMARY KEY, token TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, confirmed_at TEXT, unsubscribed_at TEXT)'
 	);
+});
+
+// `SELF` invokes the Worker with this same `env` object, so replacing `EMAIL` here is what
+// worker/subscribe.ts sees. A spy stands in for the binding: no mail leaves the test run
+// (vitest.config.ts also sets `remoteBindings: false` so the real binding is never wired)
+// and each test can assert exactly what would have been sent.
+const sendSpy = vi.fn<(message: unknown) => Promise<void>>(async () => {});
+
+beforeEach(() => {
+	sendSpy.mockClear();
+	env.EMAIL = { send: sendSpy } as unknown as NonNullable<Env['EMAIL']>;
 });
 
 async function subscribe(email: unknown) {
@@ -48,6 +59,48 @@ describe('subscribe API', () => {
 		expect(row?.confirmed_at).toBeNull();
 		expect(row?.unsubscribed_at).toBeNull();
 		expect(row?.token).toMatch(/^[A-Za-z0-9_-]{40,}$/);
+	});
+
+	it('sends one confirmation mail to the signup address via the EMAIL binding', async () => {
+		const email = 'mail@example.com';
+		const res = await subscribe(email);
+		expect(res.status).toBe(202);
+
+		// The send runs in ctx.waitUntil, so it may land just after the response.
+		await vi.waitFor(() => expect(sendSpy).toHaveBeenCalledTimes(1));
+		const message = sendSpy.mock.calls[0][0] as {
+			from: { email: string; name: string };
+			to: string;
+			subject: string;
+			text: string;
+		};
+		expect(message.to).toBe(email);
+		expect(message.subject).toBe('Confirm your TeamTopo subscription');
+		expect(message.from).toEqual({ email: env.EMAIL_FROM, name: 'TeamTopo' });
+		const row = await getRow(email);
+		expect(message.text).toContain(
+			`https://example.com/api/subscribe/confirm?t=${encodeURIComponent(row?.token as string)}`
+		);
+	});
+
+	it('does not send mail when an already-confirmed address signs up again', async () => {
+		const email = 'already@example.com';
+		await subscribe(email);
+		await vi.waitFor(() => expect(sendSpy).toHaveBeenCalledTimes(1));
+		const token = (await getRow(email))?.token as string;
+		await SELF.fetch(`https://example.com/api/subscribe/confirm?t=${encodeURIComponent(token)}`, {
+			redirect: 'manual'
+		});
+		expect((await getRow(email))?.confirmed_at).not.toBeNull();
+		sendSpy.mockClear();
+
+		const res = await subscribe(email);
+		expect(res.status).toBe(202);
+		expect(await res.json()).toEqual({ ok: true });
+		// Give a stray waitUntil send time to surface before asserting silence.
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		expect(sendSpy).not.toHaveBeenCalled();
+		expect((await getRow(email))?.token).toBe(token);
 	});
 
 	it('rejects an invalid email with 400', async () => {
