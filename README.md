@@ -259,7 +259,9 @@ teamtopo/
 ├── scripts/articles.mjs   articles build (+ markdown.mjs, article-template.mjs, tests)
 ├── content/articles/*.md  articles with front matter
 ├── examples/*.tt          sample diagrams (+ rendered .svg)
-└── public/                static playground, self-contained
+├── public/                static playground, self-contained
+├── app/                   hosted SPA + Worker (Vite, D1, R2); see docs/app-intent.md
+└── docs/                  app intent, landing design contract, follow-ups
 ```
 
 ```bash
