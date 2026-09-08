@@ -1,4 +1,4 @@
-import { ApiError } from './lib/api';
+import { ApiError, type GetDocOptions } from './lib/api';
 import { getCached, revalidate, setCached } from './lib/doc-cache';
 import { LinkError, openDocument, openVersion } from './lib/doc';
 import { escapeHtml } from './lib/markdown';
@@ -51,6 +51,13 @@ function errorHtml(err: unknown): string {
 }
 
 let seq = 0;
+
+/** Usage-analytics hint for a document fetch (docs/analytics.md): the team route marks its
+ * read so the worker can count it as `team_view`. A cache hit makes no request and so
+ * records nothing — views count loads, not cached navigations. */
+function docOpts(route: Route): GetDocOptions {
+	return route.name === 'team' ? { view: 'team' } : {};
+}
 
 /** Draws the doc-bearing routes ('doc' | 'version' | 'team'). Shared so a cache-hit
  * synchronous render and a post-fetch render go through the exact same dispatch. */
@@ -111,7 +118,9 @@ function revalidateInBackground(
 
 	const stale = () => my !== seq;
 	setSyncing(root, true);
-	void revalidate(id, () => openDocument(id, location.hash))
+	// `background` keeps a revalidate from counting as a view; `view` still rides along.
+	const opts: GetDocOptions = { ...docOpts(route), background: true };
+	void revalidate(id, () => openDocument(id, location.hash, opts))
 		.then((fresh) => {
 			markFetched(id);
 			if (stale() || !fresh) return;
@@ -158,7 +167,7 @@ async function show(route: Route | null, root: HTMLElement): Promise<void> {
 					return;
 				}
 				root.innerHTML = '<p class="notice">Loading…</p>';
-				const doc = await openDocument(route.params.id, location.hash);
+				const doc = await openDocument(route.params.id, location.hash, docOpts(route));
 				markFetched(route.params.id);
 				if (stale()) return;
 				swap(() => drawDoc(route, doc, root));
@@ -198,7 +207,8 @@ function warmLink(a: HTMLAnchorElement): void {
 	const key = `${route.params.id}${hash}`;
 	if (warming.has(key) || getCached(route.params.id, hash)) return;
 	warming.add(key);
-	openDocument(route.params.id, hash)
+	// A hover prefetch is not a view; the worker records nothing for `background` fetches.
+	openDocument(route.params.id, hash, { background: true })
 		.then((doc) => {
 			setCached(doc);
 			markFetched(route.params.id);

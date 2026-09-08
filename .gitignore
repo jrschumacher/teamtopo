@@ -3,5 +3,7 @@ app/dist
 app/node_modules
 app/.wrangler
 app/.dev.vars
+app/.env
+app/.env.*
 app/worker-configuration.d.ts
 public/articles/

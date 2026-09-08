@@ -8,6 +8,9 @@ export interface Env {
 	WRITE_LIMIT: RateLimit;
 	EMAIL?: SendEmail;
 	EMAIL_FROM: string;
+	/** Workers Analytics Engine dataset for usage events (worker/analytics.ts). Optional so a
+	 * config without the binding degrades to no analytics rather than a crash. */
+	ANALYTICS?: AnalyticsEngineDataset;
 	/** Set to "preview" only in wrangler.jsonc's env.preview. Never set in the top-level
 	 * (production) config — see the fail-closed guard in `fetch` below. */
 	STAGE?: string;

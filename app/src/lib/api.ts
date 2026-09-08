@@ -78,8 +78,23 @@ export async function createDoc(payload: string, writeToken: string): Promise<Do
 	return toRef(await request('/api/docs', jsonInit('POST', { payload }, writeToken)));
 }
 
-export async function getDoc(id: string): Promise<DocResponse> {
-	const body = await request(`/api/docs/${encodeURIComponent(id)}`, { method: 'GET' });
+/** Why the document is being fetched. The response is identical either way; the worker only
+ * uses these for usage analytics (docs/analytics.md). */
+export interface GetDocOptions {
+	/** The team page is asking: counted as `team_view` instead of `doc_view`. */
+	view?: 'team';
+	/** Background revalidation, link prefetch or a supporting fetch: records no view at all. */
+	background?: boolean;
+}
+
+export async function getDoc(id: string, opts: GetDocOptions = {}): Promise<DocResponse> {
+	const params = new URLSearchParams();
+	if (opts.view) params.set('view', opts.view);
+	if (opts.background) params.set('background', '1');
+	const query = params.toString();
+	const body = await request(`/api/docs/${encodeURIComponent(id)}${query ? `?${query}` : ''}`, {
+		method: 'GET'
+	});
 	const versions = Array.isArray(body.versions) ? body.versions.map(normalizeVersion) : [];
 	return { ...toRef(body), versions, payload: String(body.payload ?? '') };
 }

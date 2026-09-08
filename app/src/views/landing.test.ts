@@ -118,6 +118,22 @@ describe('renderLanding', () => {
 		expect(renderSignup).toHaveBeenCalledWith(q('#signup'));
 	});
 
+	it('mounts the Web Analytics beacon only when the build token is set', () => {
+		try {
+			vi.stubEnv('VITE_CF_WEB_ANALYTICS_TOKEN', '');
+			renderLanding(root);
+			expect(document.head.querySelector('script[data-cf-beacon]')).toBeNull();
+
+			vi.stubEnv('VITE_CF_WEB_ANALYTICS_TOKEN', 'site-token');
+			renderLanding(root);
+			const beacon = document.head.querySelector('script[data-cf-beacon]');
+			expect(beacon?.getAttribute('data-cf-beacon')).toContain('"token":"site-token"');
+		} finally {
+			document.head.querySelectorAll('script[data-cf-beacon]').forEach((el) => el.remove());
+			vi.unstubAllEnvs();
+		}
+	});
+
 	it('shows the first example title in the catalog tabs once the catalog resolves', async () => {
 		renderLanding(root);
 		expect(q('#hero-catalog').children).toHaveLength(0);

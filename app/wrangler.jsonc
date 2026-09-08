@@ -22,6 +22,9 @@
 		{ "name": "WRITE_LIMIT", "namespace_id": "1001", "simple": { "limit": 30, "period": 60 } }
 	],
 	"send_email": [{ "name": "EMAIL", "remote": true }],
+	// Usage events (docs/analytics.md). Datasets are created on first write; the preview env
+	// below writes to a different dataset so preview traffic never mixes with production.
+	"analytics_engine_datasets": [{ "binding": "ANALYTICS", "dataset": "teamtopo_usage" }],
 	"vars": { "EMAIL_FROM": "hello@teamtopo.dev" },
 	"observability": { "logs": { "enabled": true, "invocation_logs": true, "persist": true } },
 
@@ -61,6 +64,9 @@
 				{ "name": "WRITE_LIMIT", "namespace_id": "1001", "simple": { "limit": 30, "period": 60 } }
 			],
 			"send_email": [{ "name": "EMAIL", "remote": true }],
+			"analytics_engine_datasets": [
+				{ "binding": "ANALYTICS", "dataset": "teamtopo_usage_preview" }
+			],
 			"vars": { "EMAIL_FROM": "hello@teamtopo.dev", "STAGE": "preview" },
 			"observability": { "logs": { "enabled": true, "invocation_logs": true, "persist": true } }
 		}

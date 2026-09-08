@@ -29,7 +29,8 @@ describe('doc', () => {
 
 	function serveDoc() {
 		fetchMock.mockImplementation(async (input) => {
-			const url = String(input);
+			// Analytics hints (`?view=team`, `?background=1`) never change the response.
+			const url = String(input).split('?')[0];
 			if (url === '/api/docs/doc1') {
 				return jsonResponse(200, { id: 'doc1', version: V2, versions: [V2, V1], payload });
 			}
