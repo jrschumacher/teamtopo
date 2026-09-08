@@ -1,0 +1,526 @@
+/* Team API page. Reuses the shared header shell and tokens from editor.css / styles.css
+   (fonts system-ui only, theme follows prefers-color-scheme — no toggle). */
+
+.team-page {
+	min-height: 100vh;
+	display: flex;
+	flex-direction: column;
+	background: var(--bg);
+	color: var(--fg);
+}
+
+.breadcrumb {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	min-width: 0;
+	font-size: 13.5px;
+}
+
+.breadcrumb a {
+	color: var(--muted);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	text-decoration: none;
+}
+
+.breadcrumb a:hover {
+	color: var(--accent);
+}
+
+.tm-crumb-sep {
+	color: var(--gutter);
+}
+
+.tm-crumb-current {
+	font-weight: 500;
+	white-space: nowrap;
+}
+
+.tm-back {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 13px;
+	color: var(--muted);
+	text-decoration: none;
+	margin: 22px auto 14px;
+	width: 100%;
+	max-width: 1160px;
+	padding: 0 20px;
+	box-sizing: border-box;
+}
+
+.tm-back:hover {
+	color: var(--accent);
+}
+
+.tm-layout {
+	flex: 1;
+	width: 100%;
+	max-width: 1160px;
+	margin: 0 auto;
+	padding: 0 20px 48px;
+	box-sizing: border-box;
+	display: flex;
+	gap: 20px;
+	align-items: flex-start;
+	flex-wrap: wrap;
+}
+
+.tm-main {
+	flex: 1 1 560px;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+}
+
+.tm-aside {
+	flex: 1 1 280px;
+	max-width: 340px;
+	min-width: 260px;
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+}
+
+.tm-card {
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: 10px;
+	padding: 16px 22px 18px;
+}
+
+/* ── hero ── */
+.tm-hero {
+	padding: 20px 22px;
+}
+
+.tm-hero-row {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	flex-wrap: wrap;
+}
+
+.tm-name {
+	margin: 0;
+	font-size: 22px;
+	font-weight: 600;
+	letter-spacing: -0.01em;
+	min-width: 0;
+}
+
+.tm-id {
+	font-family: var(--mono);
+	font-size: 12px;
+	color: var(--muted);
+	border: 1px solid var(--border);
+	border-radius: 5px;
+	padding: 1px 7px;
+}
+
+.tm-size {
+	font-size: 12.5px;
+	color: var(--muted);
+}
+
+.tm-hero-actions {
+	display: flex;
+	gap: 8px;
+}
+
+.tm-blurb {
+	margin: 12px 0 0;
+	font-size: 14px;
+	color: var(--muted);
+	max-width: 62ch;
+	text-wrap: pretty;
+}
+
+/* ── chips + type pill (shared vocabulary with editor.css's .ed-api-chip) ── */
+.tm-chip {
+	border-radius: 3px;
+	flex: none;
+	display: inline-block;
+}
+
+.tm-chip-lg {
+	width: 16px;
+	height: 16px;
+}
+
+.tm-chip-sm {
+	width: 11px;
+	height: 11px;
+}
+
+.tm-chip.stream {
+	background: var(--stream);
+	border: 1px solid var(--stream-edge);
+}
+
+.tm-chip.enabling {
+	background: var(--enabling);
+	border: 1px solid var(--enabling-edge);
+}
+
+.tm-chip.subsystem {
+	background: var(--subsystem);
+	border: 1px solid var(--subsystem-edge);
+}
+
+.tm-chip.platform {
+	background: var(--platform);
+	border: 1px solid var(--platform-edge);
+}
+
+.tm-type-pill {
+	font-size: 11.5px;
+	font-weight: 600;
+	border: 1px solid currentColor;
+	border-radius: 99px;
+	padding: 2px 9px;
+}
+
+.tm-type-pill.stream {
+	color: var(--kw-stream);
+}
+
+.tm-type-pill.enabling {
+	color: var(--kw-en);
+}
+
+.tm-type-pill.subsystem {
+	color: var(--kw-cs);
+}
+
+.tm-type-pill.platform {
+	color: var(--kw-pf);
+}
+
+/* ── empty banner ── */
+.tm-banner {
+	border: 1px dashed var(--border-strong);
+	border-radius: 10px;
+	padding: 16px 20px;
+	display: flex;
+	align-items: center;
+	gap: 14px;
+	flex-wrap: wrap;
+	background: var(--surface-2);
+}
+
+.tm-banner-copy {
+	flex: 1 1 300px;
+	min-width: 0;
+}
+
+.tm-banner-title {
+	margin: 0 0 2px;
+	font-weight: 600;
+	font-size: 13.5px;
+}
+
+.tm-banner-body {
+	margin: 0;
+	font-size: 12.5px;
+	color: var(--muted);
+}
+
+.tm-mono {
+	font-family: var(--mono);
+}
+
+/* ── grouped api-field sections ── */
+.tm-section-title {
+	margin: 0 0 10px;
+	font-size: 11px;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	font-weight: 600;
+	color: var(--muted);
+}
+
+.tm-section-title-spaced {
+	margin-top: 16px;
+}
+
+.tm-section-head {
+	display: flex;
+	align-items: baseline;
+	gap: 10px;
+	margin-bottom: 12px;
+}
+
+.tm-section-sub {
+	font-size: 12px;
+	color: var(--gutter);
+}
+
+.tm-dl {
+	margin: 0;
+	display: grid;
+	grid-template-columns: minmax(120px, 190px) minmax(0, 1fr);
+	gap: 8px 18px;
+	font-size: 13.5px;
+	align-items: center;
+}
+
+.tm-dl dt {
+	color: var(--muted);
+}
+
+.tm-dl dd {
+	margin: 0;
+	min-width: 0;
+	overflow-wrap: break-word;
+}
+
+.tm-dl input {
+	width: 100%;
+	max-width: 520px;
+	height: 30px;
+	padding: 0 9px;
+	border: 1px solid var(--border-strong);
+	border-radius: 6px;
+	background: var(--surface-2);
+	color: var(--fg);
+	font: inherit;
+	font-size: 13px;
+	box-sizing: border-box;
+}
+
+.tm-empty-value {
+	color: var(--gutter);
+	font-style: italic;
+	font-size: 13px;
+}
+
+#api-form {
+	display: contents;
+}
+
+#api-body {
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+}
+
+/* ── sticky save/cancel bar ── */
+.tm-sticky-bar {
+	position: sticky;
+	bottom: 14px;
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: 10px;
+	box-shadow: var(--shadow);
+	padding: 10px 14px;
+	z-index: 5;
+}
+
+.tm-sticky-status {
+	font-size: 12.5px;
+	color: var(--muted);
+}
+
+/* ── interactions ── */
+.tm-inter-list {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.tm-inter-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 9px 12px;
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	background: var(--surface-2);
+	flex-wrap: wrap;
+}
+
+.tm-inter-row.tm-inter-soon {
+	border: 1px dashed var(--border-strong);
+	background: none;
+}
+
+.tm-inter-name {
+	font-size: 13.5px;
+	font-weight: 500;
+	color: var(--accent);
+	text-decoration: none;
+}
+
+.tm-inter-name:hover {
+	text-decoration: underline;
+}
+
+.tm-mode-pill {
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.03em;
+	color: var(--muted);
+	border: 1px solid var(--border-strong);
+	border-radius: 99px;
+	padding: 1px 8px;
+	white-space: nowrap;
+}
+
+.tm-inter-desc {
+	font-size: 13px;
+	color: var(--muted);
+	min-width: 0;
+}
+
+.tm-inter-meta {
+	font-family: var(--mono);
+	font-size: 11.5px;
+	color: var(--gutter);
+	white-space: nowrap;
+}
+
+/* ── aside ── */
+.tm-aside .tm-card {
+	padding: 14px;
+}
+
+.tm-diagram-link {
+	position: relative;
+	display: block;
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	overflow: hidden;
+	text-decoration: none;
+}
+
+.tm-diagram-link:hover {
+	border-color: var(--accent);
+}
+
+.tm-diagram svg {
+	display: block;
+	width: 100%;
+	height: auto;
+}
+
+.team-page .tt-team-highlight > rect:first-of-type,
+.team-page .tt-team-highlight > path:first-of-type,
+.team-page .tt-team-highlight > polygon:first-of-type {
+	stroke: var(--accent);
+	stroke-width: 2.5px;
+	/* the diagram is scaled down in the aside; keep the outline at screen pixels */
+	vector-effect: non-scaling-stroke;
+	paint-order: stroke;
+	filter: drop-shadow(0 0 3px var(--accent));
+}
+
+.tm-diagram-caption {
+	margin: 10px 0 0;
+	font-size: 12px;
+	color: var(--muted);
+}
+
+.tm-other-list {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.tm-other-link {
+	display: flex;
+	align-items: center;
+	gap: 9px;
+	width: 100%;
+	padding: 7px 9px;
+	border-radius: 6px;
+	color: var(--fg);
+	font-size: 13px;
+	text-decoration: none;
+	box-sizing: border-box;
+}
+
+.tm-other-link:hover {
+	background: var(--accent-soft);
+}
+
+.tm-other-current {
+	background: var(--accent-soft);
+	color: var(--fg);
+	cursor: default;
+}
+
+.tm-other-name {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.tm-other-id {
+	font-family: var(--mono);
+	font-size: 10.5px;
+	color: var(--gutter);
+}
+
+.tm-attribution {
+	margin: 0;
+	font-size: 11.5px;
+	color: var(--gutter);
+	padding: 0 4px;
+}
+
+.tm-attribution a {
+	color: var(--gutter);
+	text-decoration: underline;
+}
+
+/* ── unknown-team fallback ── */
+.team-sidebar {
+	padding-left: 18px;
+}
+
+@media (max-width: 56rem) {
+	.tm-layout {
+		flex-direction: column;
+	}
+
+	.tm-aside {
+		max-width: none;
+	}
+}
+
+@media (max-width: 30rem) {
+	.team-page .ed-bar {
+		height: auto;
+		flex-wrap: wrap;
+		row-gap: 8px;
+		padding: 10px 14px;
+	}
+
+	.team-page .breadcrumb {
+		order: 3;
+		flex-basis: 100%;
+	}
+
+	.tm-dl {
+		grid-template-columns: 1fr;
+		gap: 2px 0;
+	}
+
+	.tm-dl dt {
+		margin-top: 10px;
+	}
+
+	.tm-dl dt:first-child {
+		margin-top: 0;
+	}
+}

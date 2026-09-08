@@ -5,13 +5,16 @@ import { renderTeamView } from './team';
 
 const SRC = [
 	'teamTopology',
-	'  stream checkout "Checkout"',
+	'  stream checkout "Checkout" [size=7, note="Owns checkout, chargebacks and refunds."]',
 	'  stream search "Search"',
 	'  platform infra "Infra"',
-	'  infra --> checkout : CI',
+	'  infra --> checkout : CI [duration=ongoing]',
+	'  checkout <--> search : pairing [duration="until Q3"]',
+	'  checkout ~~> search : recommendations [soon]',
 	'  api checkout {',
 	'    focus: the checkout experience end to end',
 	'    sync: 09:30 UTC',
+	'    budget: 50k',
 	'  }',
 	''
 ].join('\n');
@@ -29,6 +32,12 @@ function makeDoc(overrides: Partial<OpenedDoc> = {}): OpenedDoc {
 	};
 }
 
+function clickAction(root: HTMLElement, action: string): void {
+	const el = root.querySelector<HTMLElement>(`[data-action="${action}"]`);
+	if (!el) throw new Error(`no [data-action="${action}"] in the rendered page`);
+	el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+}
+
 describe('renderTeamView', () => {
 	let root: HTMLElement;
 
@@ -44,18 +53,30 @@ describe('renderTeamView', () => {
 		expect(back!.getAttribute('href')).toBe('/d/doc1#k=abc');
 	});
 
-	it('lists every other team with fragment-preserving hrefs', () => {
+	it('lists every team including the current one, in declaration order, with fragment-preserving hrefs', () => {
 		renderTeamView(root, makeDoc(), 'checkout');
-		const links = Array.from(root.querySelectorAll('a')).map((a) => a.getAttribute('href'));
-		expect(links).toContain('/d/doc1/team/search#k=abc');
-		expect(links).toContain('/d/doc1/team/infra#k=abc');
-		// the current team is not listed as "another team"
-		expect(links).not.toContain('/d/doc1/team/checkout#k=abc');
+		const rows = Array.from(root.querySelectorAll('.tm-other-list > *'));
+		const ids = rows.map((el) => el.querySelector('.tm-other-id')?.textContent);
+		// declaration order from SRC: checkout, search, infra
+		expect(ids).toEqual(['checkout', 'search', 'infra']);
+
+		const current = root.querySelector('.tm-other-list [aria-current="page"]');
+		expect(current).not.toBeNull();
+		expect(current!.tagName).not.toBe('A');
+		expect(current!.querySelector('.tm-other-id')?.textContent).toBe('checkout');
+
+		const links = Array.from(root.querySelectorAll('.tm-other-list a'));
+		const linkHrefs = links.map((a) => a.getAttribute('href'));
+		expect(linkHrefs).toContain('/d/doc1/team/search#k=abc');
+		expect(linkHrefs).toContain('/d/doc1/team/infra#k=abc');
+		// the current team is not rendered as a link
+		expect(linkHrefs).not.toContain('/d/doc1/team/checkout#k=abc');
 	});
 
 	it('shows no edit form for a read-only doc', () => {
 		renderTeamView(root, makeDoc({ canEdit: false }), 'checkout');
 		expect(root.querySelector('form')).toBeNull();
+		expect(root.querySelector('[data-action="enter-edit"]')).toBeNull();
 	});
 
 	it('shows a prefilled edit form and saves an updated source through doc.save', async () => {
@@ -65,6 +86,9 @@ describe('renderTeamView', () => {
 			return { id: 'v2', at: new Date().toISOString(), size: source.length } as Version;
 		});
 		renderTeamView(root, makeDoc({ canEdit: true, save }), 'checkout');
+
+		expect(root.querySelector('form')).toBeNull();
+		clickAction(root, 'enter-edit');
 
 		const form = root.querySelector('form');
 		expect(form).not.toBeNull();
@@ -83,6 +107,8 @@ describe('renderTeamView', () => {
 			focus: 'the checkout experience end to end',
 			sync: '14:00 UTC'
 		});
+		// edit mode closes back to view mode on a successful save
+		expect(root.querySelector('form')).toBeNull();
 	});
 
 	it('shows a friendly message and the team list for an unknown team id', () => {
@@ -98,5 +124,88 @@ describe('renderTeamView', () => {
 		const src = SRC.replace('"Checkout"', '"<img src=x onerror=alert(1)>"');
 		renderTeamView(root, makeDoc({ source: src }), 'checkout');
 		expect(root.innerHTML).not.toContain('<img src=x');
+	});
+
+	it('toggles into edit mode and Cancel discards the draft without saving', () => {
+		const save = vi.fn();
+		renderTeamView(root, makeDoc({ canEdit: true, save }), 'checkout');
+
+		clickAction(root, 'enter-edit');
+		const syncInput = root.querySelector('input[name="sync"]') as HTMLInputElement;
+		syncInput.value = 'something else entirely';
+
+		clickAction(root, 'cancel-edit');
+
+		expect(root.querySelector('form')).toBeNull();
+		expect(save).not.toHaveBeenCalled();
+		expect(root.textContent).toContain('09:30 UTC');
+	});
+
+	it('Escape cancels edit mode like Cancel does', () => {
+		renderTeamView(root, makeDoc({ canEdit: true, save: vi.fn() }), 'checkout');
+
+		clickAction(root, 'enter-edit');
+		const form = root.querySelector('form');
+		expect(form).not.toBeNull();
+
+		const syncInput = form!.querySelector('input[name="sync"]') as HTMLInputElement;
+		syncInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
+		expect(root.querySelector('form')).toBeNull();
+	});
+
+	it('maps api fields into their groups and lists an unrecognized field under Other', () => {
+		renderTeamView(root, makeDoc(), 'checkout');
+
+		const groupTitles = Array.from(root.querySelectorAll('.tm-section-title')).map(
+			(el) => el.textContent
+		);
+		expect(groupTitles).toEqual(
+			expect.arrayContaining([
+				'Mission',
+				'What we own',
+				'Service level expectations',
+				'Working with us',
+				'Right now',
+				'Other'
+			])
+		);
+		// "budget" has no home in the five canonical groups
+		expect(root.textContent).toContain('Budget');
+		expect(root.textContent).toContain('50k');
+		// documented fields show their value; undocumented ones say so
+		expect(root.textContent).toContain('not documented yet');
+	});
+
+	it('shows the team size and note on the hero card', () => {
+		renderTeamView(root, makeDoc(), 'checkout');
+		expect(root.textContent).toContain('7 people');
+		expect(root.textContent).toContain('Owns checkout, chargebacks and refunds.');
+	});
+
+	it('lists interactions in both directions plus a dashed "soon" list', () => {
+		renderTeamView(root, makeDoc(), 'checkout');
+
+		expect(root.textContent).toContain('Teams we currently interact with');
+		// checkout is the "to" side of infra --> checkout
+		expect(root.textContent).toContain('X-as-a-Service');
+		expect(root.textContent).toContain('CI');
+		expect(root.textContent).toContain('ongoing');
+		// checkout is the "from" side of checkout <--> search
+		expect(root.textContent).toContain('Collaboration');
+		expect(root.textContent).toContain('until Q3');
+
+		expect(root.textContent).toContain('Expected to interact with soon');
+		expect(root.textContent).toContain('Facilitating');
+		expect(root.textContent).toContain('recommendations');
+		expect(root.querySelector('.tm-inter-soon')).not.toBeNull();
+	});
+
+	it('highlights the current team’s shape in the diagram aside', () => {
+		renderTeamView(root, makeDoc(), 'checkout');
+		const svg = root.querySelector('#team-diagram svg');
+		expect(svg).not.toBeNull();
+		const highlighted = root.querySelector('[data-id="checkout"].tt-team-highlight');
+		expect(highlighted).not.toBeNull();
 	});
 });

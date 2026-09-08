@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { OpenedDoc, Version } from '../lib/types';
 import { renderViewer } from './viewer';
 
@@ -35,13 +35,17 @@ describe('renderViewer', () => {
 		document.body.appendChild(root);
 		history.replaceState(null, '', '/d/doc1#k=KEY');
 	});
-	afterEach(() => root.remove());
+	afterEach(() => {
+		root.remove();
+		vi.restoreAllMocks();
+		vi.unstubAllGlobals();
+	});
 
 	it('renders the diagram, escaped title, team links and versions', () => {
 		renderViewer(root, makeDoc());
 		expect(root.querySelector('#canvas svg')).not.toBeNull();
-		expect(root.querySelector('h1')!.textContent).toBe('Shop <b>bold</b>');
-		expect(root.querySelector('h1 b')).toBeNull();
+		expect(root.querySelector('#doc-title')!.textContent).toBe('Shop <b>bold</b>');
+		expect(root.querySelector('#doc-title b')).toBeNull();
 		const teams = [...root.querySelectorAll<HTMLAnchorElement>('.team-list a')].map((a) =>
 			a.getAttribute('href')
 		);
@@ -88,5 +92,33 @@ describe('renderViewer', () => {
 	it('reports a syntax error instead of throwing', () => {
 		renderViewer(root, makeDoc({ source: 'nonsense' }));
 		expect(root.querySelector('#canvas .empty')!.textContent).toMatch(/syntax error/);
+	});
+
+	it('shows the History and Share popovers in the header, one at a time', () => {
+		renderViewer(root, makeDoc());
+		const historyBtn = root.querySelector<HTMLButtonElement>('#history-btn')!;
+		const shareBtn = root.querySelector<HTMLButtonElement>('#share-btn')!;
+		const historyPop = root.querySelector<HTMLElement>('#history-pop')!;
+		const sharePop = root.querySelector<HTMLElement>('#share-pop')!;
+		expect(root.querySelector('#save')).toBeNull();
+		expect(root.querySelector('#examples-btn')).toBeNull();
+
+		historyBtn.click();
+		expect(historyPop.hidden).toBe(false);
+		shareBtn.click();
+		expect(historyPop.hidden).toBe(true);
+		expect(sharePop.hidden).toBe(false);
+		expect(sharePop.querySelector('#edit-link')).toBeNull();
+	});
+
+	it('copies the view link from the Share popover', async () => {
+		const writeText = vi.fn().mockResolvedValue(undefined);
+		vi.stubGlobal('navigator', { clipboard: { writeText } });
+		renderViewer(root, makeDoc());
+		root.querySelector<HTMLButtonElement>('#share-btn')!.click();
+		root.querySelector<HTMLButtonElement>('#copy-view')!.click();
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(writeText).toHaveBeenCalledWith(`${location.origin}/d/doc1#k=KEY`);
 	});
 });
