@@ -1,7 +1,7 @@
 /**
- * Landing page: hero with a live typing demo of the catalog, an examples gallery, feature
- * cards, the "free" section with the email signup, and a footer. Element ids and classes
- * are a contract with the visual design that replaces this styling later; keep them stable.
+ * Landing page: nav, hero with a live typing demo of the catalog, feature cards, the "free"
+ * section with the email signup, and a footer. Element ids and classes are a contract with
+ * the visual design (docs/landing-design.md); keep them stable.
  */
 import { render, teamApi } from '@lib/teamtopo';
 import { renderSignup } from './subscribe';
@@ -22,6 +22,7 @@ const TICK_MS = 24;
 const HOLD_MS = 5000;
 
 const GITHUB_URL = 'https://github.com/jrschumacher/teamtopo';
+const LICENSE_URL = 'https://github.com/jrschumacher/teamtopo/blob/main/LICENSE';
 
 const disposers = new WeakMap<HTMLElement, () => void>();
 
@@ -46,7 +47,6 @@ export function renderLanding(root: HTMLElement): void {
 				return;
 			}
 			cleanups.push(startDemo(root, catalog));
-			fillExamples(root, catalog);
 			fillTeamApiSnippet(root, catalog);
 		},
 		() => setDemoMessage(root, 'The example catalog could not be loaded.')
@@ -79,12 +79,31 @@ interface DemoState {
 	lastGoodSvg: string;
 }
 
+/** Team declaration keywords, matched at the start of a line (see src/teamtopo.js TYPE_ALIAS). */
+const TEAM_KEYWORD_RE =
+	/^\s*(stream-aligned|stream|sa|enabling|en|complicated-subsystem|subsystem|cs|platform|pf|group)\b/gm;
+/** Interaction arrow tokens (see src/teamtopo.js ARROW). */
+const ARROW_RE = /(<-->|<->|-->|<--|~~>|<~~)/g;
+
+function countTeams(text: string): number {
+	return (text.match(TEAM_KEYWORD_RE) ?? []).length;
+}
+
+function countInteractions(text: string): number {
+	return (text.match(ARROW_RE) ?? []).length;
+}
+
 function startDemo(root: HTMLElement, catalog: CatalogEntry[]): () => void {
 	const sourceEl = root.querySelector<HTMLElement>('#hero-source');
+	const gutterEl = root.querySelector<HTMLElement>('#hero-gutter');
 	const diagramEl = root.querySelector<HTMLElement>('#hero-diagram');
+	const dimsEl = root.querySelector<HTMLElement>('#hero-dims');
 	const tabsEl = root.querySelector<HTMLElement>('#hero-catalog');
 	const pauseBtn = root.querySelector<HTMLButtonElement>('#hero-pause');
 	const demoEl = root.querySelector<HTMLElement>('#hero-demo');
+	const statusEl = root.querySelector<HTMLElement>('#hero-status');
+	const statusDotEl = root.querySelector<HTMLElement>('#hero-status-dot');
+	const statusTextEl = root.querySelector<HTMLElement>('#hero-status-text');
 	if (!sourceEl || !diagramEl || !tabsEl || !pauseBtn || !demoEl) return () => {};
 
 	const reduced = prefersReducedMotion();
@@ -101,15 +120,66 @@ function startDemo(root: HTMLElement, catalog: CatalogEntry[]): () => void {
 	tabsEl.innerHTML = catalog
 		.map(
 			(e, i) =>
-				`<button type="button" role="tab" class="hero-tab" data-index="${i}" data-name="${escapeHtml(e.name)}" aria-selected="${i === 0}" aria-controls="hero-source">${escapeHtml(e.title)}</button>`
+				`<button type="button" role="tab" class="hero-tab" data-index="${i}" data-name="${escapeHtml(e.name)}" aria-selected="${i === 0}" aria-controls="hero-source">` +
+				`<span>${escapeHtml(e.title)}</span>` +
+				`<span class="tab-track"></span><span class="tab-progress"></span>` +
+				`</button>`
 		)
 		.join('');
 
-	const showFull = () => {
+	const isRunning = () => !reduced && !state.paused && !state.hovering;
+
+	const renderSource = (text: string): void => {
+		if (!sourceEl) return;
+		const caret = isRunning() && text.length < catalog[state.index].source.length;
+		sourceEl.innerHTML =
+			highlight(text) + (caret ? '<span class="caret" aria-hidden="true"></span>' : '');
+		if (gutterEl) {
+			const lines = text.length === 0 ? 0 : text.split('\n').length;
+			gutterEl.textContent = Array.from({ length: lines }, (_, i) => i + 1).join('\n');
+		}
+	};
+
+	const updateStatus = (text: string): void => {
 		const entry = catalog[state.index];
-		state.typed = entry.source.length;
-		sourceEl.textContent = entry.source;
-		paint(entry.source);
+		const typedSource = entry.source.slice(0, state.typed);
+		const teams = countTeams(typedSource);
+		const interactions = countInteractions(typedSource);
+		const done = state.typed >= entry.source.length;
+		let tone: 'gutter' | 'accent' | 'ok';
+		let label: string;
+		if (text === 'paused') {
+			tone = 'gutter';
+			label = 'Paused';
+		} else if (done) {
+			tone = 'ok';
+			label = `${teams} teams, ${interactions} interactions`;
+		} else {
+			tone = 'accent';
+			label = `Rendering… ${teams} teams, ${interactions} interactions`;
+		}
+		if (statusTextEl) statusTextEl.textContent = label;
+		if (statusDotEl) statusDotEl.dataset.tone = tone;
+		if (statusEl) statusEl.setAttribute('aria-label', label);
+		if (dimsEl) dimsEl.textContent = done ? 'rendered' : '';
+	};
+
+	const updateProgress = (): void => {
+		const entry = catalog[state.index];
+		const pct = entry.source.length === 0 ? 0 : (state.typed / entry.source.length) * 100;
+		const bar = tabsEl.querySelector<HTMLElement>(
+			`.hero-tab[data-index="${state.index}"] .tab-progress`
+		);
+		if (bar) bar.style.width = `${Math.min(100, pct)}%`;
+		const svg = diagramEl.querySelector<SVGElement>('svg');
+		if (svg) {
+			if (reduced) {
+				svg.style.clipPath = '';
+			} else {
+				const reveal = Math.min(1, Math.max(0, (pct / 100 - 0.04) / 0.9));
+				svg.style.clipPath = `inset(${(1 - reveal) * 100}% 0 0 0)`;
+			}
+		}
 	};
 
 	const paint = (source: string) => {
@@ -121,14 +191,21 @@ function startDemo(root: HTMLElement, catalog: CatalogEntry[]): () => void {
 			// Mid-typing the source is usually incomplete; keep the last good diagram.
 			diagramEl.dataset.state = 'stale';
 		}
+		updateProgress();
+	};
+
+	const showFull = () => {
+		const entry = catalog[state.index];
+		state.typed = entry.source.length;
+		renderSource(entry.source);
+		paint(entry.source);
+		updateStatus('done');
 	};
 
 	const stopTimer = () => {
 		if (state.timer !== null) clearTimeout(state.timer);
 		state.timer = null;
 	};
-
-	const isRunning = () => !reduced && !state.paused && !state.hovering;
 
 	const schedule = (ms: number) => {
 		stopTimer();
@@ -150,8 +227,10 @@ function startDemo(root: HTMLElement, catalog: CatalogEntry[]): () => void {
 		const next = Math.min(entry.source.length, state.typed + CHARS_PER_TICK);
 		const chunk = entry.source.slice(state.typed, next);
 		state.typed = next;
-		sourceEl.textContent = entry.source.slice(0, next);
+		renderSource(entry.source.slice(0, next));
 		if (chunk.includes('\n') || next === entry.source.length) paint(entry.source.slice(0, next));
+		else updateProgress();
+		updateStatus(next === entry.source.length ? 'done' : 'typing');
 		schedule(next === entry.source.length ? HOLD_MS : TICK_MS);
 	};
 
@@ -160,12 +239,15 @@ function startDemo(root: HTMLElement, catalog: CatalogEntry[]): () => void {
 		state.typed = 0;
 		for (const tab of tabsEl.querySelectorAll<HTMLElement>('.hero-tab')) {
 			tab.setAttribute('aria-selected', String(Number(tab.dataset.index) === index));
+			const bar = tab.querySelector<HTMLElement>('.tab-progress');
+			if (bar) bar.style.width = '0%';
 		}
 		if (reduced) {
 			showFull();
 			return;
 		}
-		sourceEl.textContent = '';
+		renderSource('');
+		updateStatus('typing');
 		if (isRunning()) schedule(TICK_MS);
 		else showFull();
 	};
@@ -181,6 +263,8 @@ function startDemo(root: HTMLElement, catalog: CatalogEntry[]): () => void {
 		pauseBtn.setAttribute('aria-pressed', String(paused));
 		pauseBtn.textContent = paused ? 'Play' : 'Pause';
 		pauseBtn.setAttribute('aria-label', paused ? 'Play the demo' : 'Pause the demo');
+		renderSource(catalog[state.index].source.slice(0, state.typed));
+		updateStatus(paused ? 'paused' : 'typing');
 		if (paused) stopTimer();
 		else schedule(TICK_MS);
 	};
@@ -188,6 +272,8 @@ function startDemo(root: HTMLElement, catalog: CatalogEntry[]): () => void {
 	const setHovering = (hovering: boolean) => {
 		if (state.hovering === hovering) return;
 		state.hovering = hovering;
+		renderSource(catalog[state.index].source.slice(0, state.typed));
+		updateStatus(hovering ? 'paused' : 'typing');
 		if (hovering) stopTimer();
 		else schedule(TICK_MS);
 	};
@@ -225,6 +311,8 @@ function setDemoMessage(root: HTMLElement, message: string): void {
 		diagramEl.textContent = message;
 		diagramEl.dataset.state = 'error';
 	}
+	const statusTextEl = root.querySelector<HTMLElement>('#hero-status-text');
+	if (statusTextEl) statusTextEl.textContent = '';
 }
 
 function listen<K extends keyof HTMLElementEventMap>(
@@ -256,31 +344,55 @@ function onThemeChange(fn: () => void): () => void {
 }
 
 // ---------------------------------------------------------------------------
-// Examples gallery and Team API snippet
+// Syntax highlighting for the source pane. Wraps tokens in <span> so textContent
+// (used by tests and screen readers) still equals exactly the typed source.
 
-function fillExamples(root: HTMLElement, catalog: CatalogEntry[]): void {
-	const list = root.querySelector<HTMLElement>('#examples-list');
-	if (!list) return;
-	const theme = currentTheme();
-	list.innerHTML = catalog
-		.map((e) => {
-			const svg = safeRender(e.source, theme, `ex-${e.name}-`);
-			return `<li class="example" data-name="${escapeHtml(e.name)}">
-	<h3 class="example-title">${escapeHtml(e.title)}</h3>
-	<div class="example-diagram">${svg}</div>
-	<a class="example-open" href="/new?example=${encodeURIComponent(e.name)}">Open in editor</a>
-</li>`;
-		})
-		.join('');
+const KEYWORD_RE =
+	/^(\s*)(teamTopology|title|flow|legend|api|stream-aligned|stream|sa|enabling|en|complicated-subsystem|subsystem|cs|platform|pf|group)\b/;
+const TOKEN_RE = /("(?:[^"\\]|\\.)*")|(<-->|<->|-->|<--|~~>|<~~)|(\[[^\]]*\])/g;
+
+function keywordClass(kw: string): string {
+	if (kw === 'teamTopology' || kw === 'title' || kw === 'flow' || kw === 'legend' || kw === 'api')
+		return 'tok-directive';
+	if (kw === 'stream-aligned' || kw === 'stream' || kw === 'sa') return 'tok-kw-stream';
+	if (kw === 'enabling' || kw === 'en') return 'tok-kw-en';
+	if (kw === 'complicated-subsystem' || kw === 'subsystem' || kw === 'cs') return 'tok-kw-cs';
+	if (kw === 'platform' || kw === 'pf') return 'tok-kw-pf';
+	return 'tok-kw-group';
 }
 
-function safeRender(source: string, theme: Theme, idPrefix: string): string {
-	try {
-		return render(source, { theme, idPrefix });
-	} catch (e) {
-		return `<p class="render-error">${escapeHtml(e instanceof Error ? e.message : String(e))}</p>`;
+function highlightLine(line: string): string {
+	if (/^\s*(%%|\/\/)/.test(line)) return `<span class="tok-comment">${escapeHtml(line)}</span>`;
+
+	let out = '';
+	let rest = line;
+	const kwMatch = KEYWORD_RE.exec(rest);
+	if (kwMatch) {
+		out += escapeHtml(kwMatch[1]);
+		out += `<span class="${keywordClass(kwMatch[2])}">${escapeHtml(kwMatch[2])}</span>`;
+		rest = rest.slice(kwMatch[0].length);
 	}
+
+	let last = 0;
+	TOKEN_RE.lastIndex = 0;
+	let m: RegExpExecArray | null;
+	while ((m = TOKEN_RE.exec(rest))) {
+		out += escapeHtml(rest.slice(last, m.index));
+		if (m[1]) out += `<span class="tok-str">${escapeHtml(m[1])}</span>`;
+		else if (m[2]) out += `<span class="tok-arrow">${escapeHtml(m[2])}</span>`;
+		else if (m[3]) out += `<span class="tok-attrs">${escapeHtml(m[3])}</span>`;
+		last = TOKEN_RE.lastIndex;
+	}
+	out += escapeHtml(rest.slice(last));
+	return out;
 }
+
+function highlight(text: string): string {
+	return text.split('\n').map(highlightLine).join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// Team API snippet (capped visually to ~4 lines via CSS)
 
 function fillTeamApiSnippet(root: HTMLElement, catalog: CatalogEntry[]): void {
 	const el = root.querySelector<HTMLElement>('#feature-team-api-snippet');
@@ -313,57 +425,107 @@ interface Feature {
 	id: string;
 	title: string;
 	body: string;
-	extra?: string;
+	illustration: string;
 }
 
 const FEATURES: Feature[] = [
 	{
 		id: 'syntax',
-		title: 'Text syntax',
-		body: 'A dozen lines describe a topology: four team types, three interaction modes, comments and attributes. Diff it, review it, keep it in git.'
+		title: 'A text syntax for org design',
+		body: 'A dozen lines describe an organisation: four team types, three interaction modes, comments and attributes.',
+		illustration: `<pre class="feature-snippet"><code><span class="tok-kw-stream">stream</span>   checkout <span class="tok-str">"Checkout"</span></code><code><span class="tok-kw-en">enabling</span> devex    <span class="tok-str">"DevEx"</span></code><code><span class="tok-kw-pf">platform</span> infra    <span class="tok-str">"Infra"</span></code></pre>`
 	},
 	{
 		id: 'layout',
 		title: 'Layout that follows the book',
-		body: 'Stream-aligned lanes, platforms beneath, enabling bars crossing the teams they help, XaaS wedges and collaboration bridges drawn as in Team Topologies.'
+		body: 'Lanes for stream teams, overlays for enabling and subsystem teams, wedges for X-as-a-Service, platform groupings. No boxes and arrows.',
+		illustration: `<div class="feature-illus" aria-hidden="true">
+			<div class="il-lane il-lane-1"></div>
+			<div class="il-lane il-lane-2"></div>
+			<div class="il-lane il-lane-3"></div>
+			<div class="il-enabling-bar"></div>
+			<div class="il-subsystem"></div>
+			<div class="il-facilitating"></div>
+		</div>`
 	},
 	{
 		id: 'team-api',
-		title: 'A Team API page per team',
-		body: 'Every team gets a Team API document generated from the diagram, ready to fill in and share.',
-		extra: '<pre class="feature-snippet" id="feature-team-api-snippet"></pre>'
+		title: 'A Team API page for every team',
+		body: 'Generated from the diagram in the Team Topologies template — Markdown out, and always in sync with the picture.',
+		illustration: `<pre class="feature-snippet" id="feature-team-api-snippet"></pre>`
 	},
 	{
 		id: 'share',
-		title: 'Share by link',
-		body: 'Two links per diagram: one to edit, one to view. Send the view link and nobody can change your work.'
+		title: 'Share with a link',
+		body: 'A view link and an edit link, nothing else. No accounts on either end.',
+		illustration: `<div class="il-links" aria-hidden="true">
+			<span class="il-pill"><b>view</b><span class="il-pill-url">tt.app/d/8f3k2</span></span>
+			<span class="il-pill il-pill-edit"><b>edit</b><span class="il-pill-url">tt.app/d/8f3k2#key</span></span>
+		</div>`
 	},
 	{
 		id: 'private',
 		title: 'Private by default',
-		body: 'Your browser encrypts the source before it leaves. We store ciphertext and the key stays in your link.'
+		body: 'Diagrams are encrypted client-side; the key lives in the link fragment and never reaches us. Our servers hold ciphertext.',
+		illustration: `<div class="il-private" aria-hidden="true">
+			<span class="il-private-line">you see: <span class="tok-kw-stream">stream checkout</span></span>
+			<span class="il-private-line">we store: <span class="il-cipher">0x9f2a&hellip;c41b</span></span>
+		</div>`
 	},
 	{
 		id: 'history',
 		title: 'Version history',
-		body: 'Every save keeps a snapshot. Go back to any earlier version of a diagram.'
+		body: 'Every save is kept. Go back to any earlier version of a diagram.',
+		illustration: `<div class="il-history" aria-hidden="true">
+			<div class="il-history-col">
+				<div class="il-history-bars">
+					<span class="il-history-bar"></span>
+					<span class="il-history-bar"></span>
+					<span class="il-history-bar il-history-bar--platform"></span>
+				</div>
+				<span class="il-history-label">as-is</span>
+			</div>
+			<span class="il-history-arrow">&rarr;</span>
+			<div class="il-history-col">
+				<div class="il-history-bars">
+					<span class="il-history-bar"></span>
+					<span class="il-history-bar"></span>
+					<span class="il-history-bar"></span>
+					<span class="il-history-bar il-history-bar--platform"></span>
+				</div>
+				<span class="il-history-label">to-be</span>
+			</div>
+		</div>`
 	},
 	{
 		id: 'library',
-		title: 'CLI and MIT library',
-		body: `Render from the command line or embed the zero-dependency library in your own tools. <a href="${GITHUB_URL}">Source on GitHub</a>.`
+		title: 'Also a CLI and a library',
+		body: `A zero-dependency JavaScript library and a CLI for CI pipelines and docs sites. MIT licensed.`,
+		illustration: `<pre class="feature-snippet feature-snippet--term"><code><span class="tok-prompt">$</span> teamtopo org.tt &gt; org.svg</code><code><span class="tok-prompt">$</span> teamtopo --api org.tt</code><code><span class="tok-dim">import "teamtopo";</span></code></pre>`
 	}
 ];
 
 function shell(): string {
 	return `<div class="landing">
+	<nav class="landing-nav" id="landing-nav">
+		<a class="nav-brand" href="/">
+			<span class="brand-mark" aria-hidden="true"><i class="sq sq-stream"></i><i class="sq sq-enabling"></i><i class="sq sq-subsystem"></i><i class="sq sq-platform"></i></span>
+			teamtopo
+		</a>
+		<span class="free-pill">Free</span>
+		<span class="nav-spacer"></span>
+		<a class="nav-link" href="#features">Features</a>
+		<a class="nav-link" href="${GITHUB_URL}">GitHub</a>
+		<a class="nav-cta" href="/new">Open the editor</a>
+	</nav>
+
 	<header class="hero" id="hero">
 		<div class="hero-copy">
-			<h1 class="hero-title">Team Topologies diagrams from a few lines of text</h1>
-			<p class="hero-lede">Describe your teams and how they interact. teamtopo lays them out the way the book draws them and writes a Team API page for every team.</p>
+			<h1 class="hero-title">Describe your team topology in text.<br>Get the book&rsquo;s diagrams &mdash; and a Team&nbsp;API for every team.</h1>
+			<p class="hero-lede">A dozen lines become a Team Topologies diagram drawn the way the book draws it, plus a Team&nbsp;API document per team that never drifts out of sync. Think Mermaid, for org design.</p>
 			<p class="hero-ctas">
 				<a class="cta cta-primary" id="cta-editor" href="/new">Open the editor</a>
-				<a class="cta cta-secondary" id="cta-examples" href="#examples">Browse examples</a>
+				<a class="cta cta-secondary" id="cta-examples" href="#hero-demo">Browse examples</a>
 			</p>
 			<p class="trust-note" id="trust-note">Free, no account. Diagrams are encrypted in your browser; we never see them.</p>
 		</div>
@@ -373,43 +535,65 @@ function shell(): string {
 				<button type="button" class="hero-pause" id="hero-pause" aria-pressed="false" aria-label="Pause the demo">Pause</button>
 			</div>
 			<div class="hero-panes">
-				<pre class="hero-source" id="hero-source" aria-label="Diagram source" aria-live="off"></pre>
-				<div class="hero-diagram" id="hero-diagram" aria-label="Rendered diagram" data-state="empty"></div>
+				<div class="hero-pane hero-pane-source">
+					<div class="pane-head">Source<span class="spacer"></span><span class="pane-ext">.tt</span></div>
+					<div class="hero-code">
+						<pre class="hero-gutter" id="hero-gutter" aria-hidden="true"></pre>
+						<pre class="hero-source" id="hero-source" aria-label="Diagram source" aria-live="off"></pre>
+					</div>
+					<div class="hero-status" id="hero-status">
+						<span class="status-dot" id="hero-status-dot"></span><span id="hero-status-text"></span>
+					</div>
+				</div>
+				<div class="hero-pane hero-pane-diagram">
+					<div class="pane-head">Diagram<span class="spacer"></span><span class="pane-ext" id="hero-dims"></span></div>
+					<div class="hero-diagram" id="hero-diagram" aria-label="Rendered diagram" data-state="empty"></div>
+				</div>
 			</div>
+			<p class="hero-caption">These are the example topologies that ship with teamtopo — never customer data.</p>
 		</div>
 	</header>
 
-	<section class="examples" id="examples" aria-labelledby="examples-title">
-		<h2 class="section-title" id="examples-title">Examples</h2>
-		<ul class="examples-list" id="examples-list"></ul>
-	</section>
-
 	<section class="features" id="features" aria-labelledby="features-title">
-		<h2 class="section-title" id="features-title">What you get</h2>
+		<h2 class="section-title" id="features-title">Everything the diagram knows, put to work</h2>
+		<p class="section-lede">The text is the source of truth; diagrams, documents, links and history all follow from it.</p>
 		<ul class="features-list" id="features-list">
 			${FEATURES.map(featureCard).join('\n\t\t\t')}
 		</ul>
 	</section>
 
 	<section class="free" id="free" aria-labelledby="free-title">
-		<h2 class="section-title" id="free-title">Free</h2>
-		<p>teamtopo is free to use. Diagrams are tiny, the server only stores ciphertext, and hosting that costs next to nothing. There is no paid tier and none is planned.</p>
-		<p>If you want to hear when something changes, leave an email. Double opt-in, never linked to a diagram, unsubscribe any time.</p>
-		<div class="signup" id="signup"></div>
+		<div class="free-inner">
+			<h2 class="section-title" id="free-title">Free, and staying that way</h2>
+			<p class="section-lede">Diagrams render in your browser and our servers store only small encrypted blobs, so teamtopo costs almost nothing to run. It is free to use, and there is no paid tier planned.</p>
+			<div class="signup" id="signup"></div>
+		</div>
 	</section>
 
 	<footer class="site-footer" id="site-footer">
-		<p class="attribution" id="attribution">Shapes and Team API template &copy; Team Topologies, <a href="https://creativecommons.org/licenses/by-sa/4.0/">CC BY-SA 4.0</a>. Not affiliated with or endorsed by Team Topologies.</p>
-		<p class="footer-links"><a id="footer-github" href="${GITHUB_URL}">GitHub</a></p>
+		<div class="footer-inner">
+			<div class="footer-brand">
+				<div class="footer-wordmark"><span class="brand-mark" aria-hidden="true"><i class="sq sq-stream"></i><i class="sq sq-enabling"></i><i class="sq sq-subsystem"></i><i class="sq sq-platform"></i></span>teamtopo</div>
+				<p class="attribution" id="attribution">Team shapes and the Team API template are from <a href="https://teamtopologies.com">Team Topologies</a> (<a href="https://creativecommons.org/licenses/by-sa/4.0/">CC BY-SA 4.0</a>). This project is not affiliated with or endorsed by Team Topologies.</p>
+			</div>
+			<div class="footer-meta">
+				<p class="footer-links">
+					<a id="footer-github" href="${GITHUB_URL}">GitHub</a>
+					<a href="${LICENSE_URL}">MIT license</a>
+					<a href="#free">Privacy</a>
+				</p>
+				<p class="footer-made">Made with <span class="footer-made-mark" aria-hidden="true"><i class="sq sq-stream"></i><i class="sq sq-enabling"></i><i class="sq sq-subsystem"></i><i class="sq sq-platform"></i></span> at <a href="https://aboldnewlook.com">aboldnewlook.com</a></p>
+			</div>
+		</div>
 	</footer>
 </div>`;
 }
 
 function featureCard(f: Feature): string {
 	return `<li class="feature" id="feature-${f.id}">
+				${f.illustration}
 				<h3 class="feature-title">${f.title}</h3>
 				<p class="feature-body">${f.body}</p>
-				${f.extra ?? ''}
 			</li>`;
 }
 

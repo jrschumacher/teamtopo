@@ -33,7 +33,7 @@ export function renderSignup(root: HTMLElement): void {
 	root.innerHTML = `
 		<form id="signup-form">
 			<input id="signup-email" type="email" name="email" placeholder="you@example.com" required />
-			<button type="submit" id="signup-submit">Notify me</button>
+			<button type="submit" id="signup-submit">Hear about new features</button>
 			<p class="signup-privacy">${escapeHtml(PRIVACY_NOTE)}</p>
 			<p class="signup-message" id="signup-message" hidden></p>
 		</form>

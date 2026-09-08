@@ -259,7 +259,9 @@ teamtopo/
 ├── scripts/articles.mjs   articles build (+ markdown.mjs, article-template.mjs, tests)
 ├── content/articles/*.md  articles with front matter
 ├── examples/*.tt          sample diagrams (+ rendered .svg)
-└── public/                static playground, self-contained
+├── public/                static playground, self-contained
+├── app/                   hosted SPA + Worker (Vite, D1, R2); see docs/app-intent.md
+└── docs/                  app intent, landing design contract, follow-ups
 ```
 
 ```bash
@@ -267,6 +269,11 @@ npm test          # run the tests
 npm run build     # rebuild public/ from src/
 npm run examples  # rebuild public/ and re-render examples/*.svg
 npm run articles  # build content/articles/ → public/articles/
+
+cd app
+npm run dev       # hosted app locally (local D1/R2 via wrangler)
+npm run check     # typecheck + lint + tests
+npm run deploy    # build, migrate the remote D1, deploy (CI does this from main)
 ```
 
 ## Findings
@@ -301,3 +308,10 @@ npm run articles  # build content/articles/ → public/articles/
 The shapes and colours follow the Team Topologies
 [team shape templates](https://github.com/TeamTopologies/Team-Shape-Templates)
 (CC BY-SA 4.0), approximated rather than copied.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
+
+<!-- build bump: 1 -->
+

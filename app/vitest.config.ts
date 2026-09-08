@@ -16,6 +16,9 @@ export default defineConfig({
 				resolve: { alias: { '@lib/teamtopo': lib } },
 				server: { fs: { allow: [repoRoot] } },
 				test: { name: 'client', environment: 'happy-dom', include: ['src/**/*.test.ts'] }
+			},
+			{
+				test: { name: 'scripts', environment: 'node', include: ['scripts/**/*.test.ts'] }
 			}
 		]
 	}
