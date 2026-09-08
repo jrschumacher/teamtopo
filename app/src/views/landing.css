@@ -1,38 +1,12 @@
-/* Landing page. Visual design ported from the Claude Design artboard; tokens come from the
-   shared palette in styles.css (--bg/--fg/--muted/--accent/... ) plus a diagram palette
-   scoped here. Theme follows prefers-color-scheme only — no toggle, no data-theme. */
+/* Landing page. Visual design ported from the Claude Design artboard; all tokens
+   (background, foreground, muted, accent, plus the diagram palette: stream, enabling,
+   subsystem, platform and keyword colours) come from styles.css :root, shared with the
+   editor. Theme follows prefers-color-scheme only — no toggle, no data-theme. */
 
 .landing {
-	--stream: #ffe9a8;
-	--stream-edge: #e8c453;
-	--enabling: #c9baea;
-	--enabling-edge: #9a7fd0;
-	--subsystem: #f8b98a;
-	--subsystem-edge: #de9a5f;
-	--platform: #bbd9f3;
-	--platform-edge: #6fa6dd;
-	--kw-stream: #b8912a;
-	--kw-en: #6b4fa8;
-	--kw-cs: #c06b2b;
-	--kw-pf: #2f6db5;
-	--str: #2f7a38;
-	--term-bg: #10151d;
-	--term-fg: #c8d2de;
-	--term-dim: #8e99a8;
-	--term-accent: #6fa3dc;
 	max-width: 1220px;
 	margin: 0 auto;
 	line-height: 1.5;
-}
-
-@media (prefers-color-scheme: dark) {
-	.landing {
-		--kw-stream: #ffd166;
-		--kw-en: #c9baea;
-		--kw-cs: #f8b98a;
-		--kw-pf: #a9ccef;
-		--str: #6fcf7a;
-	}
 }
 
 .landing h1,
