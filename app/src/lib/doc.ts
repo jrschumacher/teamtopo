@@ -5,6 +5,7 @@
 
 import { createDoc, getDoc, getVersion, saveDoc } from './api';
 import { CryptoError, decrypt, deriveKeys, encrypt, importViewKey, newSecret } from './crypto';
+import { setCached } from './doc-cache';
 import { editLink, parseFragment, viewLink } from './links';
 import type { OpenedDoc, Version } from './types';
 
@@ -99,6 +100,7 @@ function attachSave(doc: OpenedDoc, key: CryptoKey, writeToken: string): OpenedD
 		doc.source = source;
 		doc.version = version;
 		doc.versions = [version, ...doc.versions.filter((v) => v.id !== version.id)];
+		setCached(doc);
 		return version;
 	};
 	return doc;
@@ -109,7 +111,9 @@ export async function openDocument(id: string, hash: string): Promise<OpenedDoc>
 	const res = await getDoc(id);
 	const source = await decryptOrLinkError(opener.key, res.payload);
 	const doc = buildDoc(id, source, res.version, res.versions, opener);
-	return opener.writeToken ? attachSave(doc, opener.key, opener.writeToken) : doc;
+	const opened = opener.writeToken ? attachSave(doc, opener.key, opener.writeToken) : doc;
+	setCached(opened);
+	return opened;
 }
 
 /** Read-only view of one version. `canEdit` reflects the link; there is no `save`. */
@@ -145,5 +149,6 @@ export async function createDocument(source: string): Promise<CreatedDoc> {
 		keys.encKey,
 		keys.writeToken
 	);
+	setCached(doc);
 	return { id, secret, editLink: editLink(id, secret), doc };
 }

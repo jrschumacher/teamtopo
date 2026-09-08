@@ -110,6 +110,24 @@
 	background: var(--ok);
 }
 
+/* Inline "revalidating in the background" hint — never replaces the page. */
+.ed-state.is-syncing::after {
+	content: '';
+	width: 10px;
+	height: 10px;
+	margin-left: 2px;
+	border-radius: 50%;
+	border: 1.5px solid var(--gutter);
+	border-top-color: var(--accent);
+	animation: ed-syncing-spin 0.7s linear infinite;
+}
+
+@keyframes ed-syncing-spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+
 .ed-spacer {
 	flex: 1;
 }
