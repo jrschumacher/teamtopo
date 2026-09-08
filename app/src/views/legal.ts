@@ -14,10 +14,11 @@ export type LegalPage = 'privacy' | 'terms';
 
 export const EFFECTIVE_DATE = { iso: '2026-09-08', text: '8 September 2026' };
 
+const OPERATOR = 'Ryan Schumacher';
 const CONTACT = 'hello@teamtopo.dev';
 
 const PRIVACY = `
-teamtopo is a free tool that turns text into Team Topologies diagrams. This page explains what data the hosted service at teamtopo.dev handles and what it does not. The short version: there are no accounts, your diagrams are encrypted in your browser before they leave it, and we cannot read them.
+teamtopo is a free tool that turns text into Team Topologies diagrams. The hosted service at teamtopo.dev is operated by ${OPERATOR} ("we", "us"). This page explains what data it handles and what it does not. The short version: there are no accounts, your diagrams are encrypted in your browser before they leave it, and we cannot read them.
 
 ## No accounts
 
@@ -85,11 +86,11 @@ Changes to this policy are posted on this page with a new effective date.
 
 ## Contact
 
-[${CONTACT}](mailto:${CONTACT})
+${OPERATOR}, [${CONTACT}](mailto:${CONTACT})
 `;
 
 const TERMS = `
-These terms cover the hosted teamtopo service at teamtopo.dev. By using it you agree to them.
+These terms cover the hosted teamtopo service at teamtopo.dev, operated by ${OPERATOR} ("we", "us"). By using it you agree to them.
 
 ## The service is free
 
@@ -139,7 +140,7 @@ Changes to these terms are posted on this page with a new effective date. Contin
 
 ## Contact
 
-[${CONTACT}](mailto:${CONTACT})
+${OPERATOR}, [${CONTACT}](mailto:${CONTACT})
 `;
 
 const DOCS: Record<LegalPage, { title: string; markdown: string }> = {
