@@ -19,7 +19,7 @@ export interface Env {
 // Hostnames that only ever serve production traffic. A preview-tagged version (env.preview,
 // bound to the disposable preview D1/R2) must never answer for one of these — see the
 // promotion-door rules in wrangler.jsonc's env.preview comment block.
-const PRODUCTION_HOSTNAMES = ['teamtopo.abnl.workers.dev'];
+const PRODUCTION_HOSTNAMES = ['teamtopo.dev', 'www.teamtopo.dev', 'teamtopo.abnl.workers.dev'];
 
 export default {
 	async fetch(request, env, ctx): Promise<Response> {

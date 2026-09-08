@@ -20,19 +20,24 @@ describe('worker router', () => {
 	});
 });
 
+const PRODUCTION_HOSTS = ['teamtopo.dev', 'www.teamtopo.dev', 'teamtopo.abnl.workers.dev'];
+
 describe('STAGE guard', () => {
-	it('refuses with 503 when STAGE=preview and the host is the production hostname', async () => {
-		const ctx = createExecutionContext();
-		const res = await worker.fetch(
-			new Request('https://teamtopo.abnl.workers.dev/api/subscribe') as unknown as Request<
-				unknown,
-				IncomingRequestCfProperties
-			>,
-			{ ...rawEnv, STAGE: 'preview' } as unknown as Env,
-			ctx
-		);
-		expect(res.status).toBe(503);
-	});
+	it.each(PRODUCTION_HOSTS)(
+		'refuses with 503 when STAGE=preview and the host is %s',
+		async (host) => {
+			const ctx = createExecutionContext();
+			const res = await worker.fetch(
+				new Request(`https://${host}/api/subscribe`) as unknown as Request<
+					unknown,
+					IncomingRequestCfProperties
+				>,
+				{ ...rawEnv, STAGE: 'preview' } as unknown as Env,
+				ctx
+			);
+			expect(res.status).toBe(503);
+		}
+	);
 
 	it('serves normally when STAGE=preview but the host is not production', async () => {
 		const ctx = createExecutionContext();
@@ -47,10 +52,10 @@ describe('STAGE guard', () => {
 		expect(res.status).toBe(404);
 	});
 
-	it('serves normally on the production hostname when STAGE is unset', async () => {
+	it.each(PRODUCTION_HOSTS)('serves normally on %s when STAGE is unset', async (host) => {
 		const ctx = createExecutionContext();
 		const res = await worker.fetch(
-			new Request('https://teamtopo.abnl.workers.dev/api/nope') as unknown as Request<
+			new Request(`https://${host}/api/nope`) as unknown as Request<
 				unknown,
 				IncomingRequestCfProperties
 			>,
