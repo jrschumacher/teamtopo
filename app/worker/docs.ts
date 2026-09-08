@@ -171,7 +171,7 @@ async function getDoc(
 	env: Env,
 	ctx: ExecutionContext,
 	id: string,
-	view: 'doc_view' | 'team_view'
+	view: 'doc_view' | 'team_view' | null
 ): Promise<Response> {
 	const meta = await readMeta(env, id);
 	if (!meta) return fail('not_found', 'no such document', 404);
@@ -181,13 +181,15 @@ async function getDoc(
 	if (!latestVersion || !payloadObj) return fail('not_found', 'no such version', 404);
 
 	const payload = await payloadObj.text();
-	track(env, ctx, {
-		type: view,
-		route: ROUTES.doc,
-		docId: id,
-		payloadBytes: latestVersion.size,
-		versionCount: meta.versions.length
-	});
+	if (view) {
+		track(env, ctx, {
+			type: view,
+			route: ROUTES.doc,
+			docId: id,
+			payloadBytes: latestVersion.size,
+			versionCount: meta.versions.length
+		});
+	}
 	return noStore({ id: meta.id, version: latestVersion, versions: meta.versions, payload }, 200);
 }
 
@@ -293,9 +295,12 @@ export async function handleDocs(
 	if (segments.length === 1) {
 		if (request.method === 'GET') {
 			// The team page fetches the same document; the client marks it with `?view=team`
-			// so usage analytics can tell the two apart. The response is identical.
+			// so usage analytics can tell the two apart. Background revalidation, link
+			// prefetch and supporting fetches carry `?background=1` and record no view, so a
+			// 60s revalidate or a link hover never inflates the counts. Same response always.
+			const background = url.searchParams.get('background') === '1';
 			const view = url.searchParams.get('view') === 'team' ? 'team_view' : 'doc_view';
-			return getDoc(env, ctx, id, view);
+			return getDoc(env, ctx, id, background ? null : view);
 		}
 		if (request.method === 'PUT') return putDoc(request, env, ctx, id);
 		return fail('method_not_allowed', 'method not allowed', 405);

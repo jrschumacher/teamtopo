@@ -173,6 +173,35 @@ describe('request path events', () => {
 		expect(everything).not.toContain('tok');
 	});
 
+	it('records no view for background fetches (revalidate, prefetch, supporting reads)', async () => {
+		const ANALYTICS = fakeDataset();
+		const created = await run(
+			ANALYTICS,
+			new Request('https://example.com/api/docs', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json', authorization: 'Bearer tok' },
+				body: JSON.stringify({ payload: 'hello' })
+			})
+		);
+		const { id } = (await created.json()) as { id: string };
+		expect(ANALYTICS.writeDataPoint).toHaveBeenCalledTimes(1);
+
+		const plain = await run(
+			ANALYTICS,
+			new Request(`https://example.com/api/docs/${id}?background=1`)
+		);
+		expect(plain.status).toBe(200);
+		const team = await run(
+			ANALYTICS,
+			new Request(`https://example.com/api/docs/${id}?view=team&background=1`)
+		);
+		expect(team.status).toBe(200);
+		expect(ANALYTICS.writeDataPoint).toHaveBeenCalledTimes(1);
+
+		await run(ANALYTICS, new Request(`https://example.com/api/docs/${id}?view=team`));
+		expect(blobs(ANALYTICS, 1)).toEqual(['team_view', id, '/api/docs/:id']);
+	});
+
 	it('records subscribe and subscribe_confirm without the email address', async () => {
 		const ANALYTICS = fakeDataset();
 		const email = 'analytics-signup@example.com';

@@ -39,8 +39,8 @@ Open items after the first deploy (2026-09-05). Live at https://teamtopo.abnl.wo
 
 ## Product
 
-- Landing page: the "Skill for coding agents" card returns when #3 ships; "compare versions"
-  copy returns with #4; CLI/library card is backed by #2 (npm publish).
+- Landing page: the "Skill for coding agents" card is back (#3 shipped `skills/teamtopo/`);
+  "compare versions" copy returns with #4; CLI/library card is backed by #2 (npm publish).
 - Wire the articles pipeline into the app build: call `build({ out: 'dist/client/articles',
   base: 'https://<host>/articles' })` from `scripts/articles.mjs` so `/articles` is served.
 - Team API fields for agents (scope, reviewing agent, concurrency cap) per the first article.

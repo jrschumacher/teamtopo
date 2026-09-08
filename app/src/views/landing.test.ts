@@ -92,7 +92,7 @@ describe('renderLanding', () => {
 		}
 		expect(q<HTMLAnchorElement>('#cta-editor').getAttribute('href')).toBe('/new');
 		expect(q<HTMLAnchorElement>('#cta-examples').getAttribute('href')).toBe('#hero-demo');
-		expect(root.querySelectorAll('.feature')).toHaveLength(7);
+		expect(root.querySelectorAll('.feature')).toHaveLength(8);
 		for (const id of [
 			'feature-syntax',
 			'feature-layout',
@@ -100,7 +100,8 @@ describe('renderLanding', () => {
 			'feature-share',
 			'feature-private',
 			'feature-history',
-			'feature-library'
+			'feature-library',
+			'feature-skill'
 		]) {
 			expect(root.querySelector(`#${id}`), id).not.toBeNull();
 		}

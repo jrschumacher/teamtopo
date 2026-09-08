@@ -444,6 +444,12 @@ const FEATURES: Feature[] = [
 		title: 'Also a CLI and a library',
 		body: `A zero-dependency JavaScript library and a CLI for CI pipelines and docs sites. MIT licensed.`,
 		illustration: `<pre class="feature-snippet feature-snippet--term"><code><span class="tok-prompt">$</span> teamtopo org.tt &gt; org.svg</code><code><span class="tok-prompt">$</span> teamtopo --api org.tt</code><code><span class="tok-dim">import "teamtopo";</span></code></pre>`
+	},
+	{
+		id: 'skill',
+		title: 'A Skill for coding agents',
+		body: 'An agent Skill teaches Claude Code and other harnesses the syntax, so you can draft and evolve topologies from your terminal.',
+		illustration: `<pre class="feature-snippet feature-snippet--term"><code><span class="tok-prompt">$</span> npx skills add jrschumacher/teamtopo</code><code><span class="tok-prompt">&gt;</span> split checkout into two stream teams</code><code><span class="tok-dim">org.tt updated and parses</span></code></pre>`
 	}
 ];
 

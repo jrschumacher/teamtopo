@@ -35,6 +35,14 @@ Column layout (the queries below depend on it):
 | `double1` | payload bytes (ciphertext size) or 0                                   |
 | `double2` | number of versions the document holds after the request, or 0          |
 
+Views count **loads**, not navigations. The client caches the open document, so hopping
+between a diagram's editor, its Team API pages and its versions makes no request and records
+nothing; `team_view` therefore counts loads from the team route, not cached navigations.
+Fetches the client makes for its own housekeeping — background revalidation after a cache
+hit, link prefetch on hover/focus, and the versions-list read behind a version view — carry
+`?background=1` and record no view at all, so the 60 s revalidate loop and hovering links
+never inflate the counts.
+
 Not recorded, by design: IP addresses, user agents, email addresses, tokens, concrete URLs.
 The document id is an opaque UUID and the payload is encrypted client-side, so the id links
 events to a blob nobody can read server-side. A repeat signup from an address that is already
