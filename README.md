@@ -269,6 +269,11 @@ npm test          # run the tests
 npm run build     # rebuild public/ from src/
 npm run examples  # rebuild public/ and re-render examples/*.svg
 npm run articles  # build content/articles/ → public/articles/
+
+cd app
+npm run dev       # hosted app locally (local D1/R2 via wrangler)
+npm run check     # typecheck + lint + tests
+npm run deploy    # build, migrate the remote D1, deploy (CI does this from main)
 ```
 
 ## Findings
