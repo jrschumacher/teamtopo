@@ -90,6 +90,7 @@ describe('renderLanding', () => {
 		]) {
 			expect(root.querySelector(`#${id}`), id).not.toBeNull();
 		}
+		expect(document.title).toBe('teamtopo');
 		expect(q<HTMLAnchorElement>('#cta-editor').getAttribute('href')).toBe('/new');
 		expect(q<HTMLAnchorElement>('#cta-examples').getAttribute('href')).toBe('#hero-demo');
 		expect(root.querySelectorAll('.feature')).toHaveLength(8);

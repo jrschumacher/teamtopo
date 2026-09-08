@@ -20,7 +20,7 @@ import {
 import type { OpenedDoc } from '../lib/types';
 import { escapeHtml } from '../lib/markdown';
 import { readApiBlock, writeApiBlock } from '../lib/apiblock';
-import { brandMarkHtml } from '../lib/brand';
+import { brandMarkHtml, pageTitle } from '../lib/brand';
 import { docPath, teamLink } from '../lib/links';
 import './editor.css';
 import './team.css';
@@ -362,6 +362,7 @@ export function renderTeamView(root: HTMLElement, doc: OpenedDoc, teamId: string
 		const fields = readApiBlock(source, teamId);
 		const hasApiFields = Object.keys(fields).length > 0 || unmappedFields(node).length > 0;
 		const showEmptyBanner = !hasApiFields && !editing;
+		document.title = pageTitle(model.title);
 
 		root.innerHTML = `
 			<div class="team-page">

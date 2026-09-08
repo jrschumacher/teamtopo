@@ -7,6 +7,7 @@ import { render, teamApi } from '@lib/teamtopo';
 import { countInteractions, countTeams, highlight } from '../lib/highlight';
 import { escapeHtml } from '../lib/markdown';
 import { mountWebAnalytics, webAnalyticsToken } from '../lib/webAnalytics';
+import { footerHtml, navHtml } from './chrome';
 import { renderSignup } from './subscribe';
 import './landing.css';
 
@@ -24,13 +25,11 @@ const TICK_MS = 24;
 /** How long a finished diagram stays on screen before the demo moves to the next example. */
 const HOLD_MS = 5000;
 
-const GITHUB_URL = 'https://github.com/jrschumacher/teamtopo';
-const LICENSE_URL = 'https://github.com/jrschumacher/teamtopo/blob/main/LICENSE';
-
 const disposers = new WeakMap<HTMLElement, () => void>();
 
 export function renderLanding(root: HTMLElement): void {
 	disposers.get(root)?.();
+	document.title = 'teamtopo';
 	root.innerHTML = shell();
 	mountWebAnalytics(webAnalyticsToken());
 
@@ -161,15 +160,6 @@ function startDemo(root: HTMLElement, catalog: CatalogEntry[]): () => void {
 			`.hero-tab[data-index="${state.index}"] .tab-progress`
 		);
 		if (bar) bar.style.width = `${Math.min(100, pct)}%`;
-		const svg = diagramEl.querySelector<SVGElement>('svg');
-		if (svg) {
-			if (reduced) {
-				svg.style.clipPath = '';
-			} else {
-				const reveal = Math.min(1, Math.max(0, (pct / 100 - 0.04) / 0.9));
-				svg.style.clipPath = `inset(${(1 - reveal) * 100}% 0 0 0)`;
-			}
-		}
 	};
 
 	const paint = (source: string) => {
@@ -401,8 +391,8 @@ const FEATURES: Feature[] = [
 		title: 'Share with a link',
 		body: 'A view link and an edit link, nothing else. No accounts on either end.',
 		illustration: `<div class="il-links" aria-hidden="true">
-			<span class="il-pill"><b>view</b><span class="il-pill-url">tt.app/d/8f3k2</span></span>
-			<span class="il-pill il-pill-edit"><b>edit</b><span class="il-pill-url">tt.app/d/8f3k2#key</span></span>
+			<span class="il-pill"><b>view</b><span class="il-pill-url">teamtopo.dev/d/8f3k2</span></span>
+			<span class="il-pill il-pill-edit"><b>edit</b><span class="il-pill-url">teamtopo.dev/d/8f3k2#key</span></span>
 		</div>`
 	},
 	{
@@ -442,8 +432,8 @@ const FEATURES: Feature[] = [
 	{
 		id: 'library',
 		title: 'Also a CLI and a library',
-		body: `A zero-dependency JavaScript library and a CLI for CI pipelines and docs sites. MIT licensed.`,
-		illustration: `<pre class="feature-snippet feature-snippet--term"><code><span class="tok-prompt">$</span> teamtopo org.tt &gt; org.svg</code><code><span class="tok-prompt">$</span> teamtopo --api org.tt</code><code><span class="tok-dim">import "teamtopo";</span></code></pre>`
+		body: `A zero-dependency JavaScript library and a CLI for CI pipelines and docs sites. MIT licensed, on GitHub today; the npm package is coming.`,
+		illustration: `<pre class="feature-snippet feature-snippet--term"><code><span class="tok-prompt">$</span> npx --yes \\</code><code>  github:jrschumacher/teamtopo \\</code><code>  org.tt &gt; org.svg</code></pre>`
 	},
 	{
 		id: 'skill',
@@ -455,17 +445,7 @@ const FEATURES: Feature[] = [
 
 function shell(): string {
 	return `<div class="landing">
-	<nav class="landing-nav" id="landing-nav">
-		<a class="nav-brand" href="/">
-			<span class="brand-mark" aria-hidden="true"><i class="sq sq-stream"></i><i class="sq sq-enabling"></i><i class="sq sq-subsystem"></i><i class="sq sq-platform"></i></span>
-			teamtopo
-		</a>
-		<span class="free-pill">Free</span>
-		<span class="nav-spacer"></span>
-		<a class="nav-link" href="#features">Features</a>
-		<a class="nav-link" href="${GITHUB_URL}">GitHub</a>
-		<a class="nav-cta" href="/new">Open the editor</a>
-	</nav>
+	${navHtml('#features')}
 
 	<header class="hero" id="hero">
 		<div class="hero-copy">
@@ -498,7 +478,6 @@ function shell(): string {
 					<div class="hero-diagram" id="hero-diagram" aria-label="Rendered diagram" data-state="empty"></div>
 				</div>
 			</div>
-			<p class="hero-caption">These are the example topologies that ship with teamtopo — never customer data.</p>
 		</div>
 	</header>
 
@@ -518,22 +497,7 @@ function shell(): string {
 		</div>
 	</section>
 
-	<footer class="site-footer" id="site-footer">
-		<div class="footer-inner">
-			<div class="footer-brand">
-				<div class="footer-wordmark"><span class="brand-mark" aria-hidden="true"><i class="sq sq-stream"></i><i class="sq sq-enabling"></i><i class="sq sq-subsystem"></i><i class="sq sq-platform"></i></span>teamtopo</div>
-				<p class="attribution" id="attribution">Team shapes and the Team API template are from <a href="https://teamtopologies.com">Team Topologies</a> (<a href="https://creativecommons.org/licenses/by-sa/4.0/">CC BY-SA 4.0</a>). This project is not affiliated with or endorsed by Team Topologies.</p>
-			</div>
-			<div class="footer-meta">
-				<p class="footer-links">
-					<a id="footer-github" href="${GITHUB_URL}">GitHub</a>
-					<a href="${LICENSE_URL}">MIT license</a>
-					<a href="#free">Privacy</a>
-				</p>
-				<p class="footer-made">Made with <span class="footer-made-mark" aria-hidden="true"><i class="sq sq-stream"></i><i class="sq sq-enabling"></i><i class="sq sq-subsystem"></i><i class="sq sq-platform"></i></span> at <a href="https://aboldnewlook.com">aboldnewlook.com</a></p>
-			</div>
-		</div>
-	</footer>
+	${footerHtml()}
 </div>`;
 }
 

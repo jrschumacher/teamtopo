@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16">
+	<!-- Four-square brand mark (stream, enabling, subsystem, platform) as a 2x2 grid so it
+	     still reads at 16px. Edge colours on light backgrounds, fill colours on dark, matching
+	     the diagram palette in src/styles.css. -->
+	<style>
+		.s { fill: #e8c453; }
+		.e { fill: #9a7fd0; }
+		.c { fill: #de9a5f; }
+		.p { fill: #6fa6dd; }
+		@media (prefers-color-scheme: dark) {
+			.s { fill: #ffe9a8; }
+			.e { fill: #c9baea; }
+			.c { fill: #f8b98a; }
+			.p { fill: #bbd9f3; }
+		}
+	</style>
+	<rect class="s" x="0.5" y="0.5" width="7" height="7" rx="1.5" />
+	<rect class="e" x="8.5" y="0.5" width="7" height="7" rx="1.5" />
+	<rect class="c" x="0.5" y="8.5" width="7" height="7" rx="1.5" />
+	<rect class="p" x="8.5" y="8.5" width="7" height="7" rx="1.5" />
+</svg>

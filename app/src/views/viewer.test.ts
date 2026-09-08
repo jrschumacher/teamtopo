@@ -46,6 +46,7 @@ describe('renderViewer', () => {
 		expect(root.querySelector('#canvas svg')).not.toBeNull();
 		expect(root.querySelector('#doc-title')!.textContent).toBe('Shop <b>bold</b>');
 		expect(root.querySelector('#doc-title b')).toBeNull();
+		expect(document.title).toBe('Shop <b>bold</b> · teamtopo');
 		const teams = [...root.querySelectorAll<HTMLAnchorElement>('.team-list a')].map((a) =>
 			a.getAttribute('href')
 		);

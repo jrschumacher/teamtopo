@@ -97,12 +97,15 @@ overwritten on re-signup. From address is var `EMAIL_FROM`.
 |---|---|
 | `/` | landing: catalog demo, features, free, signup |
 | `/new` | editor, unsaved; first save POSTs and redirects to the edit link |
+| `/privacy`, `/terms` | legal pages (`views/legal.ts`), landing chrome, Markdown body |
 | `/d/:id` | editor if `#s=`, viewer if `#k=`, otherwise "link missing key" |
 | `/d/:id/v/:vid` | read-only view of a version, same fragment rules |
 | `/d/:id/team/:teamId` | Team API page for one team |
 
-Fragment is preserved across in-app navigation. `not_found_handling` is
-`single-page-application` for non-`/api` paths.
+Fragment is preserved across in-app navigation. A link that only changes the fragment of
+the current page (`#features`) is an in-page anchor: the router moves the hash and scrolls
+without re-rendering. `not_found_handling` is `single-page-application` for non-`/api`
+paths.
 
 ## Client lib contracts
 

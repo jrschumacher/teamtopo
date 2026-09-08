@@ -110,14 +110,17 @@ describe('renderEditor', () => {
 		vi.useFakeTimers();
 		renderEditor(root, makeDoc());
 		expect(root.querySelector('#doc-title')!.textContent).toBe('Shop');
+		expect(document.title).toBe('Shop · teamtopo');
 		type(root, SRC.replace('title Shop', 'title Renamed Co'));
 		vi.advanceTimersByTime(200);
 		expect(root.querySelector('#doc-title')!.textContent).toBe('Renamed Co');
+		expect(document.title).toBe('Renamed Co · teamtopo');
 	});
 
 	it('falls back to "Untitled diagram" when the source has no title', () => {
 		renderEditor(root, makeDoc({ source: 'teamTopology\n  stream a "A"\n' }));
 		expect(root.querySelector('#doc-title')!.textContent).toBe('Untitled diagram');
+		expect(document.title).toBe('teamtopo');
 	});
 
 	it('shows a Saved state pill for an unchanged doc, and Unsaved once edited', () => {

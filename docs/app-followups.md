@@ -1,6 +1,6 @@
 # App follow-ups
 
-Open items after the first deploy (2026-09-05). Live at https://teamtopo.abnl.workers.dev.
+Open items after the first deploy (2026-09-05). Live at https://teamtopo.dev.
 
 ## Operations
 

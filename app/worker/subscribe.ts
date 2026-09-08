@@ -68,7 +68,7 @@ async function sendMail(
 		return;
 	}
 	await env.EMAIL.send({
-		from: { email: env.EMAIL_FROM, name: 'TeamTopo' },
+		from: { email: env.EMAIL_FROM, name: 'teamtopo' },
 		to: message.to,
 		subject: message.subject,
 		text: message.text
@@ -77,14 +77,14 @@ async function sendMail(
 
 async function sendConfirmationMail(env: Env, url: URL, email: string, token: string) {
 	const text = [
-		'Confirm your subscription to TeamTopo updates:',
+		'Confirm your subscription to teamtopo updates:',
 		confirmLink(url, token),
 		'',
-		'If you did not request this, ignore it.',
+		'If you did not request this, you can ignore this email.',
 		'',
 		`Unsubscribe: ${unsubscribeLink(url, token)}`
 	].join('\n');
-	await sendMail(env, { to: email, subject: 'Confirm your TeamTopo subscription', text });
+	await sendMail(env, { to: email, subject: 'Confirm your teamtopo subscription', text });
 }
 
 async function handleSignup(

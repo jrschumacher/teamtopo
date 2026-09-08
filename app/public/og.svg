@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
+	<!-- Open Graph / Twitter card. Light brand palette from src/styles.css; the team shapes in the
+	     top-right are the diagram vocabulary (stream lanes, enabling bar, platform bar).
+	     og.png is rasterised from this file on macOS: `sips -s format png og.svg --out og.png`. -->
+	<style>
+		text { font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+		.wordmark { font-size: 40px; font-weight: 600; fill: #1b2130; letter-spacing: -0.5px; }
+		.title { font-size: 56px; font-weight: 700; fill: #1b2130; letter-spacing: -1px; }
+		.lede { font-size: 28px; fill: #66717f; }
+		.url { font-size: 24px; fill: #66717f; }
+	</style>
+	<rect width="1200" height="630" fill="#f2f4f7" />
+
+	<!-- wordmark -->
+	<rect x="80" y="80" width="28" height="28" rx="6" fill="#ffe9a8" />
+	<rect x="116" y="80" width="28" height="28" rx="6" fill="#c9baea" />
+	<rect x="152" y="80" width="28" height="28" rx="6" fill="#f8b98a" />
+	<rect x="188" y="80" width="28" height="28" rx="6" fill="#bbd9f3" />
+	<text class="wordmark" x="236" y="108">teamtopo</text>
+
+	<!-- team shapes -->
+	<rect x="780" y="70" width="260" height="36" rx="8" fill="#ffe9a8" stroke="#e8c453" stroke-width="1.5" />
+	<rect x="780" y="116" width="260" height="36" rx="8" fill="#ffe9a8" stroke="#e8c453" stroke-width="1.5" />
+	<rect x="1060" y="70" width="60" height="82" rx="8" fill="#c9baea" stroke="#9a7fd0" stroke-width="1.5" />
+	<rect x="780" y="166" width="340" height="36" rx="8" fill="#bbd9f3" stroke="#6fa6dd" stroke-width="1.5" />
+
+	<!-- headline -->
+	<text class="title" x="80" y="300">Describe your team topology in text.</text>
+	<text class="title" x="80" y="368">Get the book&#8217;s diagrams, and</text>
+	<text class="title" x="80" y="436">a Team API for every team.</text>
+
+	<!-- lede -->
+	<text class="lede" x="80" y="500">Free, no account. Diagrams are encrypted in your browser; we never see them.</text>
+
+	<text class="url" x="80" y="566">teamtopo.dev</text>
+</svg>
