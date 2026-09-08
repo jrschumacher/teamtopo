@@ -22,7 +22,7 @@ are encrypted in the browser and we never see them. Below the copy, full width, 
 itself, live: a source pane on the left with a line-number gutter and syntax highlighting
 showing the text syntax, a status bar with a dot and a team/interaction count, and a rendered
 diagram pane on the right that reveals bottom-up as the source types in — cycling through a
-catalog of example topologies we ship (never customer data, captioned as such).
+catalog of example topologies we ship (never customer data).
 
 The visual language comes from the diagrams: stream-aligned teams are yellow lanes, enabling
 teams purple bars, complicated subsystems orange octagons, platforms blue bars; interactions
@@ -62,8 +62,7 @@ stack (`--font` / `--mono` in `styles.css`) — no webfonts.
   `#hero-source` — a `pre` whose `textContent` is always exactly the typed source, `#hero-status`
   with `#hero-status-dot` and `#hero-status-text`) and `.hero-pane.hero-pane-diagram` (pane
   head with `#hero-dims`, `#hero-diagram` with `data-state="empty|ok|stale|error"` — its
-  `innerHTML` is the rendered `<svg>` directly, no wrapper). `.hero-caption` sits under the
-  panel.
+  `innerHTML` is the rendered `<svg>` directly, no wrapper).
 - Features: `#features`, `#features-title`, `#features-list` > `.feature` with ids
   `#feature-syntax`, `#feature-layout`, `#feature-team-api`, `#feature-share`,
   `#feature-private`, `#feature-history`, `#feature-library`, each with `.feature-title`

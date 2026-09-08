@@ -487,7 +487,6 @@ function shell(): string {
 					<div class="hero-diagram" id="hero-diagram" aria-label="Rendered diagram" data-state="empty"></div>
 				</div>
 			</div>
-			<p class="hero-caption">These are the example topologies that ship with teamtopo — never customer data.</p>
 		</div>
 	</header>
 
