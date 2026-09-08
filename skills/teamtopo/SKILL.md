@@ -84,7 +84,7 @@ repo, `npx --yes github:jrschumacher/teamtopo --json docs/org.tt` elsewhere, and
 `npx teamtopo --json docs/org.tt` once the package is on npm. Errors are
 `file:line: message`; fix and re-run. Render with the same command minus `--json`
 (SVG on stdout), Team API documents with `--api [--team id]`. The file can also be
-pasted into the hosted editor at https://teamtopo.abnl.workers.dev to render and share.
+pasted into the hosted editor at https://teamtopo.dev/new to render and share.
 
 ## References
 
