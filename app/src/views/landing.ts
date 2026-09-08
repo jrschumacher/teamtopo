@@ -31,6 +31,7 @@ const disposers = new WeakMap<HTMLElement, () => void>();
 
 export function renderLanding(root: HTMLElement): void {
 	disposers.get(root)?.();
+	document.title = 'teamtopo';
 	root.innerHTML = shell();
 	mountWebAnalytics(webAnalyticsToken());
 
@@ -401,8 +402,8 @@ const FEATURES: Feature[] = [
 		title: 'Share with a link',
 		body: 'A view link and an edit link, nothing else. No accounts on either end.',
 		illustration: `<div class="il-links" aria-hidden="true">
-			<span class="il-pill"><b>view</b><span class="il-pill-url">tt.app/d/8f3k2</span></span>
-			<span class="il-pill il-pill-edit"><b>edit</b><span class="il-pill-url">tt.app/d/8f3k2#key</span></span>
+			<span class="il-pill"><b>view</b><span class="il-pill-url">teamtopo.dev/d/8f3k2</span></span>
+			<span class="il-pill il-pill-edit"><b>edit</b><span class="il-pill-url">teamtopo.dev/d/8f3k2#key</span></span>
 		</div>`
 	},
 	{
@@ -442,8 +443,8 @@ const FEATURES: Feature[] = [
 	{
 		id: 'library',
 		title: 'Also a CLI and a library',
-		body: `A zero-dependency JavaScript library and a CLI for CI pipelines and docs sites. MIT licensed.`,
-		illustration: `<pre class="feature-snippet feature-snippet--term"><code><span class="tok-prompt">$</span> teamtopo org.tt &gt; org.svg</code><code><span class="tok-prompt">$</span> teamtopo --api org.tt</code><code><span class="tok-dim">import "teamtopo";</span></code></pre>`
+		body: `A zero-dependency JavaScript library and a CLI for CI pipelines and docs sites. MIT licensed, on GitHub today; the npm package is coming.`,
+		illustration: `<pre class="feature-snippet feature-snippet--term"><code><span class="tok-prompt">$</span> npx --yes \\</code><code>  github:jrschumacher/teamtopo \\</code><code>  org.tt &gt; org.svg</code></pre>`
 	},
 	{
 		id: 'skill',
@@ -528,7 +529,7 @@ function shell(): string {
 				<p class="footer-links">
 					<a id="footer-github" href="${GITHUB_URL}">GitHub</a>
 					<a href="${LICENSE_URL}">MIT license</a>
-					<a href="#free">Privacy</a>
+					<a href="#feature-private">Privacy</a>
 				</p>
 				<p class="footer-made">Made with <span class="footer-made-mark" aria-hidden="true"><i class="sq sq-stream"></i><i class="sq sq-enabling"></i><i class="sq sq-subsystem"></i><i class="sq sq-platform"></i></span> at <a href="https://aboldnewlook.com">aboldnewlook.com</a></p>
 			</div>
