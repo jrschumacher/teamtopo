@@ -308,3 +308,7 @@ npm run deploy    # build, migrate the remote D1, deploy (CI does this from main
 The shapes and colours follow the Team Topologies
 [team shape templates](https://github.com/TeamTopologies/Team-Shape-Templates)
 (CC BY-SA 4.0), approximated rather than copied.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
