@@ -100,3 +100,54 @@ single syntax highlighter, used by both the landing hero source pane and the edi
   save, renders them as plain `<div>`s — there is nowhere to link to yet).
 - No PNG export and no theme toggle, per product decision — the artboard's PNG button and
   theme-toggle control are omitted.
+
+## Team page (`team.ts`)
+
+The Team API page (`app/src/views/team.ts`, styles in `app/src/views/team.css`) restyles the
+per-team route to the Claude Design artboard, reusing the `.ed-bar`/`.ed-brand`/`.ed-divider`
+header shell and the `.tt-node`/`.tt-frame`/`data-id` diagram vocabulary from `editor.ts`.
+
+### Ids and classes the tests depend on
+
+- `.team-page` the page root; `.breadcrumb` the header's `<nav>` ("doc title / team name",
+  the doc link keeps the fragment); `#save-status` (inside the header's `.ed-state` pill) shows
+  "Saved · encrypted" / "Saving…" / the error text from a failed save.
+- `#api-form` — present only while editing (absent for a read-only doc, and absent in view
+  mode even when the doc is editable). `#api-body` wraps the grouped `dl` sections in both
+  view and edit mode.
+- `#copy-api` ("Copy Markdown", `teamApi()` output, shows "Copied" for 1.4 s —
+  `COPY_FEEDBACK_MS`).
+- `#team-diagram` — the aside's live SVG render of the whole doc, wrapped in a link to the
+  document. The current team's shape gets the `.tt-team-highlight` class (same class the
+  editor's click target styling already knows about via `styles.css`/now `team.css`), giving
+  it an accent outline and soft glow.
+- Buttons and links carry `data-action` (`enter-edit`, `cancel-edit`, `save`, `copy-markdown`)
+  handled by one delegated click listener on `.team-page`, re-attached each time the page
+  re-renders (entering/leaving edit mode, or after a save).
+
+### Behaviour
+
+- View mode is the default even when the doc is editable; "Edit Team API" (hero) or "Fill it
+  in" (empty-state banner) switches every group's rows to inputs and shows the sticky
+  Save/Cancel bar. Cancel and **Escape** both discard the draft and return to view mode without
+  saving; a failed save keeps the form open with the header pill showing the error.
+- The five groups (Mission, What we own, Service level expectations, Working with us, Right
+  now) map onto `TEAM_API_FIELDS`' canonical keys. Any `api` block field the parser accepted
+  that isn't one of the twelve canonical keys (a raw, non-alias field name) is shown read-only
+  under a sixth "Other" section, never dropped from view — though saving the form still only
+  round-trips the twelve canonical fields (existing `apiblock.ts` behaviour, unchanged).
+- Interactions list both directions (this team as `from` or `to`), mode labels straight from
+  the library's `MODES`, non-`[soon]` first and `[soon]` interactions under a second, dashed
+  "Expected to interact with soon" heading.
+- Size (`[size=N]`) and note (`[note="…"]`) attributes render on the hero as "N people" and a
+  blurb paragraph; both are omitted when absent.
+
+### Deviations from the artboard
+
+- "Other" fields (raw `api` block entries the twelve canonical fields don't cover) are always
+  read-only, even while editing — `writeApiBlock` only round-trips canonical
+  `TEAM_API_FIELDS` keys, so making them editable would silently imply a save path that does
+  not exist.
+- Below 30rem the header wraps (brand+divider on one line, the breadcrumb on its own line, the
+  save pill and "Open in editor" on a third) and the field `dl` rows stack to one column —
+  the artboard's fixed two-column `dl` grid does not survive down to narrow phones.

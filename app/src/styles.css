@@ -145,44 +145,5 @@ button.link {
 }
 
 /* Header bar, editor workspace, preview, viewer body and toast styles moved to
-   views/editor.css (shared by the editor and the viewer header shell). */
-
-/* ── team page ── */
-.team-page {
-	max-width: 72rem;
-	margin: 0 auto;
-}
-
-.team-page .diagram svg {
-	max-width: 100%;
-	height: auto;
-}
-
-.team-page .tt-team-highlight > rect:first-of-type,
-.team-page .tt-team-highlight > path:first-of-type,
-.team-page .tt-team-highlight > polygon:first-of-type {
-	stroke: var(--accent);
-	stroke-width: 3;
-}
-
-.team-page .field {
-	display: block;
-	margin: 8px 0;
-	color: var(--muted);
-	font-size: 12px;
-}
-
-.team-page .field input {
-	display: block;
-	width: 100%;
-	max-width: 40rem;
-	height: 30px;
-	padding: 0 8px;
-	border: 1px solid var(--border-strong);
-	border-radius: 6px;
-	background: var(--surface);
-}
-
-.team-sidebar {
-	padding-left: 18px;
-}
+   views/editor.css (shared by the editor and the viewer header shell). Team page
+   styles moved to views/team.css (imported by team.ts). */
