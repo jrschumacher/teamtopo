@@ -160,15 +160,6 @@ function startDemo(root: HTMLElement, catalog: CatalogEntry[]): () => void {
 			`.hero-tab[data-index="${state.index}"] .tab-progress`
 		);
 		if (bar) bar.style.width = `${Math.min(100, pct)}%`;
-		const svg = diagramEl.querySelector<SVGElement>('svg');
-		if (svg) {
-			if (reduced) {
-				svg.style.clipPath = '';
-			} else {
-				const reveal = Math.min(1, Math.max(0, (pct / 100 - 0.04) / 0.9));
-				svg.style.clipPath = `inset(${(1 - reveal) * 100}% 0 0 0)`;
-			}
-		}
 	};
 
 	const paint = (source: string) => {

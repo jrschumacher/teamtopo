@@ -21,7 +21,7 @@ secondary — both point at the live demo below), and a trust note: free, no acc
 are encrypted in the browser and we never see them. Below the copy, full width, the product
 itself, live: a source pane on the left with a line-number gutter and syntax highlighting
 showing the text syntax, a status bar with a dot and a team/interaction count, and a rendered
-diagram pane on the right that reveals bottom-up as the source types in — cycling through a
+diagram pane on the right that grows line by line as the source types in — cycling through a
 catalog of example topologies we ship (never customer data).
 
 The visual language comes from the diagrams: stream-aligned teams are yellow lanes, enabling
@@ -76,6 +76,7 @@ Behaviour that lives in the TypeScript, not the design: the catalog is fetched f
 `/catalog.json`; typing runs at 3 characters per 24 ms with a 5 s hold per example and
 re-renders on newline boundaries, keeping the last good render on parse errors; hover, focus
 and `prefers-reduced-motion` pause it; rendered SVGs use `idPrefix` so several diagrams can
-share the page. The status line and diagram reveal use team/interaction counts computed from
-the typed source with the same team-type and arrow-token regexes as the parser
+share the page. The partial render is the reveal: there is no clip-path curtain over the
+diagram, it simply grows as lines parse. The status line uses team/interaction counts
+computed from the typed source with the same team-type and arrow-token regexes as the parser
 (`src/teamtopo.js`).

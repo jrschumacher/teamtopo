@@ -480,13 +480,6 @@
 .hero-diagram svg {
 	max-width: 100%;
 	height: auto;
-	transition: clip-path 0.25s;
-}
-
-@media (prefers-reduced-motion: reduce) {
-	.hero-diagram svg {
-		transition: none;
-	}
 }
 
 .hero-diagram[data-state='error'] {
