@@ -214,6 +214,35 @@ directive), `idPrefix` (when several diagrams share a page), `fontFamily`.
 `layout` returns absolute boxes per team plus one geometry per interaction
 (`wedge`, `bridge`, `patch` or `band`), which is what the tests assert against.
 
+## Agent Skill
+
+`skills/teamtopo/` is an [Agent Skill](https://agentskills.io) that teaches Claude Code
+and similar harnesses the `.tt` syntax, the layout rules, the common edits (split a
+team, add a platform, mark an interaction `[soon]`) and how to validate with the CLI, so
+you can draft and evolve a topology from your terminal ("split checkout into two
+stream-aligned teams" → `org.tt` updated and parsing).
+
+Install it into a project with the [skills CLI](https://github.com/vercel-labs/skills):
+
+```bash
+npx skills add jrschumacher/teamtopo                          # pick agents interactively
+npx skills add jrschumacher/teamtopo --skill teamtopo -a claude-code -y
+```
+
+Or copy it by hand: put the directory at `.claude/skills/teamtopo/` in your project
+(or `~/.claude/skills/teamtopo/` for every project):
+
+```bash
+git clone --depth 1 https://github.com/jrschumacher/teamtopo /tmp/teamtopo
+mkdir -p .claude/skills && cp -r /tmp/teamtopo/skills/teamtopo .claude/skills/
+```
+
+`SKILL.md` holds the rules an agent must respect; `references/` holds the full syntax,
+layout rules, edit recipes, validation commands and one worked prompt-and-diff per
+`examples/*.tt`. Until the npm package ships (#2), the skill validates with
+`node src/cli.js --json file.tt` inside this repository or
+`npx --yes github:jrschumacher/teamtopo --json file.tt` elsewhere.
+
 ## Articles
 
 `content/articles/*.md` are long-form articles built into a small static site with
@@ -259,6 +288,7 @@ teamtopo/
 ├── scripts/articles.mjs   articles build (+ markdown.mjs, article-template.mjs, tests)
 ├── content/articles/*.md  articles with front matter
 ├── examples/*.tt          sample diagrams (+ rendered .svg)
+├── skills/teamtopo/       Agent Skill: SKILL.md + references/ (syntax, layout, edits, validation, examples)
 ├── public/                static playground, self-contained
 ├── app/                   hosted SPA + Worker (Vite, D1, R2); see docs/app-intent.md
 └── docs/                  app intent, landing design contract, follow-ups
