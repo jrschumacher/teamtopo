@@ -92,7 +92,6 @@ body {
 	height: 100vh;
 }
 
-#app[data-view='team'],
 #app[data-view='notfound'] {
 	padding: 1.5rem;
 }
