@@ -410,7 +410,10 @@
 .team-page .tt-team-highlight > polygon:first-of-type {
 	stroke: var(--accent);
 	stroke-width: 2.5px;
-	filter: drop-shadow(0 0 0 3px var(--accent-soft));
+	/* the diagram is scaled down in the aside; keep the outline at screen pixels */
+	vector-effect: non-scaling-stroke;
+	paint-order: stroke;
+	filter: drop-shadow(0 0 3px var(--accent));
 }
 
 .tm-diagram-caption {
