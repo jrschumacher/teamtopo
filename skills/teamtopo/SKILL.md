@@ -32,6 +32,8 @@ teamTopology
 1. Discover first: `CODEOWNERS`, Backstage `catalog-info.yaml`, ownership files, ADRs,
    README org sections, an existing `.tt` (`references/discovery.md` §1). Infer team
    names and ownership; never infer team types or interaction modes without asking.
+   If people can be mapped to teams, git history can suggest as-is interactions
+   (`references/discovery.md`, "If you can map people to teams"); optional, never default.
 2. Ask the minimum questions in one round (`references/discovery.md` §2): which teams,
    what each owns, who depends on whom and whether it is a service, joint work or
    coaching, rough sizes.

@@ -49,6 +49,66 @@ teamTopology
 Show the draft, ask the open questions in one message, then fix the file. Say which
 lines came from which source so the user can correct the source too.
 
+### If you can map people to teams
+
+Ownership files say which teams exist and what they own. Only git history shows how
+teams actually interact, and only once you can map authors to teams. Sources for that
+mapping: Backstage `User` and `Group` entities, a roster the user supplies, or GitHub
+team membership (`gh api orgs/<org>/teams/<team>/members --jq '.[].login'`). Without a
+mapping, skip this section; it is optional and never the default.
+
+Three signals, each from one short query over the paths a team owns:
+
+1. **Two teams keep editing the same owned area.**
+   `git log --since=6.months --format=%an -- <owned path> | sort | uniq -c | sort -rn`
+   shows authors from two teams. Reading: collaboration (`<-->`), candidate for a
+   `duration=` and a later split into X-as-a-Service.
+2. **One team calls another team's code but never edits it.** Imports or API clients
+   in team A's paths reference team B's, while the query above on B's paths lists only
+   B. Reading: X-as-a-Service (`B --> A`).
+3. **One team touches many other teams' areas in short bursts.**
+   `git log --since=6.months --format='%an %as' -- <other team's path>` across several
+   paths shows the same authors for a few weeks each. Reading: enabling (`~~>`), or a
+   single overloaded person; ask which before drawing anything.
+
+Caveats, stated to the user when you present the result:
+
+- History reveals the as-is structure per Conway's law, not the intended topology.
+  Present it as "this is how the code says you work" and let the user confirm it or
+  set the to-be.
+- People are an input only and never appear in the file (`modeling.md`, Guardrails).
+- A single repo is a slice. In a polyrepo organisation title the draft "teams visible
+  from this repo", not the org.
+
+Worked example. Mapping supplied by the user:
+
+| Person | Team |
+|---|---|
+| ana, bo | storefront |
+| cy, di | payments |
+
+`git log --since=6.months --format=%an -- services/payments/ | sort | uniq -c`:
+
+```
+  41 cy
+  17 ana
+```
+
+`storefront/` imports `payments-client`, and `git log -- apps/storefront/` lists only
+`ana` and `bo`. The draft:
+
+```tt
+teamTopology
+  title Teams visible from this repo
+  stream   storefront "Storefront"
+  platform payments   "Payments"
+
+  %% inferred from git history: ana (storefront) commits to services/payments/
+  storefront <--> payments : payments integration [duration="confirm with the teams"]
+  %% inferred from git history: storefront imports payments-client, never edits it
+  payments --> storefront : payments API
+```
+
 ## 2. Modeling from a description
 
 The minimum you need, in one round of questions (skip any the prose already answered):
