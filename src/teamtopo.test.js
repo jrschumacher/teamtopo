@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parse, layout, render, wrapText, ParseError } from './teamtopo.js';
+import { parse, layout, render, wrapText, ParseError, THEMES } from './teamtopo.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const examplesDir = join(here, '..', 'examples');
@@ -516,4 +516,124 @@ test('teamApis covers every team except groups', () => {
 test('interactions expected soon render dashed and faded', () => {
   const svg = render('teamTopology\nstream a\nplatform p\np --> a [soon]');
   assert.ok(/<polygon[^>]*stroke-dasharray="5 4"[^>]*opacity="0.55"|<polygon[^>]*opacity="0.55"[^>]*stroke-dasharray="5 4"/.test(svg));
+});
+
+// ── #28: labels for every interaction mode (plates, mode colour, labelPos) ──
+
+// WCAG relative luminance / contrast ratio — implemented here only; no new dependency.
+function parseColor(c) {
+  c = c.trim();
+  let m;
+  if ((m = /^#([0-9a-f]{6})$/i.exec(c))) {
+    const n = parseInt(m[1], 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255, 1];
+  }
+  if ((m = /^rgba?\(([^)]+)\)$/i.exec(c))) {
+    const parts = m[1].split(',').map((s) => parseFloat(s));
+    return [parts[0], parts[1], parts[2], parts[3] !== undefined ? parts[3] : 1];
+  }
+  throw new Error(`unrecognised color "${c}"`);
+}
+function blendOverBg(fg, bg) {
+  const [r1, g1, b1, a1] = parseColor(fg);
+  const [r2, g2, b2] = parseColor(bg);
+  return [r1 * a1 + r2 * (1 - a1), g1 * a1 + g2 * (1 - a1), b1 * a1 + b2 * (1 - a1)];
+}
+function relLuminance([r, g, b]) {
+  const f = (c) => { c /= 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
+  return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+}
+function contrastRatio(colorA, colorB) {
+  const L1 = relLuminance(colorA), L2 = relLuminance(colorB);
+  const [hi, lo] = L1 > L2 ? [L1, L2] : [L2, L1];
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+test('WCAG contrast: mode plate colours are legible and visible in both themes', () => {
+  for (const [themeName, T] of Object.entries(THEMES)) {
+    for (const mode of ['collab', 'xaas', 'facil']) {
+      assert.ok(T[mode].plate, `${themeName}/${mode} has a plate token`);
+      const plateRGB = parseColor(T[mode].plate).slice(0, 3);
+      const bgRGB = parseColor(T.bg).slice(0, 3);
+      const textRGB = parseColor(T[mode].text).slice(0, 3);
+      const textContrast = contrastRatio(textRGB, plateRGB);
+      const bgContrast = contrastRatio(plateRGB, bgRGB);
+      assert.ok(textContrast >= 4.5, `${themeName}/${mode} text-on-plate contrast ${textContrast.toFixed(2)} >= 4.5`);
+      assert.ok(bgContrast >= 1.5, `${themeName}/${mode} plate-vs-bg contrast ${bgContrast.toFixed(2)} >= 1.5`);
+    }
+  }
+});
+
+test('collaboration labels wrap and render on a plate', () => {
+  const lay = layout(parse(
+    'teamTopology\nstream a\nstream b\na <--> b : a very long collaboration label that will not fit on one line',
+  ));
+  const [{ geo }] = lay.edges;
+  assert.equal(geo.kind, 'bridge');
+  assert.ok(geo.label.lines.length > 1, 'wraps onto multiple lines');
+  assert.ok(geo.label.plateW > 0 && geo.label.plateH > 0, 'plate has a size');
+});
+
+test('facilitating patch labels wrap and render on a plate', () => {
+  const lay = layout(parse(
+    'teamTopology\nstream a\nenabling e\ne ~~> a : a very long facilitating label that will not fit on one line',
+  ));
+  const patch = lay.edges.find((e) => e.geo.kind === 'patch');
+  assert.ok(patch, 'has a patch edge');
+  assert.ok(patch.geo.label.lines.length > 1, 'wraps onto multiple lines');
+  assert.ok(patch.geo.label.plateW > 0 && patch.geo.label.plateH > 0, 'plate has a size');
+});
+
+test('facilitating band labels wrap and render on a plate', () => {
+  const lay = layout(parse(`teamTopology
+    group g1 {
+      stream a
+    }
+    enabling e
+    e ~~> a : a very long facilitating label that will not fit on one line`));
+  const band = lay.edges.find((e) => e.geo.kind === 'band');
+  assert.ok(band, 'has a band edge');
+  assert.ok(band.geo.label.lines.length > 1, 'wraps onto multiple lines');
+  assert.ok(band.geo.label.plateW > 0 && band.geo.label.plateH > 0, 'plate has a size');
+});
+
+test('labelPos=above works for collaboration and facilitating, with a leader', () => {
+  const collab = layout(parse('teamTopology\nstream a\nstream b\na <--> b : pairing [labelPos=above]'));
+  const [{ geo: collabGeo }] = collab.edges;
+  assert.ok(collabGeo.leader, 'collaboration above has a leader');
+  const shapeTop = Math.min(...collabGeo.points.map((p) => p.y));
+  assert.ok(collabGeo.label.y + collabGeo.label.plateH / 2 <= shapeTop, 'plate sits above the shape');
+
+  const facil = layout(parse('teamTopology\nstream a\nenabling e\ne ~~> a : coaching [labelPos=above]'));
+  const patch = facil.edges.find((e) => e.geo.kind === 'patch');
+  assert.ok(patch.geo.leader, 'facilitating above has a leader');
+  assert.ok(patch.geo.label.y + patch.geo.label.plateH / 2 <= patch.geo.rect.y, 'plate sits above the patch');
+});
+
+test('unknown labelPos is a ParseError for non-xaas modes too', () => {
+  assert.throws(
+    () => parse('teamTopology\nstream a\nstream b\na <--> b : x [labelPos=weird]'),
+    (e) => e instanceof ParseError && /labelPos/.test(e.message),
+  );
+});
+
+test('frame gap growth stays xaas-only: a labelled collaboration between sibling frames does not widen the gap', () => {
+  const withCollab = layout(parse(`teamTopology
+    group g1 {
+      stream a
+    }
+    group g2 {
+      stream b
+    }
+    g1 <--> g2 : a moderately long collaboration label`));
+  const plain = layout(parse(`teamTopology
+    group g1 {
+      stream a
+    }
+    group g2 {
+      stream b
+    }`));
+  assert.equal(withCollab.boxes.g2.x - (withCollab.boxes.g1.x + withCollab.boxes.g1.w),
+    plain.boxes.g2.x - (plain.boxes.g1.x + plain.boxes.g1.w),
+    'gap between the frames is unchanged by a labelled collaboration edge');
 });

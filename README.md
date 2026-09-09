@@ -95,7 +95,7 @@ contains `[`. Attributes come last in square brackets:
 |---|---|
 | `[duration="until Q3"]` | fills the Duration column of the Team API tables |
 | `[soon]` (or `[expected]`) | an interaction expected soon: drawn dashed and faded, listed under "teams we expect to interact with soon" |
-| `[labelPos=above]` | for a labelled X-as-a-Service edge directly between two sibling frames (group/platform): parks the label above both frames on a plate with a leader down to the wedge, instead of widening the gap between them (`gap`, the default) |
+| `[labelPos=above]` | on any interaction: moves the label off the shape and above it, on a plate with a dashed leader down to the shape, instead of on/at the shape (`gap`, the default). See below for what "on/at the shape" means per mode. |
 
 ```
 devex ~~> checkout : CI pipelines [duration="until Q3"]
@@ -103,11 +103,21 @@ search <--> accounts : personalised results [soon, duration="8 weeks"]
 provider --> consumer : platform capabilities [labelPos=above]
 ```
 
-Every X-as-a-Service wedge label renders on an opaque background plate and wraps
-onto multiple lines when it's long. For a labelled edge directly between two
-sibling frames, the default (`labelPos=gap`) widens the gap between the frames to
-fit the wrapped label; `labelPos=above` keeps the gap narrow and moves the label
-above the frames instead.
+Every interaction label — X-as-a-Service, Collaboration and Facilitating alike —
+renders on an opaque background plate, tinted to match its mode's shape colour,
+and wraps onto multiple lines when it's long (wrap width `clamp(90, ..., 220)`
+px). `labelPos` is accepted on every mode:
+
+| Mode | `labelPos=gap` (default) | `labelPos=above` |
+|---|---|---|
+| X-as-a-Service | plate centred on the wedge | plate above the shape, leader to the wedge |
+| Collaboration | plate centred on the parallelogram | plate above the parallelogram, leader down to it |
+| Facilitating | plate beside the patch (or centred on the band) | plate above the patch/band, leader down to it |
+
+Only X-as-a-Service supports growing the gap between two sibling frames to fit a
+long label (`labelPos=gap` on a frame-to-frame edge) — Collaboration and
+Facilitating don't bridge sibling frames today, so a labelled edge between them
+never changes frame spacing; use `labelPos=above` there if the plate needs room.
 
 ### Directives
 

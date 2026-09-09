@@ -344,6 +344,21 @@ function aboveLabelMaxWidth(wA, wB) {
   return clamp(Math.max(wA, wB) * 0.6, 90, 220);
 }
 
+/**
+ * #28: build a wrapped label plate parked above a shape, with a leader line
+ * down to it — the labelPos="above" positioning shared by every interaction
+ * mode (xaas wedges build their own variant inline, reaching past `topY`
+ * into the wedge itself; every other mode anchors the leader at `topY`).
+ */
+function aboveLabel(text, midX, topY, maxWidth, anchorY = topY) {
+  const { lines, blockW, blockH } = wrapBlock(text, maxWidth);
+  const plateW = blockW + 16, plateH = blockH + 8;
+  const bottomY = topY - L.leaderGap;
+  const label = { x: midX, y: bottomY - plateH / 2, text, lines, plateW, plateH };
+  const leader = { x: midX, y1: bottomY, y2: anchorY };
+  return { label, leader };
+}
+
 function walk(node, fn) {
   fn(node);
   for (const c of node.children) walk(c, fn);
@@ -705,31 +720,69 @@ export function layout(model, opts = {}) {
     } else if (inter.mode === 'collaboration' && intersect(P, Q)) {
       const small = P.w * P.h <= Q.w * Q.h ? P : Q;
       const text = inter.label || 'Collaboration';
-      const w = Math.max(small.w - 12, textWidth(text, L.labelFs) + 30), h = 30, k = 10;
       const cx = small.x + small.w / 2, cy = small.y + small.h;
+      const above = inter.label && (inter.labelPos || 'gap') === 'above';
+      const k = 10;
+      let w, h, label, leader;
+      if (above) {
+        w = Math.max(small.w - 12, 60); h = 30;
+        ({ label, leader } = aboveLabel(text, cx, cy - h / 2, aboveLabelMaxWidth(w, 0)));
+      } else {
+        const { lines, blockW, blockH } = wrapBlock(text, clamp(small.w - 32, 90, 220));
+        w = Math.max(small.w - 12, blockW + 30);
+        h = Math.max(30, blockH + 16);
+        label = { x: cx, y: cy, text, lines, plateW: blockW + 16, plateH: blockH + 8 };
+      }
       const points = [
         { x: cx - w / 2 + k, y: cy - h / 2 }, { x: cx + w / 2 + k, y: cy - h / 2 },
         { x: cx + w / 2 - k, y: cy + h / 2 }, { x: cx - w / 2 - k, y: cy + h / 2 },
       ];
-      edges.push({ inter, geo: { kind: 'bridge', points, label: { x: cx, y: cy, text } } });
+      edges.push({ inter, geo: { kind: 'bridge', points, label, leader } });
     } else if (inter.mode === 'collaboration') {
       const f = facing(P, Q);
       const cx = (f.from.x + f.to.x) / 2, cy = (f.from.y + f.to.y) / 2;
       const gap = Math.hypot(f.to.x - f.from.x, f.to.y - f.from.y);
       const text = inter.label || 'Collaboration';
-      const tw = textWidth(text, L.labelFs) + 24;
-      let w, h;
-      if (f.axis === 'h') { w = Math.max(gap + 12, tw); h = 40; } else { w = Math.max(120, tw); h = Math.max(gap + 24, 40); }
+      const above = inter.label && (inter.labelPos || 'gap') === 'above';
+      const minW = f.axis === 'h' ? gap + 12 : 120;
+      const minH = f.axis === 'h' ? 40 : Math.max(gap + 24, 40);
       const k = 14;
+      let w = minW, h = minH, label, leader;
+      if (above) {
+        ({ label, leader } = aboveLabel(text, cx, cy - h / 2, aboveLabelMaxWidth(w, 0)));
+      } else {
+        const { lines, blockW, blockH } = wrapBlock(text, clamp(minW - 24, 90, 220));
+        w = Math.max(minW, blockW + 30);
+        h = Math.max(minH, blockH + 16);
+        label = { x: cx, y: cy, text, lines, plateW: blockW + 16, plateH: blockH + 8 };
+      }
       const points = [
         { x: cx - w / 2 + k, y: cy - h / 2 }, { x: cx + w / 2 + k, y: cy - h / 2 },
         { x: cx + w / 2 - k, y: cy + h / 2 }, { x: cx - w / 2 - k, y: cy + h / 2 },
       ];
-      edges.push({ inter, geo: { kind: 'bridge', points, label: { x: cx, y: cy, text } } });
+      edges.push({ inter, geo: { kind: 'bridge', points, label, leader } });
     } else {
       const r = intersect(P, Q);
       if (r) {
-        edges.push({ inter, geo: { kind: 'patch', rect: r, label: inter.label ? { x: r.x + r.w + 10, y: r.y + r.h / 2, text: inter.label, anchor: 'start' } : null } });
+        let label = null, leader = null;
+        if (inter.label) {
+          const above = (inter.labelPos || 'gap') === 'above';
+          if (above) {
+            // #28: anchor above the whole lane stack the enabling bar crosses, not
+            // just its own box or the narrow patch rect — an enabling bar can start
+            // partway down a stack (it only spans the lanes it facilitates), so a
+            // lane sitting above the bar's own top edge could still collide.
+            const enSlot = slots.find((s) => s.kind === 'en' && s.node.id === inter.from);
+            const topY = Math.min(enSlot?.lanesRange ? enSlot.lanesRange[0] : P.y, r.y);
+            ({ label, leader } = aboveLabel(inter.label, r.x + r.w / 2, topY, aboveLabelMaxWidth(r.w, 0), r.y + r.h / 2));
+          } else {
+            // #28: same wrap rule as xaas; the patch has no natural width constraint
+            // of its own (the label floats beside it), so wrap at the outer cap.
+            const { lines, blockW, blockH } = wrapBlock(inter.label, clamp(220, 90, 220));
+            label = { x: r.x + r.w + 10 + blockW / 2, y: r.y + r.h / 2, text: inter.label, lines, plateW: blockW + 16, plateH: blockH + 8 };
+          }
+        }
+        edges.push({ inter, geo: { kind: 'patch', rect: r, label, leader } });
       } else {
         const f = facing(P, Q);
         const dx = f.to.x - f.from.x, dy = f.to.y - f.from.y, len = Math.hypot(dx, dy);
@@ -739,8 +792,21 @@ export function layout(model, opts = {}) {
           { x: f.from.x + nx * t, y: f.from.y + ny * t }, { x: f.to.x + nx * t, y: f.to.y + ny * t },
           { x: f.to.x - nx * t, y: f.to.y - ny * t }, { x: f.from.x - nx * t, y: f.from.y - ny * t },
         ];
-        const label = inter.label ? { x: (f.from.x + f.to.x) / 2 + nx * 24, y: (f.from.y + f.to.y) / 2 + ny * 24, text: inter.label } : null;
-        edges.push({ inter, geo: { kind: 'band', points, label } });
+        let label = null, leader = null;
+        if (inter.label) {
+          const above = (inter.labelPos || 'gap') === 'above';
+          if (above) {
+            const topY = Math.min(...points.map((p) => p.y));
+            ({ label, leader } = aboveLabel(inter.label, (f.from.x + f.to.x) / 2, topY, aboveLabelMaxWidth(len, 0)));
+          } else {
+            const { lines, blockW, blockH } = wrapBlock(inter.label, clamp(len - 20, 90, 220));
+            label = {
+              x: (f.from.x + f.to.x) / 2 + nx * 24, y: (f.from.y + f.to.y) / 2 + ny * 24,
+              text: inter.label, lines, plateW: blockW + 16, plateH: blockH + 8,
+            };
+          }
+        }
+        edges.push({ inter, geo: { kind: 'band', points, label, leader } });
       }
     }
   }
@@ -798,9 +864,9 @@ export const THEMES = {
     subsystem: { fill: '#F6C79B', stroke: '#DE9A5C', text: '#4a2200' },
     platform:  { fill: '#BBD9F3', stroke: '#6FA6DD', text: '#0f2f55' },
     frame:     { fill: 'none', stroke: '#5B8FD6', text: '#3b76c4', platformFill: 'rgba(187,217,243,0.18)' },
-    collab:    { fill: 'rgba(196,177,224,0.85)', stroke: '#A58DCB', text: '#2a1a55' },
-    xaas:      { fill: 'rgba(120,124,132,0.32)', stroke: 'rgba(90,94,102,0.35)', text: '#3f4652' },
-    facil:     { dot: '#6B4FA8', fill: 'rgba(107,79,168,0.25)', text: '#4c3a85' },
+    collab:    { fill: 'rgba(196,177,224,0.85)', stroke: '#A58DCB', text: '#2a1a55', plate: '#cdbde5' },
+    xaas:      { fill: 'rgba(120,124,132,0.32)', stroke: 'rgba(90,94,102,0.35)', text: '#3f4652', plate: '#c6c8cb' },
+    facil:     { dot: '#6B4FA8', fill: 'rgba(107,79,168,0.25)', text: '#4c3a85', plate: '#cdc3e1' },
   },
   dark: {
     bg: '#0f172a', text: '#e5e7eb', muted: '#94a3b8', title: '#f8fafc',
@@ -810,9 +876,9 @@ export const THEMES = {
     subsystem: { fill: '#C2661E', stroke: '#F8B98A', text: '#1f0e00' },
     platform:  { fill: '#2F6DB5', stroke: '#A9CCEF', text: '#eef5fc' },
     frame:     { fill: 'none', stroke: '#6FA3DC', text: '#9cc4ef', platformFill: 'rgba(47,109,181,0.18)' },
-    collab:    { fill: 'rgba(124,92,191,0.8)', stroke: '#C9BAEA', text: '#f3eefc' },
-    xaas:      { fill: 'rgba(203,213,225,0.28)', stroke: 'rgba(203,213,225,0.35)', text: '#e2e8f0' },
-    facil:     { dot: '#E0D4F5', fill: 'rgba(224,212,245,0.28)', text: '#d9ccf5' },
+    collab:    { fill: 'rgba(124,92,191,0.8)', stroke: '#C9BAEA', text: '#f3eefc', plate: '#664ea1' },
+    xaas:      { fill: 'rgba(203,213,225,0.28)', stroke: 'rgba(203,213,225,0.35)', text: '#e2e8f0', plate: '#444c5d' },
+    facil:     { dot: '#E0D4F5', fill: 'rgba(224,212,245,0.28)', text: '#d9ccf5', plate: '#4a4c63' },
   },
 };
 
@@ -886,20 +952,13 @@ function teamSVG(box, T, part = 'all') {
   return el('g', { class: `tt-node tt-${node.type}`, 'data-id': node.id }, parts);
 }
 
-function labelSVG(label, color, T, extra = {}) {
-  if (!label) return '';
-  return el('text', {
-    x: label.x, y: label.y + 4, 'text-anchor': label.anchor || 'middle', 'font-size': L.labelFs, 'font-weight': 500, fill: color,
-    stroke: T.halo, 'stroke-width': 3, 'paint-order': 'stroke', 'stroke-linejoin': 'round', ...extra,
-  }, esc(label.text));
-}
-
 /**
- * A wedge label, possibly wrapped onto several lines, drawn on an opaque background
- * plate rather than a text-stroke halo — stays legible over frame fills, dashed
- * borders and adjacent team labels (#23). Every wedge label gets this treatment.
+ * An edge label, possibly wrapped onto several lines, drawn on an opaque background
+ * plate coloured to match its interaction mode (#28), rather than a text-stroke
+ * halo — stays legible over frame fills, dashed borders and adjacent team labels.
+ * Every interaction mode's label gets this treatment.
  */
-function plateLabelSVG(label, color, T) {
+function plateLabelSVG(label, textColor, plateColor) {
   if (!label) return '';
   const lines = label.lines && label.lines.length ? label.lines : [label.text];
   const lh = L.labelFs * L.lineH;
@@ -908,8 +967,8 @@ function plateLabelSVG(label, color, T) {
   const h = label.plateH ?? (blockH + 8);
   const y0 = label.y - blockH / 2 + lh * 0.78;
   return el('g', { class: 'tt-edge-label' }, [
-    el('rect', { x: label.x - w / 2, y: label.y - h / 2, width: w, height: h, rx: 4, fill: T.bg }),
-    el('text', { x: label.x, y: y0, 'text-anchor': 'middle', 'font-size': L.labelFs, 'font-weight': 500, fill: color },
+    el('rect', { x: label.x - w / 2, y: label.y - h / 2, width: w, height: h, rx: 4, fill: plateColor }),
+    el('text', { x: label.x, y: y0, 'text-anchor': 'middle', 'font-size': L.labelFs, 'font-weight': 500, fill: textColor },
       lines.map((ln, i) => el('tspan', { x: label.x, dy: i === 0 ? 0 : lh }, esc(ln)))),
   ]);
 }
@@ -924,19 +983,22 @@ function edgeSVG({ inter, inters, geo }, lay, T, prefix) {
     case 'wedge':
       parts.push(el('polygon', { points: pts(geo.points), fill: T.xaas.fill, stroke: inter.soon ? T.xaas.text : T.xaas.stroke, 'stroke-width': 1, 'stroke-linejoin': 'round', ...soon }));
       if (geo.leader) parts.push(el('line', { x1: geo.leader.x, y1: geo.leader.y1, x2: geo.leader.x, y2: geo.leader.y2, stroke: T.xaas.stroke, 'stroke-width': 1.5, 'stroke-dasharray': '3 3' }));
-      parts.push(plateLabelSVG(geo.label, T.xaas.text, T));
+      parts.push(plateLabelSVG(geo.label, T.xaas.text, T.xaas.plate));
       break;
     case 'bridge':
       parts.push(el('polygon', { points: pts(geo.points), fill: T.collab.fill, stroke: T.collab.stroke, 'stroke-width': 1.5, 'stroke-linejoin': 'round', ...soon }));
-      parts.push(labelSVG(geo.label, T.collab.text, T, { stroke: 'none' }));
+      if (geo.leader) parts.push(el('line', { x1: geo.leader.x, y1: geo.leader.y1, x2: geo.leader.x, y2: geo.leader.y2, stroke: T.collab.stroke, 'stroke-width': 1.5, 'stroke-dasharray': '3 3' }));
+      parts.push(plateLabelSVG(geo.label, T.collab.text, T.collab.plate));
       break;
     case 'patch':
       parts.push(el('rect', { x: geo.rect.x, y: geo.rect.y, width: geo.rect.w, height: geo.rect.h, fill: `url(#${prefix}-dots)`, stroke: inter.soon ? T.facil.dot : null, ...soon }));
-      parts.push(labelSVG(geo.label, T.facil.text, T));
+      if (geo.leader) parts.push(el('line', { x1: geo.leader.x, y1: geo.leader.y1, x2: geo.leader.x, y2: geo.leader.y2, stroke: T.facil.dot, 'stroke-width': 1.5, 'stroke-dasharray': '3 3' }));
+      parts.push(plateLabelSVG(geo.label, T.facil.text, T.facil.plate));
       break;
     case 'band':
       parts.push(el('polygon', { points: pts(geo.points), fill: `url(#${prefix}-dots)`, stroke: T.facil.dot, 'stroke-width': 1, 'stroke-dasharray': '2 3', opacity: inter.soon ? 0.55 : null }));
-      parts.push(labelSVG(geo.label, T.facil.text, T));
+      if (geo.leader) parts.push(el('line', { x1: geo.leader.x, y1: geo.leader.y1, x2: geo.leader.x, y2: geo.leader.y2, stroke: T.facil.dot, 'stroke-width': 1.5, 'stroke-dasharray': '3 3' }));
+      parts.push(plateLabelSVG(geo.label, T.facil.text, T.facil.plate));
       break;
   }
   return el('g', { class: `tt-edge tt-${inter.mode}` }, parts);
