@@ -1,0 +1,12 @@
+teamTopology
+  title Payments migration: as-is
+
+  group commerce "Commerce" {
+    stream checkout "Checkout"
+  }
+
+  group legacy "Legacy Systems" {
+    platform legacy_billing "Legacy Billing"
+  }
+
+  legacy_billing --> checkout : billing calls

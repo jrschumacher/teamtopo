@@ -1,0 +1,13 @@
+teamTopology
+  title Enabling team crowded inside one group
+
+  group platform_group "Platform Group" {
+    stream infra "Infra"
+    stream network "Network"
+    stream security "Security"
+    stream observability "Observability"
+    stream cost "Cost Management"
+    enabling sre "SRE Coaching"
+
+    sre ~~> infra, network, security, observability, cost
+  }

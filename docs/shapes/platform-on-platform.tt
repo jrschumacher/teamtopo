@@ -1,0 +1,13 @@
+teamTopology
+  title Platform layered on platform, both consumed above
+
+  group product "Product" {
+    stream web "Web"
+    stream mobile "Mobile"
+  }
+
+  platform app_platform "App Platform" [note="internal developer platform"]
+  platform infra_platform "Infra Platform" [note="cloud primitives"]
+
+  infra_platform --> app_platform
+  app_platform --> web, mobile

@@ -1,0 +1,64 @@
+teamTopology
+  title Large org: thirty-plus teams across six groups
+  flow
+
+  group growth "Growth" {
+    stream acquisition "Acquisition"
+    stream activation "Activation"
+    stream retention "Retention"
+    stream referral "Referral"
+    stream revenue "Revenue"
+  }
+
+  group commerce "Commerce" {
+    stream catalog "Catalog"
+    stream cart "Cart"
+    stream checkout "Checkout"
+    stream pricing "Pricing"
+    stream promotions "Promotions"
+  }
+
+  group fulfilment "Fulfilment" {
+    stream inventory "Inventory"
+    stream warehousing "Warehousing"
+    stream shipping "Shipping"
+    stream returns "Returns"
+    stream customs "Customs"
+  }
+
+  group support "Support" {
+    stream helpdesk "Helpdesk"
+    stream community "Community"
+    stream trust_safety "Trust and Safety"
+    stream escalations "Escalations"
+    stream quality "Quality"
+  }
+
+  group data "Data" {
+    stream ingestion "Ingestion"
+    stream warehouse "Warehouse"
+    stream ml_platform "ML Platform"
+    stream reporting "Reporting"
+    subsystem recsys "Recommendation Engine"
+
+    recsys --> catalog
+  }
+
+  group platform_group "Platform" {
+    stream identity "Identity"
+    stream payments "Payments"
+    stream notifications "Notifications"
+    platform infra "Infrastructure"
+
+    infra --> identity, payments, notifications
+  }
+
+  enabling devex "DevEx"
+
+  devex ~~> growth
+  devex ~~> commerce
+  devex ~~> platform_group
+
+  identity --> checkout, helpdesk
+  payments --> checkout
+  ml_platform --> promotions, reporting

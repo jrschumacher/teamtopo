@@ -129,6 +129,24 @@ test('reports errors with line numbers', () => {
   }
 });
 
+test('unknown labelPos value throws a ParseError on that line', () => {
+  const src = `teamTopology
+    stream a
+    stream b
+    a --> b : x [labelPos=sideways]`;
+  assert.throws(
+    () => parse(src),
+    (e) => e instanceof ParseError && /labelPos/.test(e.message) && e.line === 4,
+  );
+});
+
+test('labelPos defaults to "gap" and accepts "above"', () => {
+  const m = parse('teamTopology\nstream a\nstream b\na --> b : x');
+  assert.equal(m.interactions[0].labelPos, 'gap');
+  const m2 = parse('teamTopology\nstream a\nstream b\na --> b : x [labelPos=above]');
+  assert.equal(m2.interactions[0].labelPos, 'above');
+});
+
 // ── layout ──
 
 test('stacks lanes in declaration order with platforms beneath', () => {
@@ -229,6 +247,171 @@ test('root-level overlays get their own column beside a band of frames', () => {
   const { g1, g2, e } = lay.boxes;
   assert.ok(e.x >= g1.x + g1.w && e.x >= g2.x + g2.w, 'bar is to the right of both frames');
   assert.equal(lay.edges.filter((ed) => ed.geo.kind === 'band').length, 2, 'facilitating drawn as dotted bands when the bar cannot cross');
+  assert.equal(e.kind, 'en', 'a leaf target inside a group keeps the column, not the rail, even across frames');
+});
+
+// ── enabling rail (issue #22) ──
+
+test('a cross-cutting enabling team facilitating every sibling group renders as a shared rail', () => {
+  const lay = layout(parse(`teamTopology
+    group product {
+      stream desktop
+    }
+    group services {
+      stream policy
+    }
+    group platform2 {
+      stream identity
+    }
+    enabling research
+    research ~~> product
+    research ~~> services
+    research ~~> platform2`));
+  const { product, services, platform2, research } = lay.boxes;
+  assert.equal(research.kind, 'rail', 'gets the shared rail treatment, not a column');
+  assert.equal(research.x, product.x, 'rail starts at the leftmost targeted frame');
+  assert.equal(research.x + research.w, platform2.x + platform2.w, 'rail ends at the rightmost targeted frame');
+  assert.ok(research.y >= Math.max(product.y + product.h, services.y + services.h, platform2.y + platform2.h),
+    'rail is drawn below the frame band');
+  assert.equal(lay.edges.filter((ed) => ed.inter.mode === 'facilitating').length, 0,
+    'the rail itself carries the relationship; no separate per-pair patches or bands');
+});
+
+test('a rail spans leftmost-to-rightmost among a subset of targeted sibling frames', () => {
+  const lay = layout(parse(`teamTopology
+    group product {
+      stream desktop
+    }
+    group services {
+      stream policy
+    }
+    group platform2 {
+      stream identity
+    }
+    enabling research
+    research ~~> product
+    research ~~> platform2`));
+  const { product, services, platform2, research } = lay.boxes;
+  assert.equal(research.kind, 'rail');
+  assert.equal(research.x, product.x);
+  assert.equal(research.x + research.w, platform2.x + platform2.w);
+  assert.ok(research.x < services.x && research.x + research.w > services.x + services.w,
+    'the untargeted frame in between is simply spanned, not excluded');
+});
+
+test('an enabling team targeting only one sibling frame keeps the column', () => {
+  const lay = layout(parse(`teamTopology
+    group a {
+      stream x
+    }
+    group b {
+      stream y
+    }
+    enabling e
+    e ~~> a`));
+  assert.equal(lay.boxes.e.kind, 'en');
+});
+
+test('two facilitating enabling teams stack as additional fixed-height rail rows', () => {
+  const src = (extra) => `teamTopology
+    group a {
+      stream x
+    }
+    group b {
+      stream y
+    }
+    enabling e1
+    e1 ~~> a
+    e1 ~~> b
+    ${extra}`;
+  const one = layout(parse(src('')));
+  const two = layout(parse(src('enabling e2\ne2 ~~> a\ne2 ~~> b')));
+  assert.equal(one.boxes.e1.kind, 'rail');
+  assert.equal(two.boxes.e1.kind, 'rail');
+  assert.equal(two.boxes.e2.kind, 'rail');
+  assert.equal(two.boxes.e1.y, one.boxes.e1.y, 'the first rail row does not move when a second team is added');
+  assert.ok(two.boxes.e2.y > two.boxes.e1.y, 'the second rail stacks below the first');
+  const rowHeight = two.boxes.e2.y - two.boxes.e1.y;
+  assert.equal(two.height - one.height, rowHeight, 'canvas height grows by exactly one fixed rail row for the second team');
+});
+
+test('a rail label that does not fit is ellipsised, never wraps, and never grows the rail height', () => {
+  const shortSrc = `teamTopology
+    group a {
+      stream x
+    }
+    group b {
+      stream y
+    }
+    enabling e
+    e ~~> a
+    e ~~> b`;
+  const longSrc = `teamTopology
+    group a {
+      stream x
+    }
+    group b {
+      stream y
+    }
+    enabling research "User Experience Research Insights and Behavioral Analytics Enablement Coaching Team for Product Organizations Worldwide"
+    research ~~> a
+    research ~~> b`;
+  const fullLabel = 'User Experience Research Insights and Behavioral Analytics Enablement Coaching Team for Product Organizations Worldwide';
+  const shortLay = layout(parse(shortSrc));
+  const longLay = layout(parse(longSrc));
+  const research = longLay.boxes.research;
+  assert.equal(research.kind, 'rail');
+  assert.equal(research.lines.length, 1, 'a rail label is always a single line');
+  assert.ok(research.lines[0].endsWith('…'), 'a too-wide label is ellipsised');
+  assert.notEqual(research.lines[0], fullLabel);
+  assert.equal(research.h, shortLay.boxes.e.h, 'rail height is fixed regardless of label length');
+
+  const svg = render(longSrc);
+  assert.ok(svg.includes(fullLabel), 'the full name is kept in the title tooltip');
+});
+
+test('rail rendering is deterministic', () => {
+  const src = `teamTopology
+    group product {
+      stream desktop
+    }
+    group services {
+      stream policy
+    }
+    group platform2 {
+      stream identity
+    }
+    enabling research
+    research ~~> product
+    research ~~> services
+    research ~~> platform2`;
+  assert.equal(render(src), render(src));
+});
+
+test('a rail label sits on an opaque plate over the facilitating dot pattern', () => {
+  const src = `teamTopology
+    group a {
+      stream x
+    }
+    group b {
+      stream y
+    }
+    enabling research
+    research ~~> a
+    research ~~> b`;
+  const svg = render(src, { theme: 'dark' });
+  const labelsGroup = svg.split('class="tt-overlay-labels"')[1];
+  assert.ok(labelsGroup, 'overlay labels group present');
+  const railLabel = labelsGroup.split('data-id="research"')[1];
+  assert.match(railLabel, /<rect[^>]*rx="4"[^>]*fill="#0f172a"/,
+    'an opaque plate in the theme background sits behind the rail label, not the raw dot-pattern hatch');
+  assert.ok(railLabel.indexOf('<rect') < railLabel.indexOf('<text'), 'the plate is drawn before (under) the label text');
+});
+
+test('ecommerce example renders byte-identical to the committed svg (in-lane facilitating is unaffected by the rail change)', () => {
+  const svg = render(readFileSync(join(examplesDir, 'ecommerce.tt'), 'utf8'));
+  const committed = readFileSync(join(examplesDir, 'ecommerce.svg'), 'utf8');
+  assert.equal(`${svg}\n`, committed);
 });
 
 test('collaboration is a parallelogram bridging the two teams', () => {
@@ -247,6 +430,144 @@ test('collaboration is a parallelogram bridging the two teams', () => {
 test('wraps long labels', () => {
   assert.deepEqual(wrapText('Developer Experience Enablement', 90, 12), ['Developer', 'Experience', 'Enablement']);
   assert.deepEqual(wrapText('short', 90, 12), ['short']);
+});
+
+// ── #23: interaction label layout ──
+
+const overlaps = (a, b) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+
+/** Plate bbox for a wedge label, matching the geometry layout() computes. */
+function plateBox(label) {
+  assert.ok(Number.isFinite(label.plateW) && label.plateW > 0, 'label has a finite plate width');
+  assert.ok(Number.isFinite(label.plateH) && label.plateH > 0, 'label has a finite plate height');
+  return { x: label.x - label.plateW / 2, y: label.y - label.plateH / 2, w: label.plateW, h: label.plateH };
+}
+
+const ISSUE_23_REPRODUCER = `teamTopology
+  title Interaction label layout in nested platform diagrams
+
+  platform cloud "Cloud Platform" {
+    group provider "Provider Group" {
+      stream services "Platform Services"
+    }
+
+    group consumer "Product Group" {
+      stream app "App"
+    }
+
+    provider --> consumer : platform capabilities
+  }`;
+
+test('wedge labels render on an opaque plate with wrapping metadata', () => {
+  const lay = layout(parse('teamTopology\nstream a\nplatform p\np --> a : Kubernetes API'));
+  const [{ geo }] = lay.edges;
+  assert.equal(geo.kind, 'wedge');
+  assert.ok(Array.isArray(geo.label.lines) && geo.label.lines.length >= 1);
+  assert.ok(geo.label.plateW > 0 && geo.label.plateH > 0, 'plate has a size');
+});
+
+test('a long wedge label wraps onto multiple lines', () => {
+  const lay = layout(parse(
+    'teamTopology\nstream a\nplatform p\np --> a : a very long interaction label that will not fit on one line',
+  ));
+  const [{ geo }] = lay.edges;
+  assert.ok(geo.label.lines.length > 1, 'wraps onto multiple lines');
+});
+
+test('#23 reproducer: the frame-to-frame label plate does not collide with either frame', () => {
+  const lay = layout(parse(ISSUE_23_REPRODUCER));
+  const wedge = lay.edges.find((e) => e.geo.kind === 'wedge');
+  assert.ok(wedge, 'has a wedge edge');
+  const plate = plateBox(wedge.geo.label);
+  assert.ok(!overlaps(plate, lay.boxes.provider), 'plate does not overlap the provider frame');
+  assert.ok(!overlaps(plate, lay.boxes.consumer), 'plate does not overlap the consumer frame');
+});
+
+test('three sibling frames with labels on both gaps: no plate/frame overlaps', () => {
+  const lay = layout(parse(`teamTopology
+    platform cloud {
+      group g1 {
+        stream a
+      }
+      group g2 {
+        stream b
+      }
+      group g3 {
+        stream c
+      }
+      g1 --> g2 : platform capabilities
+      g2 --> g3 : policy, key access and audit events
+    }`));
+  const wedges = lay.edges.filter((e) => e.geo.kind === 'wedge');
+  assert.equal(wedges.length, 2);
+  const frameBoxes = [lay.boxes.g1, lay.boxes.g2, lay.boxes.g3];
+  for (const w of wedges) {
+    const plate = plateBox(w.geo.label);
+    for (const f of frameBoxes) assert.ok(!overlaps(plate, f), `plate for "${w.inter.label}" overlaps a frame`);
+  }
+});
+
+test('labelPos=above positions the plate above both frames with a leader', () => {
+  const lay = layout(parse(`teamTopology
+    platform cloud {
+      group provider {
+        stream services
+      }
+      group consumer {
+        stream app
+      }
+      provider --> consumer : platform capabilities [labelPos=above]
+    }`));
+  const wedge = lay.edges.find((e) => e.geo.kind === 'wedge');
+  assert.ok(wedge.geo.leader, 'has a leader line');
+  const topOfFrames = Math.min(lay.boxes.provider.y, lay.boxes.consumer.y);
+  assert.ok(wedge.geo.label.y + wedge.geo.label.plateH / 2 <= topOfFrames, 'plate sits above both frames');
+  const plate = plateBox(wedge.geo.label);
+  assert.ok(!overlaps(plate, lay.boxes.provider) && !overlaps(plate, lay.boxes.consumer), 'plate clears both frames');
+});
+
+test('fan-out to multiple targets with the same label renders one wedge, one label', () => {
+  const lay = layout(parse(`teamTopology
+    stream m
+    stream w
+    platform cloud {
+      stream k
+    }
+    k --> m, w : runtime`));
+  const wedges = lay.edges.filter((e) => e.geo.kind === 'wedge' && e.inter.label === 'runtime');
+  assert.equal(wedges.length, 1, 'one wedge for the fanned-out same-label interactions');
+  assert.equal(wedges[0].inters.length, 2, 'covers both targets');
+});
+
+test('fan-out with different labels keeps separate plates', () => {
+  const lay = layout(parse(`teamTopology
+    stream m
+    stream w
+    platform cloud {
+      stream k
+    }
+    k --> m : runtime
+    k --> w : dashboards`));
+  const wedges = lay.edges.filter((e) => e.geo.kind === 'wedge');
+  assert.equal(wedges.length, 2, 'different labels stay on separate wedges');
+  const plates = wedges.map((w) => plateBox(w.geo.label));
+  assert.ok(!overlaps(plates[0], plates[1]), 'the two label plates do not overlap each other');
+});
+
+test('rendering is deterministic across repeated runs', () => {
+  for (const src of [ISSUE_23_REPRODUCER, 'teamTopology\nstream m\nstream w\nplatform cloud {\nstream k\n}\nk --> m, w : runtime']) {
+    const a = render(src);
+    const b = render(src);
+    assert.equal(a, b);
+  }
+});
+
+test('every example .tt parses and renders without throwing', () => {
+  const files = readdirSync(examplesDir).filter((f) => f.endsWith('.tt'));
+  for (const f of files) {
+    const src = readFileSync(join(examplesDir, f), 'utf8');
+    assert.doesNotThrow(() => render(parse(src)), f);
+  }
 });
 
 // ── renderer ──

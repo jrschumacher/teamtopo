@@ -95,11 +95,19 @@ contains `[`. Attributes come last in square brackets:
 |---|---|
 | `[duration="until Q3"]` | fills the Duration column of the Team API tables |
 | `[soon]` (or `[expected]`) | an interaction expected soon: drawn dashed and faded, listed under "teams we expect to interact with soon" |
+| `[labelPos=above]` | for a labelled X-as-a-Service edge directly between two sibling frames (group/platform): parks the label above both frames on a plate with a leader down to the wedge, instead of widening the gap between them (`gap`, the default) |
 
 ```
 devex ~~> checkout : CI pipelines [duration="until Q3"]
 search <--> accounts : personalised results [soon, duration="8 weeks"]
+provider --> consumer : platform capabilities [labelPos=above]
 ```
+
+Every X-as-a-Service wedge label renders on an opaque background plate and wraps
+onto multiple lines when it's long. For a labelled edge directly between two
+sibling frames, the default (`labelPos=gap`) widens the gap between the frames to
+fit the wrapped label; `labelPos=above` keeps the gap narrow and moves the label
+above the frames instead.
 
 ### Directives
 
@@ -161,7 +169,18 @@ Team Topologies book, so the domain does most of the work:
    to full width beneath. Overlays declared at a level with no lanes of their own get a
    column beside the frames, and facilitating that cannot cross a team is drawn as a
    dotted band to it.
-5. **Canvas.** Anything that overflows the structural content grows the canvas.
+5. **The shared rail.** An enabling team that facilitates two or more sibling top-level
+   groups (`enabler ~~> groupA` and `enabler ~~> groupB`, not lanes inside them) is drawn
+   once as a thin horizontal rail below the frame band instead of a tall column with one
+   dotted patch per relationship — it uses the enabling colour on its border and the
+   facilitating dotted hatch as its fill, so the legend still explains it. The rail spans
+   from the leftmost to the rightmost group it targets; a group in between that it does
+   not target is simply covered, not excluded. Several facilitating enabling teams stack
+   as additional rail rows of the same fixed height, so canvas growth stays one row per
+   team regardless of how many groups are spanned or how tall they are. An enabling team
+   facilitating only one group, or facilitating lanes/teams directly rather than a whole
+   group, keeps the column treatment above.
+6. **Canvas.** Anything that overflows the structural content grows the canvas.
 
 To keep a subsystem or enabling team on the lanes it belongs with, declare it in the
 same block as those lanes.

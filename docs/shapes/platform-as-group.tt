@@ -1,0 +1,23 @@
+teamTopology
+  title Same org, platform modelled as a sibling group
+
+  group core "Core Platform" {
+    stream identity "Identity"
+    stream billing "Billing"
+  }
+
+  group alpha "Alpha" {
+    stream web "Web"
+    stream mobile "Mobile"
+  }
+
+  group beta "Beta" {
+    stream portal "Partner Portal"
+  }
+
+  group gamma "Gamma" {
+    stream ops "Ops Console"
+  }
+
+  identity --> web, mobile, portal, ops
+  billing --> web, mobile

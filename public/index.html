@@ -546,10 +546,14 @@ export function parse(source) {
       const label = m[4] ? stripQuotes(m[4]) : '';
       const attrs = m[5] ? parseAttrs(m[5]) : {};
       const soon = 'soon' in attrs || 'expected' in attrs;
+      if (attrs.labelPos !== undefined && attrs.labelPos !== 'gap' && attrs.labelPos !== 'above') {
+        throw new ParseError(`invalid labelPos "${attrs.labelPos}" (expected "gap" or "above")`, lineNo);
+      }
+      const labelPos = attrs.labelPos || 'gap';
       for (const l of left) {
         for (const r of right) {
           const [from, to] = op.leftIsFrom ? [l, r] : [r, l];
-          model.interactions.push({ mode: op.mode, from, to, label, attrs, soon, duration: attrs.duration || '', line: lineNo });
+          model.interactions.push({ mode: op.mode, from, to, label, attrs, soon, duration: attrs.duration || '', labelPos, line: lineNo });
         }
       }
       continue;
@@ -677,6 +681,15 @@ export function wrapText(text, maxWidth, fontSize) {
   return lines.length ? lines : [''];
 }
 
+/** Truncate to one line that fits maxWidth, ending in an ellipsis. Never wraps. */
+function ellipsize(text, maxWidth, fontSize) {
+  const str = String(text);
+  if (textWidth(str, fontSize) <= maxWidth) return str;
+  let cut = str;
+  while (cut.length > 1 && textWidth(`${cut}…`, fontSize) > maxWidth) cut = cut.slice(0, -1);
+  return `${cut.trimEnd()}…`;
+}
+
 // ───────────────────────── Layout ─────────────────────────
 //
 // The layout follows the conventions of the Team Topologies book rather than
@@ -698,10 +711,29 @@ const L = {
   subW: 112, subH: 56, enW: 68, wedgeW: 64, slotGap: 22, labelMin: 170,
   pad: 24, frameTop: 26, frameBottom: 36, bandGap: 44, sideGap: 32, minW: 240,
   margin: 32, lineH: 1.25, noteFs: 11, titleH: 40, flowH: 46, legendH: 64, labelFs: 11,
+  railH: 26, railGap: 10,
+  leaderGap: 6, topClear: 8,
   fs: { stream: 14, platform: 14, subsystem: 12, enabling: 12, group: 13 },
 };
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+/**
+ * Wrap a wedge/edge label to maxWidth and measure the block it forms, so the
+ * plate that gets drawn behind it (see plateLabelSVG) matches the geometry
+ * used to size gaps, headroom and canvas growth.
+ */
+function wrapBlock(text, maxWidth) {
+  const lines = wrapText(text, maxWidth, L.labelFs);
+  const blockW = Math.max(...lines.map((ln) => textWidth(ln, L.labelFs)));
+  const blockH = lines.length * L.labelFs * L.lineH;
+  return { lines, blockW, blockH };
+}
+
+/** Max wrap width for a labelled edge parked above a pair of sibling frames. */
+function aboveLabelMaxWidth(wA, wB) {
+  return clamp(Math.max(wA, wB) * 0.6, 90, 220);
+}
 
 function walk(node, fn) {
   fn(node);
@@ -736,6 +768,17 @@ function structure(children, model, forcedW = 0) {
   const topFrames = frames.filter((c) => rankOf(c) < 2);
   const botFrames = frames.filter((c) => rankOf(c) === 2);
 
+  // an enabling team that facilitates two or more sibling top-level frames is drawn as
+  // one shared horizontal rail spanning them, instead of a right-hand column with one
+  // patch/band per relationship (issue #22). Every other enabling team (a single target,
+  // or targets inside a lane) keeps the column treatment below.
+  const frameIds = new Set(topFrames.map((f) => f.id));
+  const railEnab = topFrames.length > 1 ? enab.filter((n) => {
+    const targets = new Set(model.interactions.filter((it) => it.mode === 'facilitating' && it.from === n.id).map((it) => it.to));
+    return [...targets].filter((t) => frameIds.has(t)).length >= 2;
+  }) : [];
+  const barEnab = enab.filter((n) => !railEnab.includes(n));
+
   // vertical elements get their own x slot: wedges to the left of the lane labels,
   // subsystems and enabling bars to the right
   const stackIds = new Set([...lanes, ...plats, ...subs, ...enab].map((n) => n.id));
@@ -751,7 +794,7 @@ function structure(children, model, forcedW = 0) {
   const wedgeSlots = [...wedgeGroups.values()].map((its) => ({ kind: 'wedge', its, w: L.wedgeW + Math.min(3, its.length - 1) * 28 }));
   const rightSlots = [
     ...subs.map((node) => ({ kind: 'sub', node, w: L.subW })),
-    ...enab.map((node) => ({ kind: 'en', node, w: L.enW })),
+    ...barEnab.map((node) => ({ kind: 'en', node, w: L.enW })),
   ];
   const slotsWidth = (arr) => arr.reduce((a, s) => a + s.w + L.slotGap, 0);
   const leftW = slotsWidth(wedgeSlots), rightW = slotsWidth(rightSlots) + (rightSlots.length ? 24 : 0);
@@ -761,7 +804,19 @@ function structure(children, model, forcedW = 0) {
     ...plats.map((n) => textWidth(n.label, L.fs.platform) + 48));
 
   const topLays = topFrames.map((c) => frame(c, model));
-  const topBandW = topLays.reduce((a, l) => a + l.w, 0) + Math.max(0, topLays.length - 1) * L.sideGap;
+  // #23 treatment A (default): a labelled xaas edge directly between two sibling
+  // top-level frames widens just its own gap to fit the wrapped label plate,
+  // instead of the flat sideGap. A labelPos="above" edge keeps the gap narrow —
+  // its label is parked above the frames instead (see frame() and layout()).
+  const xaasLabelGap = (idA, idB) => {
+    const it = model.interactions.find((i) => i.mode === 'xaas' && i.label && (i.labelPos || 'gap') === 'gap' &&
+      ((i.from === idA && i.to === idB) || (i.from === idB && i.to === idA)));
+    if (!it) return L.sideGap;
+    const { blockW } = wrapBlock(it.label, 160);
+    return clamp(blockW + 32, L.sideGap, 220);
+  };
+  const topGaps = topLays.slice(0, -1).map((l, i) => xaasLabelGap(l.node.id, topLays[i + 1].node.id));
+  const topBandW = topLays.reduce((a, l) => a + l.w, 0) + topGaps.reduce((a, g) => a + g, 0);
   let botLays = botFrames.map((c) => frame(c, model));
   // slot columns always get their own room beside a band of child frames
   const innerW = Math.max(forcedW, hasStack ? leftW + labelW + rightW : 0, topBandW + (topLays.length ? leftW + rightW : 0),
@@ -777,13 +832,33 @@ function structure(children, model, forcedW = 0) {
   const items = [];
   let y = 0;
   if (topLays.length) {
-    let bx = leftW || rightW ? leftW : (innerW - topBandW) / 2;
+    const bandX0 = leftW || rightW ? leftW : (innerW - topBandW) / 2;
+    let bx = bandX0;
     const bandH = Math.max(...topLays.map((l) => l.h));
-    for (const l of topLays) { items.push({ kind: 'frame', node: l.node, x: bx, y, w: l.w, h: l.h, inner: l.inner }); bx += l.w + L.sideGap; }
+    const frameSpan = new Map();   // frame id -> [x0, x1], to size a rail that spans a subset of frames
+    topLays.forEach((l, i) => {
+      items.push({ kind: 'frame', node: l.node, x: bx, y, w: l.w, h: l.h, inner: l.inner });
+      frameSpan.set(l.node.id, [bx, bx + l.w]);
+      bx += l.w + (topGaps[i] ?? L.sideGap);
+    });
     y += bandH;
+    // one shared rail row per facilitating enabling team, below the frame band; width
+    // spans from the leftmost to the rightmost frame it targets (untargeted frames in
+    // between are simply covered), height is fixed so canvas growth stays bounded.
+    for (const n of railEnab) {
+      const targets = model.interactions
+        .filter((it) => it.mode === 'facilitating' && it.from === n.id)
+        .map((it) => it.to)
+        .filter((t) => frameSpan.has(t));
+      const x0 = Math.min(...targets.map((t) => frameSpan.get(t)[0]));
+      const x1 = Math.max(...targets.map((t) => frameSpan.get(t)[1]));
+      y += L.railGap;
+      items.push({ kind: 'rail', node: n, x: x0, y, w: x1 - x0, h: L.railH });
+      y += L.railH;
+    }
     if (lanes.length || plats.length || botLays.length) y += L.bandGap;
   }
-  const lanesTop = y + (subs.length ? L.subH / 2 + 8 : enab.length ? 20 : 2);
+  const lanesTop = y + (subs.length ? L.subH / 2 + 8 : barEnab.length ? 20 : 2);
   y = lanesTop;
   // all lanes in a frame share one label column: clear of wedge columns when a wedge
   // crosses any lane, clear of the subsystem/enabling columns, centred when there is room
@@ -817,16 +892,30 @@ function structure(children, model, forcedW = 0) {
     items.push({ kind: 'frame', node: l.node, x: (innerW - l.w) / 2, y, w: l.w, h: l.h, inner: l.inner });
     y += l.h;
   }
-  y += enab.length ? 20 : 2;
+  y += barEnab.length ? 20 : 2;
   return { w: innerW, h: y, items, slots: [...wedgeSlots, ...rightSlots], lanesRange };
 }
 
 function frame(node, model, forcedW = 0) {
   const inner = structure(node.children, model, forcedW);
   const w = Math.max(inner.w + 2 * L.pad, textWidth(node.label, L.fs.group) + 80);
+  // #23 treatment B: a labelled xaas edge directly between two of this frame's own
+  // child frames, with labelPos="above", parks its label above them (see layout()) —
+  // grow this frame's own top margin so the plate clears its dashed border.
+  const kids = inner.items.filter((it) => it.kind === 'frame');
+  let headroom = 0;
+  for (const it of model.interactions) {
+    if (it.mode !== 'xaas' || !it.label || (it.labelPos || 'gap') !== 'above') continue;
+    const A = kids.find((k) => k.node.id === it.from);
+    const B = kids.find((k) => k.node.id === it.to);
+    if (!A || !B) continue;
+    const { blockH } = wrapBlock(it.label, aboveLabelMaxWidth(A.w, B.w));
+    headroom = Math.max(headroom, blockH + 8 + L.leaderGap + L.topClear);
+  }
+  const frameTop = headroom ? L.frameTop + headroom : L.frameTop;
   inner.ox = (w - inner.w) / 2;
-  inner.oy = L.frameTop;
-  return { node, w, h: L.frameTop + inner.h + L.frameBottom, inner };
+  inner.oy = frameTop;
+  return { node, w, h: frameTop + inner.h + L.frameBottom, inner };
 }
 
 // ── geometry helpers ──
@@ -894,6 +983,11 @@ export function layout(model, opts = {}) {
         const n = it.node;
         boxes[n.id] = { x, y, w: it.w, h: it.h, node: n, kind: 'frame', lines: [n.label], note: n.attrs.note ? [n.attrs.note] : [], fs: L.fs.group };
         place(it.inner, x + it.inner.ox, y + it.inner.oy);
+      } else if (it.kind === 'rail') {
+        boxes[it.node.id] = {
+          x, y, w: it.w, h: it.h, node: it.node, kind: 'rail', fs: L.fs.enabling,
+          lines: [ellipsize(it.node.label, it.w - 16, L.fs.enabling)], note: [],
+        };
       } else {
         boxes[it.node.id] = {
           x, y, w: it.w, h: it.h, node: it.node, kind: it.kind, lines: it.lines,
@@ -952,10 +1046,19 @@ export function layout(model, opts = {}) {
     if (handled.has(inter)) continue;
     let P = boxes[inter.from], Q = boxes[inter.to];
     if (!P || !Q) continue;
+    if (inter.mode === 'facilitating' && P.kind === 'rail') continue;   // the rail itself carries the relationship
     if (inter.mode === 'xaas') {
       if (P.kind === 'sub' && P.embeddedOn === inter.to) continue;   // embedding is the relationship
       const slot = slots.find((s) => s.kind === 'wedge' && s.its.includes(inter));
-      const group = slot ? slot.its.filter((i) => boxes[i.to]) : [inter];
+      // #23: a fan-out from one provider to several targets with the same label text
+      // renders once, even when the targets aren't stack-siblings sharing a wedge slot
+      // (e.g. a nested provider fanning out to top-level consumers).
+      let group;
+      if (slot) group = slot.its.filter((i) => boxes[i.to]);
+      else if (inter.label) {
+        group = model.interactions.filter((i) => !handled.has(i) && i.mode === 'xaas' &&
+          i.from === inter.from && i.label === inter.label && boxes[i.to]);
+      } else group = [inter];
       for (const i of group) handled.add(i);
       // the wedge reaches the consumer farthest from the provider and covers the ones between
       const pc = center(P);
@@ -967,12 +1070,15 @@ export function layout(model, opts = {}) {
         const y0 = Math.min(P.y + P.h, Q.y + Q.h), y1 = Math.max(P.y, Q.y);
         if (x1 - x0 >= 40 && y1 > y0) {
           const mid = (x0 + x1) / 2;
-          const step = L.wedgeW * 0.75;
-          const clash = (x) => corridors.some((c) => Math.abs(c.x - x) < step && c.y1 > y0 && c.y0 < y1);
+          // #23: when the wedge carries a real label, size the corridor to the
+          // label's plate (not just the bare wedge) so two free wedges from the
+          // same crowded stretch don't get labels that collide.
+          const step = inter.label ? Math.max(L.wedgeW * 0.75, textWidth(inter.label, L.labelFs) + 28) : L.wedgeW * 0.75;
+          const clash = (x) => corridors.some((c) => Math.abs(c.x - x) < Math.max(c.step, step) && c.y1 > y0 && c.y0 < y1);
           const candidates = [mid];
           for (let d = step; mid + d <= x1 - 20 || mid - d >= x0 + 20; d += step) { candidates.push(mid + d, mid - d); }
           xOverride = candidates.find((x) => x >= x0 + 20 && x <= x1 - 20 && !clash(x)) ?? mid;
-          corridors.push({ x: xOverride, y0, y1 });
+          corridors.push({ x: xOverride, y0, y1, step });
         }
       }
       const f = facing(P, Q, xOverride);
@@ -991,14 +1097,39 @@ export function layout(model, opts = {}) {
         f.to,
       ];
       let label = null;
+      let leader = null;
       if (len >= 30) {
-        let along = Math.min(48, len * 0.3);
-        for (let a = along; a < len - 16; a += 16) {
-          if (!insideAny({ x: f.from.x + ux * a, y: f.from.y + uy * a }, [P, ...group.map((i) => boxes[i.to])])) { along = a; break; }
+        const text = inter.label || 'XaaS';
+        const labelPos = inter.labelPos || 'gap';
+        if (inter.label && labelPos === 'above' && P.kind === 'frame' && Q.kind === 'frame' && f.axis === 'h') {
+          // #23 treatment B: park the label above both frames, joined to the wedge
+          // by a short leader, instead of crowding the gap between them.
+          const { lines, blockW, blockH } = wrapBlock(text, aboveLabelMaxWidth(P.w, Q.w));
+          const plateW = blockW + 16, plateH = blockH + 8;
+          const midX = (f.from.x + f.to.x) / 2;
+          const bottomY = Math.min(P.y, Q.y) - L.leaderGap;
+          label = { x: midX, y: bottomY - plateH / 2, text, lines, plateW, plateH };
+          leader = { x: midX, y1: bottomY, y2: f.from.y };
+        } else {
+          let along;
+          if (P.kind === 'frame' && Q.kind === 'frame') {
+            // #23 treatment A: the gap between two sibling frames is sized to fit
+            // the wrapped label (see xaasLabelGap in structure()), so center the
+            // plate in it rather than hunting for the first clear spot.
+            along = len / 2;
+          } else {
+            along = Math.min(48, len * 0.3);
+            for (let a = along; a < len - 16; a += 16) {
+              if (!insideAny({ x: f.from.x + ux * a, y: f.from.y + uy * a }, [P, ...group.map((i) => boxes[i.to])])) { along = a; break; }
+            }
+          }
+          // wrap to the room available along the wedge, on an opaque plate, so a
+          // long label breaks onto lines instead of overflowing.
+          const { lines, blockW, blockH } = wrapBlock(text, clamp(len - 20, 90, 220));
+          label = { x: f.from.x + ux * along, y: f.from.y + uy * along, text, lines, plateW: blockW + 16, plateH: blockH + 8 };
         }
-        label = { x: f.from.x + ux * along, y: f.from.y + uy * along, text: inter.label || 'XaaS' };
       }
-      edges.push({ inter, inters: group, geo: { kind: 'wedge', points, label, axis: f.axis } });
+      edges.push({ inter, inters: group, geo: { kind: 'wedge', points, label, leader, axis: f.axis } });
     } else if (inter.mode === 'collaboration' && intersect(P, Q)) {
       const small = P.w * P.h <= Q.w * Q.h ? P : Q;
       const text = inter.label || 'Collaboration';
@@ -1048,7 +1179,16 @@ export function layout(model, opts = {}) {
   for (const b of Object.values(boxes)) { grow(b.x, b.y); grow(b.x + b.w, b.y + b.h); }
   for (const { geo } of edges) {
     for (const p of geo.points || []) grow(p.x, p.y);
-    if (geo.label) { const hw = textWidth(geo.label.text, L.labelFs) / 2 + 6; grow(geo.label.x - hw, geo.label.y - 10); grow(geo.label.x + hw, geo.label.y + 10); }
+    if (geo.label) {
+      if (geo.label.plateW != null) {
+        const w = geo.label.plateW, h = geo.label.plateH;
+        grow(geo.label.x - w / 2, geo.label.y - h / 2); grow(geo.label.x + w / 2, geo.label.y + h / 2);
+      } else {
+        const hw = textWidth(geo.label.text, L.labelFs) / 2 + 6;
+        grow(geo.label.x - hw, geo.label.y - 10); grow(geo.label.x + hw, geo.label.y + 10);
+      }
+    }
+    if (geo.leader) { grow(geo.leader.x, geo.leader.y1); grow(geo.leader.x, geo.leader.y2); }
   }
   const padL = Math.max(0, ox - minX), padT = Math.max(0, top - minY);
   if (padL || padT) {
@@ -1058,6 +1198,7 @@ export function layout(model, opts = {}) {
       for (const p of geo.points || []) shift(p);
       if (geo.rect) shift(geo.rect);
       if (geo.label) shift(geo.label);
+      if (geo.leader) { geo.leader.x += padL; geo.leader.y1 += padT; geo.leader.y2 += padT; }
     }
     maxX += padL; maxY += padT;
   }
@@ -1146,13 +1287,20 @@ function frameSVG(box, T) {
   ]);
 }
 
-function teamSVG(box, T, part = 'all') {
+function teamSVG(box, T, part = 'all', prefix = 'tt') {
   const { x, y, w, h, node } = box;
   const c = T[node.type === 'group' ? 'stream' : node.type];
-  const parts = [tooltip(node)];
+  // a rail's label is often ellipsised, so its tooltip carries the full name too
+  const parts = [box.kind === 'rail'
+    ? el('title', {}, esc([node.label, TEAM_TYPES[node.type].name, ...Object.entries(node.attrs).map(([k, v]) => `${k}: ${v}`)].join('\n')))
+    : tooltip(node)];
   if (part !== 'label') switch (box.kind) {
     case 'sub':
       parts.push(el('path', { d: octagonPath(x, y, w, h, 12), fill: c.fill, stroke: c.stroke, 'stroke-width': 2 }));
+      break;
+    case 'rail':
+      // enabling colour on the stroke, facilitating hatch as the fill, so the legend still explains both
+      parts.push(el('rect', { x, y, width: w, height: h, rx: 6, fill: `url(#${prefix}-dots)`, stroke: c.stroke, 'stroke-width': 2 }));
       break;
     default:
       parts.push(el('rect', { x, y, width: w, height: h, rx: box.kind === 'en' ? 10 : 8, fill: c.fill, stroke: c.stroke, 'stroke-width': 2 }));
@@ -1165,6 +1313,15 @@ function teamSVG(box, T, part = 'all') {
       x: 0, y: 0, 'text-anchor': 'middle', 'font-size': L.fs.enabling + 1, 'font-weight': 600, fill: c.text,
       transform: `translate(${num(x + w / 2 + 5)} ${num(y + h / 2)}) rotate(90)`,
     }, esc(node.label)));
+  } else if (box.kind === 'rail') {
+    // the label sits directly on the facilitating dot pattern, so give it an opaque
+    // plate to stay legible (same treatment as wedge labels use for frame fills)
+    const cy = y + h / 2;
+    const text = box.lines[0];
+    const plateW = textWidth(text, box.fs) + 16;
+    const plateH = box.fs * L.lineH + 8;
+    parts.push(el('rect', { x: cx - plateW / 2, y: cy - plateH / 2, width: plateW, height: plateH, rx: 4, fill: T.bg }));
+    parts.push(textBlock(box.lines, cx, cy, box.fs, c.text, { 'font-weight': 600 }));
   } else {
     const noteH = box.note.length ? L.noteFs * L.lineH + 2 : 0;
     parts.push(textBlock(box.lines, cx, y + h / 2 - noteH / 2, box.fs, c.text, { 'font-weight': 600 }));
@@ -1181,6 +1338,26 @@ function labelSVG(label, color, T, extra = {}) {
   }, esc(label.text));
 }
 
+/**
+ * A wedge label, possibly wrapped onto several lines, drawn on an opaque background
+ * plate rather than a text-stroke halo — stays legible over frame fills, dashed
+ * borders and adjacent team labels (#23). Every wedge label gets this treatment.
+ */
+function plateLabelSVG(label, color, T) {
+  if (!label) return '';
+  const lines = label.lines && label.lines.length ? label.lines : [label.text];
+  const lh = L.labelFs * L.lineH;
+  const blockH = lines.length * lh;
+  const w = label.plateW ?? (Math.max(...lines.map((ln) => textWidth(ln, L.labelFs))) + 16);
+  const h = label.plateH ?? (blockH + 8);
+  const y0 = label.y - blockH / 2 + lh * 0.78;
+  return el('g', { class: 'tt-edge-label' }, [
+    el('rect', { x: label.x - w / 2, y: label.y - h / 2, width: w, height: h, rx: 4, fill: T.bg }),
+    el('text', { x: label.x, y: y0, 'text-anchor': 'middle', 'font-size': L.labelFs, 'font-weight': 500, fill: color },
+      lines.map((ln, i) => el('tspan', { x: label.x, dy: i === 0 ? 0 : lh }, esc(ln)))),
+  ]);
+}
+
 function edgeSVG({ inter, inters, geo }, lay, T, prefix) {
   const A = lay.boxes[inter.from];
   const targets = (inters || [inter]).map((i) => lay.boxes[i.to].node.label).join(', ');
@@ -1190,7 +1367,8 @@ function edgeSVG({ inter, inters, geo }, lay, T, prefix) {
   switch (geo.kind) {
     case 'wedge':
       parts.push(el('polygon', { points: pts(geo.points), fill: T.xaas.fill, stroke: inter.soon ? T.xaas.text : T.xaas.stroke, 'stroke-width': 1, 'stroke-linejoin': 'round', ...soon }));
-      parts.push(labelSVG(geo.label, T.xaas.text, T, { stroke: 'none' }));
+      if (geo.leader) parts.push(el('line', { x1: geo.leader.x, y1: geo.leader.y1, x2: geo.leader.x, y2: geo.leader.y2, stroke: T.xaas.stroke, 'stroke-width': 1.5, 'stroke-dasharray': '3 3' }));
+      parts.push(plateLabelSVG(geo.label, T.xaas.text, T));
       break;
     case 'bridge':
       parts.push(el('polygon', { points: pts(geo.points), fill: T.collab.fill, stroke: T.collab.stroke, 'stroke-width': 1.5, 'stroke-linejoin': 'round', ...soon }));
@@ -1279,9 +1457,9 @@ export function render(input, opts = {}) {
     el('g', { class: 'tt-frames' }, frames.map((b) => frameSVG(b, T))),
     el('g', { class: 'tt-lanes' }, [...byKind('plat'), ...byKind('lane')].map((b) => teamSVG(b, T))),
     el('g', { class: 'tt-xaas' }, edgesOf('xaas')),
-    el('g', { class: 'tt-overlays' }, [...byKind('sub').map((b) => teamSVG(b, T)), ...byKind('en').map((b) => teamSVG(b, T, 'shape'))]),
+    el('g', { class: 'tt-overlays' }, [...byKind('sub').map((b) => teamSVG(b, T)), ...byKind('en').map((b) => teamSVG(b, T, 'shape')), ...byKind('rail').map((b) => teamSVG(b, T, 'shape', prefix))]),
     el('g', { class: 'tt-facilitating' }, edgesOf('facilitating')),
-    el('g', { class: 'tt-overlay-labels' }, byKind('en').map((b) => teamSVG(b, T, 'label'))),
+    el('g', { class: 'tt-overlay-labels' }, [...byKind('en').map((b) => teamSVG(b, T, 'label')), ...byKind('rail').map((b) => teamSVG(b, T, 'label'))]),
     el('g', { class: 'tt-collaboration' }, edgesOf('collaboration')),
     lay.legend ? legendSVG(lay.legend, T, prefix) : '',
   ];
@@ -1415,7 +1593,7 @@ function depth(model, node) {
 export default { parse, layout, render, teamApi, teamApis, textWidth, wrapText, VERSION, THEMES, TEAM_TYPES, MODES, TEAM_API_FIELDS, ParseError };
 
 
-const EXAMPLES = [{"name":"org-groups","title":"Product organisation","source":"teamTopology\n  title Product organisation\n\n  group customer \"Customer Group\" {\n    stream accounts \"Accounts\"\n    stream business \"Business\"\n    stream success  \"Customer Success\"\n    stream billing  \"Billing\"\n    subsystem data1 \"Data\"\n    subsystem sec1  \"Security\"\n    enabling ux1    \"UX Research\"\n    platform frontend \"Frontend Platform\"\n\n    data1 --> accounts\n    sec1  --> accounts\n    frontend --> accounts, billing\n    ux1 ~~> accounts, business, success, billing\n  }\n\n  group content \"Content Group\" {\n    stream runtime   \"Runtime\"\n    stream registry  \"Registry\"\n    stream build     \"Build\"\n    stream consumer  \"Content Consumer\"\n    stream publisher \"Content Publisher\"\n    subsystem data2  \"Data\"\n    enabling ux2     \"UX Research\"\n\n    data2 --> publisher\n    ux2 ~~> runtime, registry, build, consumer, publisher\n  }\n\n  group devexp \"Developer Experience Group\" {\n    stream pos   \"Programmable OS\"\n    stream inner \"Inner Loop\"\n    subsystem data3 \"Data\"\n    enabling ux3    \"UX Research\"\n    platform desktop \"Desktop Platform\"\n\n    data3 --> inner\n    desktop --> pos\n    ux3 ~~> pos, inner\n  }\n\n  platform cloud \"Cloud Group\" {\n    platform saas  \"SaaS Platform\"\n    platform infra \"Infrastructure\"\n    subsystem sec2 \"Security\"\n    subsystem data4 \"Data\"\n    infra --> saas\n  }\n\n  ux1 <--> content\n  ux2 <--> devexp\n  saas --> frontend, desktop\n  saas --> content\n"},{"name":"ecommerce","title":"E-commerce product organisation","source":"teamTopology\n  title E-commerce product organisation\n  flow Flow of change\n  legend\n\n  %% Stream-aligned teams own a slice of the product end to end\n  stream   checkout   \"Checkout\"            [size=7]\n  stream   search     \"Search & Discovery\"  [size=6]\n  stream   accounts   \"Accounts & Identity\" [size=5]\n\n  %% Enabling teams lift the capability of stream teams, then move on\n  enabling devex      \"Developer Experience\"\n\n  %% Complicated subsystems need deep specialist knowledge\n  subsystem ranking   \"Ranking Engine\" [note=\"ML relevance model\"]\n\n  %% Platforms reduce cognitive load for the teams above\n  platform  infra     \"Infrastructure Platform\" [note=\"Kubernetes, CI, observability\"]\n  platform  payments  \"Payments Platform\"\n\n  %% Interactions\n  infra    --> checkout, search, accounts : Kubernetes & CI [duration=ongoing]\n  payments --> checkout                   : Payments API\n  ranking  --> search                     : Ranking API\n  search   <--> ranking                   : new signals\n  devex    ~~> checkout, accounts         : CI pipelines [duration=\"until Q3\"]\n\n  %% Expected soon: drawn dashed, listed under \"teams we expect to interact with soon\"\n  search <--> accounts : personalised results [soon, duration=\"8 weeks\"]\n\n  %% Team API fields the diagram cannot infer (see the Team API panel / --api)\n  api checkout {\n    focus: the checkout experience end to end\n    software: checkout-service, cart-ui\n    SLE: 99.9% availability, p95 < 300 ms\n    versioning: semver, two releases of deprecation notice\n    wiki: checkout, cart, basket\n    chat: #checkout #checkout-alerts\n    sync: 09:30 UTC\n    working on: migrating to the new payments API\n    ways of working: trunk-based development, pairing on Tuesdays\n    improvements: shared on-call rotation with Accounts\n  }\n"},{"name":"minimal","title":"minimal","source":"teamTopology\n  stream app \"Product Team\"\n  platform infra \"Platform\"\n  infra --> app\n"},{"name":"platform-grouping","title":"Platform grouping","source":"teamTopology\n  title Platform grouping\n  flow\n\n  stream mobile \"Mobile App\"\n  stream web    \"Web Storefront\"\n  enabling sre  \"SRE Coaching\"\n\n  %% A platform can itself be a topology of teams\n  platform cloud \"Cloud Platform\" {\n    stream    k8s   \"Kubernetes\"\n    stream    obs   \"Observability\"\n    subsystem net   \"Network Fabric\"\n    platform  bare  \"Bare-metal Fleet\"\n\n    bare --> k8s, obs\n    net  --> k8s : overlay networking\n  }\n\n  k8s --> mobile, web       : runtime\n  obs --> mobile, web       : dashboards & alerts\n  sre ~~> web               : incident reviews\n  mobile <--> web           : shared design system\n"},{"name":"value-streams","title":"Two value streams sharing one platform","source":"teamTopology\n  title Two value streams sharing one platform\n  flow\n\n  group retail \"Retail\" [kind=\"value stream\"] {\n    stream storefront \"Storefront\"\n    stream fulfilment \"Fulfilment\"\n    storefront <--> fulfilment : order events\n  }\n\n  group b2b \"Business\" [kind=\"value stream\"] {\n    stream catalog \"Catalog\"\n    stream invoicing \"Invoicing\"\n  }\n\n  enabling  security \"Security Enablement\"\n  subsystem tax      \"Tax Calculation\"\n  platform  core     \"Core Platform\" [note=\"identity, billing, data\"]\n\n  core --> storefront, fulfilment, catalog, invoicing\n  tax  --> invoicing, storefront : tax rules API\n  security ~~> catalog, storefront : threat modelling\n"}];
+const EXAMPLES = [{"name":"org-groups","title":"Product organisation","source":"teamTopology\n  title Product organisation\n\n  group customer \"Customer Group\" {\n    stream accounts \"Accounts\"\n    stream business \"Business\"\n    stream success  \"Customer Success\"\n    stream billing  \"Billing\"\n    subsystem data1 \"Data\"\n    subsystem sec1  \"Security\"\n    enabling ux1    \"UX Research\"\n    platform frontend \"Frontend Platform\"\n\n    data1 --> accounts\n    sec1  --> accounts\n    frontend --> accounts, billing\n    ux1 ~~> accounts, business, success, billing\n  }\n\n  group content \"Content Group\" {\n    stream runtime   \"Runtime\"\n    stream registry  \"Registry\"\n    stream build     \"Build\"\n    stream consumer  \"Content Consumer\"\n    stream publisher \"Content Publisher\"\n    subsystem data2  \"Data\"\n    enabling ux2     \"UX Research\"\n\n    data2 --> publisher\n    ux2 ~~> runtime, registry, build, consumer, publisher\n  }\n\n  group devexp \"Developer Experience Group\" {\n    stream pos   \"Programmable OS\"\n    stream inner \"Inner Loop\"\n    subsystem data3 \"Data\"\n    enabling ux3    \"UX Research\"\n    platform desktop \"Desktop Platform\"\n\n    data3 --> inner\n    desktop --> pos\n    ux3 ~~> pos, inner\n  }\n\n  platform cloud \"Cloud Group\" {\n    platform saas  \"SaaS Platform\"\n    platform infra \"Infrastructure\"\n    subsystem sec2 \"Security\"\n    subsystem data4 \"Data\"\n    infra --> saas\n  }\n\n  ux1 <--> content\n  ux2 <--> devexp\n  saas --> frontend, desktop\n  saas --> content\n"},{"name":"ecommerce","title":"E-commerce product organisation","source":"teamTopology\n  title E-commerce product organisation\n  flow Flow of change\n  legend\n\n  %% Stream-aligned teams own a slice of the product end to end\n  stream   checkout   \"Checkout\"            [size=7]\n  stream   search     \"Search & Discovery\"  [size=6]\n  stream   accounts   \"Accounts & Identity\" [size=5]\n\n  %% Enabling teams lift the capability of stream teams, then move on\n  enabling devex      \"Developer Experience\"\n\n  %% Complicated subsystems need deep specialist knowledge\n  subsystem ranking   \"Ranking Engine\" [note=\"ML relevance model\"]\n\n  %% Platforms reduce cognitive load for the teams above\n  platform  infra     \"Infrastructure Platform\" [note=\"Kubernetes, CI, observability\"]\n  platform  payments  \"Payments Platform\"\n\n  %% Interactions\n  infra    --> checkout, search, accounts : Kubernetes & CI [duration=ongoing]\n  payments --> checkout                   : Payments API\n  ranking  --> search                     : Ranking API\n  search   <--> ranking                   : new signals\n  devex    ~~> checkout, accounts         : CI pipelines [duration=\"until Q3\"]\n\n  %% Expected soon: drawn dashed, listed under \"teams we expect to interact with soon\"\n  search <--> accounts : personalised results [soon, duration=\"8 weeks\"]\n\n  %% Team API fields the diagram cannot infer (see the Team API panel / --api)\n  api checkout {\n    focus: the checkout experience end to end\n    software: checkout-service, cart-ui\n    SLE: 99.9% availability, p95 < 300 ms\n    versioning: semver, two releases of deprecation notice\n    wiki: checkout, cart, basket\n    chat: #checkout #checkout-alerts\n    sync: 09:30 UTC\n    working on: migrating to the new payments API\n    ways of working: trunk-based development, pairing on Tuesdays\n    improvements: shared on-call rotation with Accounts\n  }\n"},{"name":"enabling-groups","title":"Cross-cutting enabling team across sibling groups","source":"teamTopology\n  title Cross-cutting enabling team across sibling groups\n\n  group product \"Product\" {\n    stream desktop \"Desktop\"\n    stream web     \"Web\"\n  }\n\n  group services \"Services\" {\n    stream policy  \"Policy\"\n    stream keys    \"Key Management\"\n  }\n\n  group platform \"Platform\" {\n    stream identity \"Identity\"\n    stream data     \"Data\"\n  }\n\n  enabling research \"UX Research\"\n\n  research ~~> product\n  research ~~> services\n  research ~~> platform\n"},{"name":"minimal","title":"minimal","source":"teamTopology\n  stream app \"Product Team\"\n  platform infra \"Platform\"\n  infra --> app\n"},{"name":"platform-grouping","title":"Platform grouping","source":"teamTopology\n  title Platform grouping\n  flow\n\n  stream mobile \"Mobile App\"\n  stream web    \"Web Storefront\"\n  enabling sre  \"SRE Coaching\"\n\n  %% A platform can itself be a topology of teams\n  platform cloud \"Cloud Platform\" {\n    stream    k8s   \"Kubernetes\"\n    stream    obs   \"Observability\"\n    subsystem net   \"Network Fabric\"\n    platform  bare  \"Bare-metal Fleet\"\n\n    bare --> k8s, obs\n    net  --> k8s : overlay networking\n  }\n\n  k8s --> mobile, web       : runtime\n  obs --> mobile, web       : dashboards & alerts\n  sre ~~> web               : incident reviews\n  mobile <--> web           : shared design system\n"},{"name":"value-streams","title":"Two value streams sharing one platform","source":"teamTopology\n  title Two value streams sharing one platform\n  flow\n\n  group retail \"Retail\" [kind=\"value stream\"] {\n    stream storefront \"Storefront\"\n    stream fulfilment \"Fulfilment\"\n    storefront <--> fulfilment : order events\n  }\n\n  group b2b \"Business\" [kind=\"value stream\"] {\n    stream catalog \"Catalog\"\n    stream invoicing \"Invoicing\"\n  }\n\n  enabling  security \"Security Enablement\"\n  subsystem tax      \"Tax Calculation\"\n  platform  core     \"Core Platform\" [note=\"identity, billing, data\"]\n\n  core --> storefront, fulfilment, catalog, invoicing\n  tax  --> invoicing, storefront : tax rules API\n  security ~~> catalog, storefront : threat modelling\n"}];
 
 const $ = (id) => document.getElementById(id);
 const src = $('src'), gutter = $('gutter'), canvas = $('canvas'), status = $('status'), statusText = $('status-text');

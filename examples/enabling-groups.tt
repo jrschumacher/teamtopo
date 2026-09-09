@@ -1,0 +1,23 @@
+teamTopology
+  title Cross-cutting enabling team across sibling groups
+
+  group product "Product" {
+    stream desktop "Desktop"
+    stream web     "Web"
+  }
+
+  group services "Services" {
+    stream policy  "Policy"
+    stream keys    "Key Management"
+  }
+
+  group platform "Platform" {
+    stream identity "Identity"
+    stream data     "Data"
+  }
+
+  enabling research "UX Research"
+
+  research ~~> product
+  research ~~> services
+  research ~~> platform

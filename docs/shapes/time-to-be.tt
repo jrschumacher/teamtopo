@@ -1,0 +1,17 @@
+teamTopology
+  title Payments migration: to-be
+
+  group commerce "Commerce" {
+    stream checkout "Checkout"
+  }
+
+  group legacy "Legacy Systems" {
+    platform legacy_billing "Legacy Billing"
+  }
+
+  group platform_group "Platform" {
+    platform payments_platform "Payments Platform"
+  }
+
+  legacy_billing --> checkout : billing calls
+  payments_platform --> checkout : new payments API [soon, duration="8 weeks"]

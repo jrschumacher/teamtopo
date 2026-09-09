@@ -1,0 +1,13 @@
+teamTopology
+  title Collaboration and XaaS between the same pair of teams
+
+  group data_group "Data" {
+    stream analytics_team "Analytics"
+  }
+
+  group product_group "Product" {
+    stream growth_team "Growth"
+  }
+
+  analytics_team <--> growth_team : experiment design
+  analytics_team --> growth_team : event pipeline

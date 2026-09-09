@@ -1,0 +1,23 @@
+teamTopology
+  title Shared analytics engine across three groups
+
+  group growth "Growth" {
+    stream acquisition "Acquisition"
+    stream retention "Retention"
+  }
+
+  group commerce "Commerce" {
+    stream checkout "Checkout"
+    stream catalog "Catalog"
+  }
+
+  group support "Support" {
+    stream helpdesk "Helpdesk"
+    stream community "Community"
+  }
+
+  subsystem analytics "Analytics Engine"
+
+  analytics --> acquisition
+  analytics --> checkout
+  analytics --> helpdesk

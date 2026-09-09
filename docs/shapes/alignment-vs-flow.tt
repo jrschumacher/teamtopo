@@ -1,0 +1,14 @@
+teamTopology
+  title Reporting lines vs flow direction disagree
+
+  group platform_tribe "Platform Tribe" {
+    stream identity "Identity"
+    stream mobile_shell "Mobile Shell (reports to Platform)"
+  }
+
+  group growth_tribe "Growth Tribe" {
+    stream onboarding "Onboarding"
+  }
+
+  identity --> mobile_shell
+  mobile_shell --> onboarding : flow continues into Growth's roadmap

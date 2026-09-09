@@ -1,0 +1,22 @@
+teamTopology
+  title Enabling team facilitates specific teams across group boundaries
+
+  group alpha "Alpha" {
+    stream web "Web"
+    stream mobile "Mobile"
+  }
+
+  group beta "Beta" {
+    stream portal "Partner Portal"
+    stream api_gw "API Gateway"
+  }
+
+  group gamma "Gamma" {
+    stream ops "Ops Console"
+  }
+
+  enabling coaching "Platform Coaching"
+
+  coaching ~~> web
+  coaching ~~> portal
+  coaching ~~> ops
