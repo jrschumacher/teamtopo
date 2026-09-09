@@ -3,9 +3,9 @@
    subsystem, platform and keyword colours) come from styles.css :root, shared with the
    editor. Theme follows prefers-color-scheme only — no toggle, no data-theme. */
 
+/* No width cap on the wrapper: sections centre their own content so the free band and
+   footer rule can run edge to edge instead of ending in a floating box on wide screens. */
 .landing {
-	max-width: 1220px;
-	margin: 0 auto;
 	line-height: 1.5;
 }
 
@@ -38,6 +38,8 @@
 	display: flex;
 	align-items: center;
 	gap: 22px;
+	max-width: 1220px;
+	margin: 0 auto;
 	padding: 18px 24px;
 	flex-wrap: wrap;
 }
@@ -258,14 +260,17 @@
 	background: var(--border);
 }
 
+/* Same inset as the track; scaled rather than width-based so 100% never overshoots the tab. */
 .tab-progress {
 	position: absolute;
 	left: 8px;
+	right: 8px;
 	bottom: 3px;
 	height: 2px;
 	border-radius: 1px;
 	background: var(--accent);
-	width: 0%;
+	transform: scaleX(0);
+	transform-origin: left;
 }
 
 .hero-pause {

@@ -159,7 +159,7 @@ function startDemo(root: HTMLElement, catalog: CatalogEntry[]): () => void {
 		const bar = tabsEl.querySelector<HTMLElement>(
 			`.hero-tab[data-index="${state.index}"] .tab-progress`
 		);
-		if (bar) bar.style.width = `${Math.min(100, pct)}%`;
+		if (bar) bar.style.transform = `scaleX(${Math.min(100, pct) / 100})`;
 	};
 
 	const paint = (source: string) => {
