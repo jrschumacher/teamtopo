@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parse, layout, render, wrapText, ParseError } from './teamtopo.js';
+import { parse, layout, render, wrapText, ParseError, THEMES } from './teamtopo.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const examplesDir = join(here, '..', 'examples');
@@ -129,6 +129,24 @@ test('reports errors with line numbers', () => {
   }
 });
 
+test('unknown labelPos value throws a ParseError on that line', () => {
+  const src = `teamTopology
+    stream a
+    stream b
+    a --> b : x [labelPos=sideways]`;
+  assert.throws(
+    () => parse(src),
+    (e) => e instanceof ParseError && /labelPos/.test(e.message) && e.line === 4,
+  );
+});
+
+test('labelPos defaults to "gap" and accepts "above"', () => {
+  const m = parse('teamTopology\nstream a\nstream b\na --> b : x');
+  assert.equal(m.interactions[0].labelPos, 'gap');
+  const m2 = parse('teamTopology\nstream a\nstream b\na --> b : x [labelPos=above]');
+  assert.equal(m2.interactions[0].labelPos, 'above');
+});
+
 // ── layout ──
 
 test('stacks lanes in declaration order with platforms beneath', () => {
@@ -249,6 +267,144 @@ test('wraps long labels', () => {
   assert.deepEqual(wrapText('short', 90, 12), ['short']);
 });
 
+// ── #23: interaction label layout ──
+
+const overlaps = (a, b) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+
+/** Plate bbox for a wedge label, matching the geometry layout() computes. */
+function plateBox(label) {
+  assert.ok(Number.isFinite(label.plateW) && label.plateW > 0, 'label has a finite plate width');
+  assert.ok(Number.isFinite(label.plateH) && label.plateH > 0, 'label has a finite plate height');
+  return { x: label.x - label.plateW / 2, y: label.y - label.plateH / 2, w: label.plateW, h: label.plateH };
+}
+
+const ISSUE_23_REPRODUCER = `teamTopology
+  title Interaction label layout in nested platform diagrams
+
+  platform cloud "Cloud Platform" {
+    group provider "Provider Group" {
+      stream services "Platform Services"
+    }
+
+    group consumer "Product Group" {
+      stream app "App"
+    }
+
+    provider --> consumer : platform capabilities
+  }`;
+
+test('wedge labels render on an opaque plate with wrapping metadata', () => {
+  const lay = layout(parse('teamTopology\nstream a\nplatform p\np --> a : Kubernetes API'));
+  const [{ geo }] = lay.edges;
+  assert.equal(geo.kind, 'wedge');
+  assert.ok(Array.isArray(geo.label.lines) && geo.label.lines.length >= 1);
+  assert.ok(geo.label.plateW > 0 && geo.label.plateH > 0, 'plate has a size');
+});
+
+test('a long wedge label wraps onto multiple lines', () => {
+  const lay = layout(parse(
+    'teamTopology\nstream a\nplatform p\np --> a : a very long interaction label that will not fit on one line',
+  ));
+  const [{ geo }] = lay.edges;
+  assert.ok(geo.label.lines.length > 1, 'wraps onto multiple lines');
+});
+
+test('#23 reproducer: the frame-to-frame label plate does not collide with either frame', () => {
+  const lay = layout(parse(ISSUE_23_REPRODUCER));
+  const wedge = lay.edges.find((e) => e.geo.kind === 'wedge');
+  assert.ok(wedge, 'has a wedge edge');
+  const plate = plateBox(wedge.geo.label);
+  assert.ok(!overlaps(plate, lay.boxes.provider), 'plate does not overlap the provider frame');
+  assert.ok(!overlaps(plate, lay.boxes.consumer), 'plate does not overlap the consumer frame');
+});
+
+test('three sibling frames with labels on both gaps: no plate/frame overlaps', () => {
+  const lay = layout(parse(`teamTopology
+    platform cloud {
+      group g1 {
+        stream a
+      }
+      group g2 {
+        stream b
+      }
+      group g3 {
+        stream c
+      }
+      g1 --> g2 : platform capabilities
+      g2 --> g3 : policy, key access and audit events
+    }`));
+  const wedges = lay.edges.filter((e) => e.geo.kind === 'wedge');
+  assert.equal(wedges.length, 2);
+  const frameBoxes = [lay.boxes.g1, lay.boxes.g2, lay.boxes.g3];
+  for (const w of wedges) {
+    const plate = plateBox(w.geo.label);
+    for (const f of frameBoxes) assert.ok(!overlaps(plate, f), `plate for "${w.inter.label}" overlaps a frame`);
+  }
+});
+
+test('labelPos=above positions the plate above both frames with a leader', () => {
+  const lay = layout(parse(`teamTopology
+    platform cloud {
+      group provider {
+        stream services
+      }
+      group consumer {
+        stream app
+      }
+      provider --> consumer : platform capabilities [labelPos=above]
+    }`));
+  const wedge = lay.edges.find((e) => e.geo.kind === 'wedge');
+  assert.ok(wedge.geo.leader, 'has a leader line');
+  const topOfFrames = Math.min(lay.boxes.provider.y, lay.boxes.consumer.y);
+  assert.ok(wedge.geo.label.y + wedge.geo.label.plateH / 2 <= topOfFrames, 'plate sits above both frames');
+  const plate = plateBox(wedge.geo.label);
+  assert.ok(!overlaps(plate, lay.boxes.provider) && !overlaps(plate, lay.boxes.consumer), 'plate clears both frames');
+});
+
+test('fan-out to multiple targets with the same label renders one wedge, one label', () => {
+  const lay = layout(parse(`teamTopology
+    stream m
+    stream w
+    platform cloud {
+      stream k
+    }
+    k --> m, w : runtime`));
+  const wedges = lay.edges.filter((e) => e.geo.kind === 'wedge' && e.inter.label === 'runtime');
+  assert.equal(wedges.length, 1, 'one wedge for the fanned-out same-label interactions');
+  assert.equal(wedges[0].inters.length, 2, 'covers both targets');
+});
+
+test('fan-out with different labels keeps separate plates', () => {
+  const lay = layout(parse(`teamTopology
+    stream m
+    stream w
+    platform cloud {
+      stream k
+    }
+    k --> m : runtime
+    k --> w : dashboards`));
+  const wedges = lay.edges.filter((e) => e.geo.kind === 'wedge');
+  assert.equal(wedges.length, 2, 'different labels stay on separate wedges');
+  const plates = wedges.map((w) => plateBox(w.geo.label));
+  assert.ok(!overlaps(plates[0], plates[1]), 'the two label plates do not overlap each other');
+});
+
+test('rendering is deterministic across repeated runs', () => {
+  for (const src of [ISSUE_23_REPRODUCER, 'teamTopology\nstream m\nstream w\nplatform cloud {\nstream k\n}\nk --> m, w : runtime']) {
+    const a = render(src);
+    const b = render(src);
+    assert.equal(a, b);
+  }
+});
+
+test('every example .tt parses and renders without throwing', () => {
+  const files = readdirSync(examplesDir).filter((f) => f.endsWith('.tt'));
+  for (const f of files) {
+    const src = readFileSync(join(examplesDir, f), 'utf8');
+    assert.doesNotThrow(() => render(parse(src)), f);
+  }
+});
+
 // ── renderer ──
 
 test('renders svg with one element per team and interaction', () => {
@@ -360,4 +516,124 @@ test('teamApis covers every team except groups', () => {
 test('interactions expected soon render dashed and faded', () => {
   const svg = render('teamTopology\nstream a\nplatform p\np --> a [soon]');
   assert.ok(/<polygon[^>]*stroke-dasharray="5 4"[^>]*opacity="0.55"|<polygon[^>]*opacity="0.55"[^>]*stroke-dasharray="5 4"/.test(svg));
+});
+
+// ── #28: labels for every interaction mode (plates, mode colour, labelPos) ──
+
+// WCAG relative luminance / contrast ratio — implemented here only; no new dependency.
+function parseColor(c) {
+  c = c.trim();
+  let m;
+  if ((m = /^#([0-9a-f]{6})$/i.exec(c))) {
+    const n = parseInt(m[1], 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255, 1];
+  }
+  if ((m = /^rgba?\(([^)]+)\)$/i.exec(c))) {
+    const parts = m[1].split(',').map((s) => parseFloat(s));
+    return [parts[0], parts[1], parts[2], parts[3] !== undefined ? parts[3] : 1];
+  }
+  throw new Error(`unrecognised color "${c}"`);
+}
+function blendOverBg(fg, bg) {
+  const [r1, g1, b1, a1] = parseColor(fg);
+  const [r2, g2, b2] = parseColor(bg);
+  return [r1 * a1 + r2 * (1 - a1), g1 * a1 + g2 * (1 - a1), b1 * a1 + b2 * (1 - a1)];
+}
+function relLuminance([r, g, b]) {
+  const f = (c) => { c /= 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
+  return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+}
+function contrastRatio(colorA, colorB) {
+  const L1 = relLuminance(colorA), L2 = relLuminance(colorB);
+  const [hi, lo] = L1 > L2 ? [L1, L2] : [L2, L1];
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+test('WCAG contrast: mode plate colours are legible and visible in both themes', () => {
+  for (const [themeName, T] of Object.entries(THEMES)) {
+    for (const mode of ['collab', 'xaas', 'facil']) {
+      assert.ok(T[mode].plate, `${themeName}/${mode} has a plate token`);
+      const plateRGB = parseColor(T[mode].plate).slice(0, 3);
+      const bgRGB = parseColor(T.bg).slice(0, 3);
+      const textRGB = parseColor(T[mode].text).slice(0, 3);
+      const textContrast = contrastRatio(textRGB, plateRGB);
+      const bgContrast = contrastRatio(plateRGB, bgRGB);
+      assert.ok(textContrast >= 4.5, `${themeName}/${mode} text-on-plate contrast ${textContrast.toFixed(2)} >= 4.5`);
+      assert.ok(bgContrast >= 1.5, `${themeName}/${mode} plate-vs-bg contrast ${bgContrast.toFixed(2)} >= 1.5`);
+    }
+  }
+});
+
+test('collaboration labels wrap and render on a plate', () => {
+  const lay = layout(parse(
+    'teamTopology\nstream a\nstream b\na <--> b : a very long collaboration label that will not fit on one line',
+  ));
+  const [{ geo }] = lay.edges;
+  assert.equal(geo.kind, 'bridge');
+  assert.ok(geo.label.lines.length > 1, 'wraps onto multiple lines');
+  assert.ok(geo.label.plateW > 0 && geo.label.plateH > 0, 'plate has a size');
+});
+
+test('facilitating patch labels wrap and render on a plate', () => {
+  const lay = layout(parse(
+    'teamTopology\nstream a\nenabling e\ne ~~> a : a very long facilitating label that will not fit on one line',
+  ));
+  const patch = lay.edges.find((e) => e.geo.kind === 'patch');
+  assert.ok(patch, 'has a patch edge');
+  assert.ok(patch.geo.label.lines.length > 1, 'wraps onto multiple lines');
+  assert.ok(patch.geo.label.plateW > 0 && patch.geo.label.plateH > 0, 'plate has a size');
+});
+
+test('facilitating band labels wrap and render on a plate', () => {
+  const lay = layout(parse(`teamTopology
+    group g1 {
+      stream a
+    }
+    enabling e
+    e ~~> a : a very long facilitating label that will not fit on one line`));
+  const band = lay.edges.find((e) => e.geo.kind === 'band');
+  assert.ok(band, 'has a band edge');
+  assert.ok(band.geo.label.lines.length > 1, 'wraps onto multiple lines');
+  assert.ok(band.geo.label.plateW > 0 && band.geo.label.plateH > 0, 'plate has a size');
+});
+
+test('labelPos=above works for collaboration and facilitating, with a leader', () => {
+  const collab = layout(parse('teamTopology\nstream a\nstream b\na <--> b : pairing [labelPos=above]'));
+  const [{ geo: collabGeo }] = collab.edges;
+  assert.ok(collabGeo.leader, 'collaboration above has a leader');
+  const shapeTop = Math.min(...collabGeo.points.map((p) => p.y));
+  assert.ok(collabGeo.label.y + collabGeo.label.plateH / 2 <= shapeTop, 'plate sits above the shape');
+
+  const facil = layout(parse('teamTopology\nstream a\nenabling e\ne ~~> a : coaching [labelPos=above]'));
+  const patch = facil.edges.find((e) => e.geo.kind === 'patch');
+  assert.ok(patch.geo.leader, 'facilitating above has a leader');
+  assert.ok(patch.geo.label.y + patch.geo.label.plateH / 2 <= patch.geo.rect.y, 'plate sits above the patch');
+});
+
+test('unknown labelPos is a ParseError for non-xaas modes too', () => {
+  assert.throws(
+    () => parse('teamTopology\nstream a\nstream b\na <--> b : x [labelPos=weird]'),
+    (e) => e instanceof ParseError && /labelPos/.test(e.message),
+  );
+});
+
+test('frame gap growth stays xaas-only: a labelled collaboration between sibling frames does not widen the gap', () => {
+  const withCollab = layout(parse(`teamTopology
+    group g1 {
+      stream a
+    }
+    group g2 {
+      stream b
+    }
+    g1 <--> g2 : a moderately long collaboration label`));
+  const plain = layout(parse(`teamTopology
+    group g1 {
+      stream a
+    }
+    group g2 {
+      stream b
+    }`));
+  assert.equal(withCollab.boxes.g2.x - (withCollab.boxes.g1.x + withCollab.boxes.g1.w),
+    plain.boxes.g2.x - (plain.boxes.g1.x + plain.boxes.g1.w),
+    'gap between the frames is unchanged by a labelled collaboration edge');
 });

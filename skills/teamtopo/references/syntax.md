@@ -153,12 +153,22 @@ teamTopology
 |---|---|
 | `[soon]` or `[expected]` | interaction expected soon: drawn dashed and faded; listed under "Teams we expect to interact with soon" in the Team API |
 | `[duration="until Q3"]` | fills the Duration column of the Team API tables |
+| `[labelPos=above]` | on any interaction mode: moves the label plate above the shape (wedge / parallelogram / patch / band) with a dashed leader down to it, instead of the default `gap` (on/at the shape, as today). Any value other than `gap` or `above` is a parse error. |
 | anything else | kept in the model, not drawn |
 
 ```
 devex ~~> checkout, accounts : CI pipelines [duration="until Q3"]
 search <--> accounts : personalised results [soon, duration="8 weeks"]
+provider_group --> consumer_group : platform capabilities [labelPos=above]
 ```
+
+Every interaction label — XaaS, Collaboration and Facilitating — renders on an
+opaque background plate tinted to that mode's shape colour, and wraps onto
+multiple lines when it doesn't fit (`clamp(90, ..., 220)` px). Only XaaS grows
+the gap between two sibling frames to fit a long `labelPos=gap` label;
+Collaboration and Facilitating don't bridge sibling frames, so they never
+change frame spacing — use `labelPos=above` for those when the plate needs
+more room.
 
 Validation, applied after the whole file is parsed:
 
