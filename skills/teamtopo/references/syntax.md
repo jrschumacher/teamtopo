@@ -153,12 +153,18 @@ teamTopology
 |---|---|
 | `[soon]` or `[expected]` | interaction expected soon: drawn dashed and faded; listed under "Teams we expect to interact with soon" in the Team API |
 | `[duration="until Q3"]` | fills the Duration column of the Team API tables |
+| `[labelPos=above]` | for a labelled XaaS edge directly between two sibling frames (group/platform): label sits above both frames on a plate with a leader down to the wedge, instead of the default (`gap`), which widens the gap between the frames to fit it. Any other value is a parse error. |
 | anything else | kept in the model, not drawn |
 
 ```
 devex ~~> checkout, accounts : CI pipelines [duration="until Q3"]
 search <--> accounts : personalised results [soon, duration="8 weeks"]
+provider_group --> consumer_group : platform capabilities [labelPos=above]
 ```
+
+Every XaaS wedge label renders on an opaque background plate and wraps onto
+multiple lines when it doesn't fit — this includes lane/platform wedges and
+frame-to-frame wedges alike.
 
 Validation, applied after the whole file is parsed:
 

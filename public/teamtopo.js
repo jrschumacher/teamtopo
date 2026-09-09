@@ -165,10 +165,14 @@ export function parse(source) {
       const label = m[4] ? stripQuotes(m[4]) : '';
       const attrs = m[5] ? parseAttrs(m[5]) : {};
       const soon = 'soon' in attrs || 'expected' in attrs;
+      if (attrs.labelPos !== undefined && attrs.labelPos !== 'gap' && attrs.labelPos !== 'above') {
+        throw new ParseError(`invalid labelPos "${attrs.labelPos}" (expected "gap" or "above")`, lineNo);
+      }
+      const labelPos = attrs.labelPos || 'gap';
       for (const l of left) {
         for (const r of right) {
           const [from, to] = op.leftIsFrom ? [l, r] : [r, l];
-          model.interactions.push({ mode: op.mode, from, to, label, attrs, soon, duration: attrs.duration || '', line: lineNo });
+          model.interactions.push({ mode: op.mode, from, to, label, attrs, soon, duration: attrs.duration || '', labelPos, line: lineNo });
         }
       }
       continue;
@@ -327,10 +331,28 @@ const L = {
   pad: 24, frameTop: 26, frameBottom: 36, bandGap: 44, sideGap: 32, minW: 240,
   margin: 32, lineH: 1.25, noteFs: 11, titleH: 40, flowH: 46, legendH: 64, labelFs: 11,
   railH: 26, railGap: 10,
+  leaderGap: 6, topClear: 8,
   fs: { stream: 14, platform: 14, subsystem: 12, enabling: 12, group: 13 },
 };
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+/**
+ * Wrap a wedge/edge label to maxWidth and measure the block it forms, so the
+ * plate that gets drawn behind it (see plateLabelSVG) matches the geometry
+ * used to size gaps, headroom and canvas growth.
+ */
+function wrapBlock(text, maxWidth) {
+  const lines = wrapText(text, maxWidth, L.labelFs);
+  const blockW = Math.max(...lines.map((ln) => textWidth(ln, L.labelFs)));
+  const blockH = lines.length * L.labelFs * L.lineH;
+  return { lines, blockW, blockH };
+}
+
+/** Max wrap width for a labelled edge parked above a pair of sibling frames. */
+function aboveLabelMaxWidth(wA, wB) {
+  return clamp(Math.max(wA, wB) * 0.6, 90, 220);
+}
 
 function walk(node, fn) {
   fn(node);
@@ -401,7 +423,19 @@ function structure(children, model, forcedW = 0) {
     ...plats.map((n) => textWidth(n.label, L.fs.platform) + 48));
 
   const topLays = topFrames.map((c) => frame(c, model));
-  const topBandW = topLays.reduce((a, l) => a + l.w, 0) + Math.max(0, topLays.length - 1) * L.sideGap;
+  // #23 treatment A (default): a labelled xaas edge directly between two sibling
+  // top-level frames widens just its own gap to fit the wrapped label plate,
+  // instead of the flat sideGap. A labelPos="above" edge keeps the gap narrow —
+  // its label is parked above the frames instead (see frame() and layout()).
+  const xaasLabelGap = (idA, idB) => {
+    const it = model.interactions.find((i) => i.mode === 'xaas' && i.label && (i.labelPos || 'gap') === 'gap' &&
+      ((i.from === idA && i.to === idB) || (i.from === idB && i.to === idA)));
+    if (!it) return L.sideGap;
+    const { blockW } = wrapBlock(it.label, 160);
+    return clamp(blockW + 32, L.sideGap, 220);
+  };
+  const topGaps = topLays.slice(0, -1).map((l, i) => xaasLabelGap(l.node.id, topLays[i + 1].node.id));
+  const topBandW = topLays.reduce((a, l) => a + l.w, 0) + topGaps.reduce((a, g) => a + g, 0);
   let botLays = botFrames.map((c) => frame(c, model));
   // slot columns always get their own room beside a band of child frames
   const innerW = Math.max(forcedW, hasStack ? leftW + labelW + rightW : 0, topBandW + (topLays.length ? leftW + rightW : 0),
@@ -421,11 +455,11 @@ function structure(children, model, forcedW = 0) {
     let bx = bandX0;
     const bandH = Math.max(...topLays.map((l) => l.h));
     const frameSpan = new Map();   // frame id -> [x0, x1], to size a rail that spans a subset of frames
-    for (const l of topLays) {
+    topLays.forEach((l, i) => {
       items.push({ kind: 'frame', node: l.node, x: bx, y, w: l.w, h: l.h, inner: l.inner });
       frameSpan.set(l.node.id, [bx, bx + l.w]);
-      bx += l.w + L.sideGap;
-    }
+      bx += l.w + (topGaps[i] ?? L.sideGap);
+    });
     y += bandH;
     // one shared rail row per facilitating enabling team, below the frame band; width
     // spans from the leftmost to the rightmost frame it targets (untargeted frames in
@@ -484,9 +518,23 @@ function structure(children, model, forcedW = 0) {
 function frame(node, model, forcedW = 0) {
   const inner = structure(node.children, model, forcedW);
   const w = Math.max(inner.w + 2 * L.pad, textWidth(node.label, L.fs.group) + 80);
+  // #23 treatment B: a labelled xaas edge directly between two of this frame's own
+  // child frames, with labelPos="above", parks its label above them (see layout()) —
+  // grow this frame's own top margin so the plate clears its dashed border.
+  const kids = inner.items.filter((it) => it.kind === 'frame');
+  let headroom = 0;
+  for (const it of model.interactions) {
+    if (it.mode !== 'xaas' || !it.label || (it.labelPos || 'gap') !== 'above') continue;
+    const A = kids.find((k) => k.node.id === it.from);
+    const B = kids.find((k) => k.node.id === it.to);
+    if (!A || !B) continue;
+    const { blockH } = wrapBlock(it.label, aboveLabelMaxWidth(A.w, B.w));
+    headroom = Math.max(headroom, blockH + 8 + L.leaderGap + L.topClear);
+  }
+  const frameTop = headroom ? L.frameTop + headroom : L.frameTop;
   inner.ox = (w - inner.w) / 2;
-  inner.oy = L.frameTop;
-  return { node, w, h: L.frameTop + inner.h + L.frameBottom, inner };
+  inner.oy = frameTop;
+  return { node, w, h: frameTop + inner.h + L.frameBottom, inner };
 }
 
 // ── geometry helpers ──
@@ -621,7 +669,15 @@ export function layout(model, opts = {}) {
     if (inter.mode === 'xaas') {
       if (P.kind === 'sub' && P.embeddedOn === inter.to) continue;   // embedding is the relationship
       const slot = slots.find((s) => s.kind === 'wedge' && s.its.includes(inter));
-      const group = slot ? slot.its.filter((i) => boxes[i.to]) : [inter];
+      // #23: a fan-out from one provider to several targets with the same label text
+      // renders once, even when the targets aren't stack-siblings sharing a wedge slot
+      // (e.g. a nested provider fanning out to top-level consumers).
+      let group;
+      if (slot) group = slot.its.filter((i) => boxes[i.to]);
+      else if (inter.label) {
+        group = model.interactions.filter((i) => !handled.has(i) && i.mode === 'xaas' &&
+          i.from === inter.from && i.label === inter.label && boxes[i.to]);
+      } else group = [inter];
       for (const i of group) handled.add(i);
       // the wedge reaches the consumer farthest from the provider and covers the ones between
       const pc = center(P);
@@ -633,12 +689,15 @@ export function layout(model, opts = {}) {
         const y0 = Math.min(P.y + P.h, Q.y + Q.h), y1 = Math.max(P.y, Q.y);
         if (x1 - x0 >= 40 && y1 > y0) {
           const mid = (x0 + x1) / 2;
-          const step = L.wedgeW * 0.75;
-          const clash = (x) => corridors.some((c) => Math.abs(c.x - x) < step && c.y1 > y0 && c.y0 < y1);
+          // #23: when the wedge carries a real label, size the corridor to the
+          // label's plate (not just the bare wedge) so two free wedges from the
+          // same crowded stretch don't get labels that collide.
+          const step = inter.label ? Math.max(L.wedgeW * 0.75, textWidth(inter.label, L.labelFs) + 28) : L.wedgeW * 0.75;
+          const clash = (x) => corridors.some((c) => Math.abs(c.x - x) < Math.max(c.step, step) && c.y1 > y0 && c.y0 < y1);
           const candidates = [mid];
           for (let d = step; mid + d <= x1 - 20 || mid - d >= x0 + 20; d += step) { candidates.push(mid + d, mid - d); }
           xOverride = candidates.find((x) => x >= x0 + 20 && x <= x1 - 20 && !clash(x)) ?? mid;
-          corridors.push({ x: xOverride, y0, y1 });
+          corridors.push({ x: xOverride, y0, y1, step });
         }
       }
       const f = facing(P, Q, xOverride);
@@ -657,14 +716,39 @@ export function layout(model, opts = {}) {
         f.to,
       ];
       let label = null;
+      let leader = null;
       if (len >= 30) {
-        let along = Math.min(48, len * 0.3);
-        for (let a = along; a < len - 16; a += 16) {
-          if (!insideAny({ x: f.from.x + ux * a, y: f.from.y + uy * a }, [P, ...group.map((i) => boxes[i.to])])) { along = a; break; }
+        const text = inter.label || 'XaaS';
+        const labelPos = inter.labelPos || 'gap';
+        if (inter.label && labelPos === 'above' && P.kind === 'frame' && Q.kind === 'frame' && f.axis === 'h') {
+          // #23 treatment B: park the label above both frames, joined to the wedge
+          // by a short leader, instead of crowding the gap between them.
+          const { lines, blockW, blockH } = wrapBlock(text, aboveLabelMaxWidth(P.w, Q.w));
+          const plateW = blockW + 16, plateH = blockH + 8;
+          const midX = (f.from.x + f.to.x) / 2;
+          const bottomY = Math.min(P.y, Q.y) - L.leaderGap;
+          label = { x: midX, y: bottomY - plateH / 2, text, lines, plateW, plateH };
+          leader = { x: midX, y1: bottomY, y2: f.from.y };
+        } else {
+          let along;
+          if (P.kind === 'frame' && Q.kind === 'frame') {
+            // #23 treatment A: the gap between two sibling frames is sized to fit
+            // the wrapped label (see xaasLabelGap in structure()), so center the
+            // plate in it rather than hunting for the first clear spot.
+            along = len / 2;
+          } else {
+            along = Math.min(48, len * 0.3);
+            for (let a = along; a < len - 16; a += 16) {
+              if (!insideAny({ x: f.from.x + ux * a, y: f.from.y + uy * a }, [P, ...group.map((i) => boxes[i.to])])) { along = a; break; }
+            }
+          }
+          // wrap to the room available along the wedge, on an opaque plate, so a
+          // long label breaks onto lines instead of overflowing.
+          const { lines, blockW, blockH } = wrapBlock(text, clamp(len - 20, 90, 220));
+          label = { x: f.from.x + ux * along, y: f.from.y + uy * along, text, lines, plateW: blockW + 16, plateH: blockH + 8 };
         }
-        label = { x: f.from.x + ux * along, y: f.from.y + uy * along, text: inter.label || 'XaaS' };
       }
-      edges.push({ inter, inters: group, geo: { kind: 'wedge', points, label, axis: f.axis } });
+      edges.push({ inter, inters: group, geo: { kind: 'wedge', points, label, leader, axis: f.axis } });
     } else if (inter.mode === 'collaboration' && intersect(P, Q)) {
       const small = P.w * P.h <= Q.w * Q.h ? P : Q;
       const text = inter.label || 'Collaboration';
@@ -714,7 +798,16 @@ export function layout(model, opts = {}) {
   for (const b of Object.values(boxes)) { grow(b.x, b.y); grow(b.x + b.w, b.y + b.h); }
   for (const { geo } of edges) {
     for (const p of geo.points || []) grow(p.x, p.y);
-    if (geo.label) { const hw = textWidth(geo.label.text, L.labelFs) / 2 + 6; grow(geo.label.x - hw, geo.label.y - 10); grow(geo.label.x + hw, geo.label.y + 10); }
+    if (geo.label) {
+      if (geo.label.plateW != null) {
+        const w = geo.label.plateW, h = geo.label.plateH;
+        grow(geo.label.x - w / 2, geo.label.y - h / 2); grow(geo.label.x + w / 2, geo.label.y + h / 2);
+      } else {
+        const hw = textWidth(geo.label.text, L.labelFs) / 2 + 6;
+        grow(geo.label.x - hw, geo.label.y - 10); grow(geo.label.x + hw, geo.label.y + 10);
+      }
+    }
+    if (geo.leader) { grow(geo.leader.x, geo.leader.y1); grow(geo.leader.x, geo.leader.y2); }
   }
   const padL = Math.max(0, ox - minX), padT = Math.max(0, top - minY);
   if (padL || padT) {
@@ -724,6 +817,7 @@ export function layout(model, opts = {}) {
       for (const p of geo.points || []) shift(p);
       if (geo.rect) shift(geo.rect);
       if (geo.label) shift(geo.label);
+      if (geo.leader) { geo.leader.x += padL; geo.leader.y1 += padT; geo.leader.y2 += padT; }
     }
     maxX += padL; maxY += padT;
   }
@@ -863,6 +957,26 @@ function labelSVG(label, color, T, extra = {}) {
   }, esc(label.text));
 }
 
+/**
+ * A wedge label, possibly wrapped onto several lines, drawn on an opaque background
+ * plate rather than a text-stroke halo — stays legible over frame fills, dashed
+ * borders and adjacent team labels (#23). Every wedge label gets this treatment.
+ */
+function plateLabelSVG(label, color, T) {
+  if (!label) return '';
+  const lines = label.lines && label.lines.length ? label.lines : [label.text];
+  const lh = L.labelFs * L.lineH;
+  const blockH = lines.length * lh;
+  const w = label.plateW ?? (Math.max(...lines.map((ln) => textWidth(ln, L.labelFs))) + 16);
+  const h = label.plateH ?? (blockH + 8);
+  const y0 = label.y - blockH / 2 + lh * 0.78;
+  return el('g', { class: 'tt-edge-label' }, [
+    el('rect', { x: label.x - w / 2, y: label.y - h / 2, width: w, height: h, rx: 4, fill: T.bg }),
+    el('text', { x: label.x, y: y0, 'text-anchor': 'middle', 'font-size': L.labelFs, 'font-weight': 500, fill: color },
+      lines.map((ln, i) => el('tspan', { x: label.x, dy: i === 0 ? 0 : lh }, esc(ln)))),
+  ]);
+}
+
 function edgeSVG({ inter, inters, geo }, lay, T, prefix) {
   const A = lay.boxes[inter.from];
   const targets = (inters || [inter]).map((i) => lay.boxes[i.to].node.label).join(', ');
@@ -872,7 +986,8 @@ function edgeSVG({ inter, inters, geo }, lay, T, prefix) {
   switch (geo.kind) {
     case 'wedge':
       parts.push(el('polygon', { points: pts(geo.points), fill: T.xaas.fill, stroke: inter.soon ? T.xaas.text : T.xaas.stroke, 'stroke-width': 1, 'stroke-linejoin': 'round', ...soon }));
-      parts.push(labelSVG(geo.label, T.xaas.text, T, { stroke: 'none' }));
+      if (geo.leader) parts.push(el('line', { x1: geo.leader.x, y1: geo.leader.y1, x2: geo.leader.x, y2: geo.leader.y2, stroke: T.xaas.stroke, 'stroke-width': 1.5, 'stroke-dasharray': '3 3' }));
+      parts.push(plateLabelSVG(geo.label, T.xaas.text, T));
       break;
     case 'bridge':
       parts.push(el('polygon', { points: pts(geo.points), fill: T.collab.fill, stroke: T.collab.stroke, 'stroke-width': 1.5, 'stroke-linejoin': 'round', ...soon }));
