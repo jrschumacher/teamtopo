@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parse, layout, render, wrapText, ParseError, THEMES } from './teamtopo.js';
+import { parse, layout, render, wrapText, textWidth, ParseError, THEMES } from './teamtopo.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const examplesDir = join(here, '..', 'examples');
@@ -551,7 +551,7 @@ function contrastRatio(colorA, colorB) {
 
 test('WCAG contrast: mode plate colours are legible and visible in both themes', () => {
   for (const [themeName, T] of Object.entries(THEMES)) {
-    for (const mode of ['collab', 'xaas', 'facil']) {
+    for (const mode of ['collab', 'xaas', 'facil', 'enabling']) {
       assert.ok(T[mode].plate, `${themeName}/${mode} has a plate token`);
       const plateRGB = parseColor(T[mode].plate).slice(0, 3);
       const bgRGB = parseColor(T.bg).slice(0, 3);
@@ -564,14 +564,30 @@ test('WCAG contrast: mode plate colours are legible and visible in both themes',
   }
 });
 
-test('collaboration labels wrap and render on a plate', () => {
+test('WCAG contrast: collaboration text on the parallelogram fill itself (labelPos=gap draws directly on the shape)', () => {
+  for (const [themeName, T] of Object.entries(THEMES)) {
+    const textRGB = parseColor(T.collab.text).slice(0, 3);
+    const bgRGB = parseColor(T.bg).slice(0, 3);
+    const fillOnBg = blendOverBg(T.collab.fill, T.bg);
+    const contrastOnBg = contrastRatio(textRGB, fillOnBg);
+    assert.ok(contrastOnBg >= 4.5, `${themeName} collab text-on-fill (over bg) ${contrastOnBg.toFixed(2)} >= 4.5`);
+    // the parallelogram usually sits over a stream lane, not bare bg
+    const streamOverBg = blendOverBg(T.stream.fill, T.bg);
+    const fillOnStream = blendOverBg(T.collab.fill, `rgb(${streamOverBg.map(Math.round).join(',')})`);
+    const contrastOnStream = contrastRatio(textRGB, fillOnStream);
+    assert.ok(contrastOnStream >= 4.5, `${themeName} collab text-on-fill (over stream lane) ${contrastOnStream.toFixed(2)} >= 4.5`);
+  }
+});
+
+test('collaboration labels (labelPos=gap) wrap and draw directly on the parallelogram fill, no inner plate', () => {
   const lay = layout(parse(
     'teamTopology\nstream a\nstream b\na <--> b : a very long collaboration label that will not fit on one line',
   ));
   const [{ geo }] = lay.edges;
   assert.equal(geo.kind, 'bridge');
   assert.ok(geo.label.lines.length > 1, 'wraps onto multiple lines');
-  assert.ok(geo.label.plateW > 0 && geo.label.plateH > 0, 'plate has a size');
+  assert.equal(geo.label.onShape, true, 'label is drawn on the shape fill, not a plate');
+  assert.equal(geo.label.plateW, undefined, 'no inner plate rect for labelPos=gap');
 });
 
 test('facilitating patch labels wrap and render on a plate', () => {
@@ -636,4 +652,69 @@ test('frame gap growth stays xaas-only: a labelled collaboration between sibling
   assert.equal(withCollab.boxes.g2.x - (withCollab.boxes.g1.x + withCollab.boxes.g1.w),
     plain.boxes.g2.x - (plain.boxes.g1.x + plain.boxes.g1.w),
     'gap between the frames is unchanged by a labelled collaboration edge');
+});
+
+// ── owner feedback on PR #28: enabling-label plate, on-shape collab text, subsystem overlap ──
+
+test('a rotated enabling label renders on an opaque plate in the enabling tint', () => {
+  const src = 'teamTopology\nstream a\nenabling superlong "SuperLongEnablingTeamName"\nsuperlong ~~> a';
+  const light = render(src, { theme: 'light' });
+  const dark = render(src, { theme: 'dark' });
+  assert.ok(light.includes(`fill="${THEMES.light.enabling.plate}"`), 'light enabling plate colour present');
+  assert.ok(dark.includes(`fill="${THEMES.dark.enabling.plate}"`), 'dark enabling plate colour present');
+});
+
+// Approximates the bounding box of a team's own rendered label text, from layout()
+// output fields only (kind, rotate, lines, fs, labelZone, note, x/y/w/h) — mirrors
+// teamSVG's textBlock/rotate placement closely enough to catch real overlaps.
+function teamLabelBBox(box) {
+  if (!box.node) return null;
+  if (box.kind === 'en' && box.rotate) {
+    const fs = box.fs + 1;
+    const tw = textWidth(box.node.label, fs) + 12;
+    const th = fs + 6;
+    return { x: box.x + box.w / 2 - th / 2, y: box.y + box.h / 2 - tw / 2, w: th, h: tw };
+  }
+  const lines = box.lines && box.lines.length ? box.lines : [box.node.label];
+  const lh = box.fs * 1.25;
+  const textH = lines.length * lh;
+  const textW = Math.max(...lines.map((ln) => textWidth(ln, box.fs)));
+  const cx = box.labelZone ? (box.labelZone[0] + box.labelZone[1]) / 2 : box.x + box.w / 2;
+  const noteH = box.note && box.note.length ? 11 * 1.25 + 2 : 0;
+  const cy = box.y + box.h / 2 - noteH / 2;
+  const pad = 4;
+  return { x: cx - textW / 2 - pad, y: cy - textH / 2 - pad, w: textW + pad * 2, h: textH + pad * 2 };
+}
+
+function geoBBox(geo) {
+  if (geo.rect) return geo.rect;
+  const xs = geo.points.map((p) => p.x), ys = geo.points.map((p) => p.y);
+  const x0 = Math.min(...xs), y0 = Math.min(...ys);
+  return { x: x0, y: y0, w: Math.max(...xs) - x0, h: Math.max(...ys) - y0 };
+}
+
+test('an interaction shape never covers a team label (examples/ecommerce.tt and a subsystem+collaboration fixture)', () => {
+  const cases = [
+    ['examples/ecommerce.tt', readFileSync(join(examplesDir, 'ecommerce.tt'), 'utf8')],
+    ['subsystem fixture', `teamTopology
+      stream search "Search & Discovery"
+      subsystem ranking "Ranking Engine" [note="ML relevance model"]
+      ranking --> search : Ranking API
+      search <--> ranking : new signals`],
+  ];
+  for (const [name, src] of cases) {
+    const lay = layout(parse(src));
+    // A rotated enabling label sitting under a facilitating patch is a deliberate,
+    // separately-tested exception (#28 fix 1 gives it its own opaque plate drawn
+    // above the dots, rather than moving the patch away from it).
+    const labelBoxes = Object.values(lay.boxes)
+      .filter((b) => !(b.kind === 'en' && b.rotate))
+      .map(teamLabelBBox).filter(Boolean);
+    for (const { geo } of lay.edges) {
+      const gbox = geoBBox(geo);
+      for (const lbox of labelBoxes) {
+        assert.ok(!overlaps(gbox, lbox), `${name}: an interaction shape overlaps a team label`);
+      }
+    }
+  }
 });

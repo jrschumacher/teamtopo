@@ -359,6 +359,30 @@ function aboveLabel(text, midX, topY, maxWidth, anchorY = topY) {
   return { label, leader };
 }
 
+/**
+ * #28: approximate the bounding box of a team's own rendered label text, from
+ * boxes[] fields only (kind, rotate, lines, fs, labelZone, note, x/y/w/h) —
+ * mirrors teamSVG's textBlock/rotate placement. Used so an interaction shape
+ * (bridge, wedge, patch, band) never gets placed on top of a team's label.
+ */
+function teamLabelBBox(box) {
+  if (!box || !box.node) return null;
+  if (box.kind === 'en' && box.rotate) {
+    const fs = box.fs + 1;
+    const tw = textWidth(box.node.label, fs) + 12, th = fs + 6;
+    return { x: box.x + box.w / 2 - th / 2, y: box.y + box.h / 2 - tw / 2, w: th, h: tw };
+  }
+  const lines = box.lines && box.lines.length ? box.lines : [box.node.label];
+  const lh = box.fs * L.lineH;
+  const textH = lines.length * lh;
+  const textW = Math.max(...lines.map((ln) => textWidth(ln, box.fs)));
+  const cx = box.labelZone ? (box.labelZone[0] + box.labelZone[1]) / 2 : box.x + box.w / 2;
+  const noteH = box.note && box.note.length ? L.noteFs * L.lineH + 2 : 0;
+  const cy = box.y + box.h / 2 - noteH / 2;
+  const pad = 4;
+  return { x: cx - textW / 2 - pad, y: cy - textH / 2 - pad, w: textW + pad * 2, h: textH + pad * 2 };
+}
+
 function walk(node, fn) {
   fn(node);
   for (const c of node.children) walk(c, fn);
@@ -720,18 +744,42 @@ export function layout(model, opts = {}) {
     } else if (inter.mode === 'collaboration' && intersect(P, Q)) {
       const small = P.w * P.h <= Q.w * Q.h ? P : Q;
       const text = inter.label || 'Collaboration';
-      const cx = small.x + small.w / 2, cy = small.y + small.h;
       const above = inter.label && (inter.labelPos || 'gap') === 'above';
       const k = 10;
-      let w, h, label, leader;
-      if (above) {
-        w = Math.max(small.w - 12, 60); h = 30;
-        ({ label, leader } = aboveLabel(text, cx, cy - h / 2, aboveLabelMaxWidth(w, 0)));
-      } else {
-        const { lines, blockW, blockH } = wrapBlock(text, clamp(small.w - 32, 90, 220));
+      let w, h;
+      if (above) { w = Math.max(small.w - 12, 60); h = 30; } else {
+        const { blockW, blockH } = wrapBlock(text, clamp(small.w - 32, 90, 220));
         w = Math.max(small.w - 12, blockW + 30);
         h = Math.max(30, blockH + 16);
-        label = { x: cx, y: cy, text, lines, plateW: blockW + 16, plateH: blockH + 8 };
+      }
+      let cx = small.x + small.w / 2, cy = small.y + small.h;
+      // #28: an embedded subsystem's octagon carries its own label — the bridge
+      // must never cover it (or the lane's label it also touches). Try clear of
+      // the octagon: below it inside the lane, then beside it, before falling
+      // back to the original position.
+      const sub = P.kind === 'sub' ? P : Q.kind === 'sub' ? Q : null;
+      if (sub) {
+        const other = sub === P ? Q : P;
+        const subLabel = teamLabelBBox(sub), otherLabel = teamLabelBBox(other);
+        const gap = 6;
+        const candidates = [
+          { x: sub.x + sub.w / 2, y: sub.y + sub.h + h / 2 + gap },
+          { x: sub.x + sub.w + w / 2 + gap, y: sub.y + sub.h / 2 },
+          { x: sub.x - w / 2 - gap, y: sub.y + sub.h / 2 },
+        ];
+        const clear = (c) => {
+          const bbox = { x: c.x - w / 2, y: c.y - h / 2, w, h };
+          return (!subLabel || !intersect(bbox, subLabel)) && (!otherLabel || !intersect(bbox, otherLabel));
+        };
+        const pick = candidates.find(clear) ?? candidates[0];
+        cx = pick.x; cy = pick.y;
+      }
+      let label, leader;
+      if (above) {
+        ({ label, leader } = aboveLabel(text, cx, cy - h / 2, aboveLabelMaxWidth(w, 0)));
+      } else {
+        const { lines } = wrapBlock(text, clamp(small.w - 32, 90, 220));
+        label = { x: cx, y: cy, text, lines, onShape: true };
       }
       const points = [
         { x: cx - w / 2 + k, y: cy - h / 2 }, { x: cx + w / 2 + k, y: cy - h / 2 },
@@ -754,7 +802,18 @@ export function layout(model, opts = {}) {
         const { lines, blockW, blockH } = wrapBlock(text, clamp(minW - 24, 90, 220));
         w = Math.max(minW, blockW + 30);
         h = Math.max(minH, blockH + 16);
-        label = { x: cx, y: cy, text, lines, plateW: blockW + 16, plateH: blockH + 8 };
+        // #28: the shape straddles both P and Q — never let it grow into either
+        // one's own label. Shrink toward the available strip between their label
+        // bboxes (only meaningful for the common vertical-stack case).
+        if (f.axis === 'v') {
+          const aBox = teamLabelBBox(P), bBox = teamLabelBBox(Q);
+          if (aBox && bBox) {
+            const top = P.y < Q.y ? aBox : bBox, bottom = P.y < Q.y ? bBox : aBox;
+            const avail = bottom.y - (top.y + top.h) - 4;
+            if (avail > 20 && h > avail) h = avail;
+          }
+        }
+        label = { x: cx, y: cy, text, lines, onShape: true };
       }
       const points = [
         { x: cx - w / 2 + k, y: cy - h / 2 }, { x: cx + w / 2 + k, y: cy - h / 2 },
@@ -822,8 +881,13 @@ export function layout(model, opts = {}) {
         const w = geo.label.plateW, h = geo.label.plateH;
         grow(geo.label.x - w / 2, geo.label.y - h / 2); grow(geo.label.x + w / 2, geo.label.y + h / 2);
       } else {
-        const hw = textWidth(geo.label.text, L.labelFs) / 2 + 6;
-        grow(geo.label.x - hw, geo.label.y - 10); grow(geo.label.x + hw, geo.label.y + 10);
+        // #28: on-shape labels (e.g. collaboration labelPos=gap) have no plate —
+        // measure the wrapped lines directly. The shape itself is already sized
+        // to contain them, so this mostly just keeps growth calc accurate.
+        const lines = geo.label.lines || [geo.label.text];
+        const hw = Math.max(...lines.map((ln) => textWidth(ln, L.labelFs))) / 2 + 6;
+        const hh = (lines.length * L.labelFs * L.lineH) / 2 + 6;
+        grow(geo.label.x - hw, geo.label.y - hh); grow(geo.label.x + hw, geo.label.y + hh);
       }
     }
     if (geo.leader) { grow(geo.leader.x, geo.leader.y1); grow(geo.leader.x, geo.leader.y2); }
@@ -860,7 +924,7 @@ export const THEMES = {
     bg: '#ffffff', text: '#1f2430', muted: '#6b7280', title: '#111827',
     flow: '#e5e7eb', flowText: '#4b5563', halo: '#ffffff',
     stream:    { fill: '#FFE9A8', stroke: '#E8C453', text: '#3b2f00' },
-    enabling:  { fill: '#C4B1E0', stroke: '#8E6BBF', text: '#2a1a55' },
+    enabling:  { fill: '#C4B1E0', stroke: '#8E6BBF', text: '#2a1a55', plate: '#C4B1E0' },
     subsystem: { fill: '#F6C79B', stroke: '#DE9A5C', text: '#4a2200' },
     platform:  { fill: '#BBD9F3', stroke: '#6FA6DD', text: '#0f2f55' },
     frame:     { fill: 'none', stroke: '#5B8FD6', text: '#3b76c4', platformFill: 'rgba(187,217,243,0.18)' },
@@ -872,11 +936,11 @@ export const THEMES = {
     bg: '#0f172a', text: '#e5e7eb', muted: '#94a3b8', title: '#f8fafc',
     flow: '#1e293b', flowText: '#94a3b8', halo: '#0f172a',
     stream:    { fill: '#B8912A', stroke: '#FFD166', text: '#1a1400' },
-    enabling:  { fill: '#7C5CBF', stroke: '#C9BAEA', text: '#f3eefc' },
+    enabling:  { fill: '#7C5CBF', stroke: '#C9BAEA', text: '#f3eefc', plate: '#6647a8' },
     subsystem: { fill: '#C2661E', stroke: '#F8B98A', text: '#1f0e00' },
     platform:  { fill: '#2F6DB5', stroke: '#A9CCEF', text: '#eef5fc' },
     frame:     { fill: 'none', stroke: '#6FA3DC', text: '#9cc4ef', platformFill: 'rgba(47,109,181,0.18)' },
-    collab:    { fill: 'rgba(124,92,191,0.8)', stroke: '#C9BAEA', text: '#f3eefc', plate: '#664ea1' },
+    collab:    { fill: 'rgba(124,92,191,0.98)', stroke: '#C9BAEA', text: '#f6f2ff', plate: '#7a5bbc' },
     xaas:      { fill: 'rgba(203,213,225,0.28)', stroke: 'rgba(203,213,225,0.35)', text: '#e2e8f0', plate: '#444c5d' },
     facil:     { dot: '#E0D4F5', fill: 'rgba(224,212,245,0.28)', text: '#d9ccf5', plate: '#4a4c63' },
   },
@@ -940,10 +1004,15 @@ function teamSVG(box, T, part = 'all') {
   if (part === 'shape') {
     // label drawn separately
   } else if (box.rotate) {
-    parts.push(el('text', {
-      x: 0, y: 0, 'text-anchor': 'middle', 'font-size': L.fs.enabling + 1, 'font-weight': 600, fill: c.text,
-      transform: `translate(${num(x + w / 2 + 5)} ${num(y + h / 2)}) rotate(90)`,
-    }, esc(node.label)));
+    // #28: an enabling bar's rotated label can sit over the dotted facilitating
+    // pattern crossing it — give it an opaque plate in the enabling tint (rotated
+    // along with the text) so it stays legible over the dots.
+    const fs = L.fs.enabling + 1;
+    const tw = textWidth(node.label, fs) + 12, th = fs + 6;
+    parts.push(el('g', { transform: `translate(${num(x + w / 2 + 5)} ${num(y + h / 2)}) rotate(90)` }, [
+      el('rect', { x: -tw / 2, y: -th * 0.65, width: tw, height: th, rx: 3, fill: c.plate }),
+      el('text', { x: 0, y: 0, 'text-anchor': 'middle', 'font-size': fs, 'font-weight': 600, fill: c.text }, esc(node.label)),
+    ]));
   } else {
     const noteH = box.note.length ? L.noteFs * L.lineH + 2 : 0;
     parts.push(textBlock(box.lines, cx, y + h / 2 - noteH / 2, box.fs, c.text, { 'font-weight': 600 }));
@@ -973,6 +1042,21 @@ function plateLabelSVG(label, textColor, plateColor) {
   ]);
 }
 
+/**
+ * #28: a wrapped label drawn directly on its shape's own fill — no background
+ * plate — for the labelPos="gap" collaboration case, where a plate over the
+ * parallelogram reads as a sticker. The shape itself is sized to fit the text.
+ */
+function shapeLabelSVG(label, textColor) {
+  if (!label) return '';
+  const lines = label.lines && label.lines.length ? label.lines : [label.text];
+  const lh = L.labelFs * L.lineH;
+  const blockH = lines.length * lh;
+  const y0 = label.y - blockH / 2 + lh * 0.78;
+  return el('text', { x: label.x, y: y0, 'text-anchor': 'middle', 'font-size': L.labelFs, 'font-weight': 500, fill: textColor },
+    lines.map((ln, i) => el('tspan', { x: label.x, dy: i === 0 ? 0 : lh }, esc(ln))));
+}
+
 function edgeSVG({ inter, inters, geo }, lay, T, prefix) {
   const A = lay.boxes[inter.from];
   const targets = (inters || [inter]).map((i) => lay.boxes[i.to].node.label).join(', ');
@@ -988,7 +1072,7 @@ function edgeSVG({ inter, inters, geo }, lay, T, prefix) {
     case 'bridge':
       parts.push(el('polygon', { points: pts(geo.points), fill: T.collab.fill, stroke: T.collab.stroke, 'stroke-width': 1.5, 'stroke-linejoin': 'round', ...soon }));
       if (geo.leader) parts.push(el('line', { x1: geo.leader.x, y1: geo.leader.y1, x2: geo.leader.x, y2: geo.leader.y2, stroke: T.collab.stroke, 'stroke-width': 1.5, 'stroke-dasharray': '3 3' }));
-      parts.push(plateLabelSVG(geo.label, T.collab.text, T.collab.plate));
+      parts.push(geo.label && geo.label.onShape ? shapeLabelSVG(geo.label, T.collab.text) : plateLabelSVG(geo.label, T.collab.text, T.collab.plate));
       break;
     case 'patch':
       parts.push(el('rect', { x: geo.rect.x, y: geo.rect.y, width: geo.rect.w, height: geo.rect.h, fill: `url(#${prefix}-dots)`, stroke: inter.soon ? T.facil.dot : null, ...soon }));
