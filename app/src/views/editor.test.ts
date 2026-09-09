@@ -156,6 +156,87 @@ describe('renderEditor', () => {
 		expect(root.querySelector('#canvas svg')).not.toBeNull();
 	});
 
+	it('marks the failing line in the highlight layer with the error message as a title', () => {
+		vi.useFakeTimers();
+		renderEditor(root, makeDoc());
+		type(root, 'teamTopology\n  stream a "A"\n  bogus line here\n');
+		vi.advanceTimersByTime(200);
+		const marked = root.querySelector('#highlight .ed-line-error');
+		expect(marked).not.toBeNull();
+		expect(marked!.getAttribute('title')).toMatch(/^Line 3:/);
+		expect(marked!.textContent).toBe('  bogus line here');
+	});
+
+	it('clears the highlight line mark once the source parses again', () => {
+		vi.useFakeTimers();
+		renderEditor(root, makeDoc());
+		type(root, 'teamTopology\n  stream a "A"\n  bogus line here\n');
+		vi.advanceTimersByTime(200);
+		expect(root.querySelector('#highlight .ed-line-error')).not.toBeNull();
+		type(root, SRC);
+		vi.advanceTimersByTime(200);
+		expect(root.querySelector('#highlight .ed-line-error')).toBeNull();
+		expect(root.querySelector('#gutter span.err')).toBeNull();
+	});
+
+	it('marks the render status as stale with the failing line, then restores timing on success', () => {
+		vi.useFakeTimers();
+		renderEditor(root, makeDoc());
+		expect(root.querySelector('#render-status')!.textContent).toMatch(/^rendered in \d+ ms$/);
+		type(root, 'teamTopology\n  stream a "A"\n  bogus line here\n');
+		vi.advanceTimersByTime(200);
+		expect(root.querySelector('#render-status')!.textContent).toBe(
+			'showing last good render · fix line 3'
+		);
+		type(root, SRC);
+		vi.advanceTimersByTime(200);
+		expect(root.querySelector('#render-status')!.textContent).toMatch(/^rendered in \d+ ms$/);
+	});
+
+	it('says to fix the source when there is no last good render yet', () => {
+		vi.useFakeTimers();
+		renderEditor(root, null, { starter: 'teamTopology\n  bogus line here\n' });
+		vi.advanceTimersByTime(200);
+		expect(root.querySelector('#render-status')!.textContent).toBe(
+			'Fix the source to see the diagram.'
+		);
+	});
+
+	it('jumps the caret to the failing line when the status strip is clicked', () => {
+		vi.useFakeTimers();
+		renderEditor(root, makeDoc());
+		type(root, 'teamTopology\n  stream a "A"\n  bogus line here\n');
+		vi.advanceTimersByTime(200);
+		const status = root.querySelector<HTMLElement>('#status')!;
+		expect(status.getAttribute('role')).toBe('button');
+		expect(status.getAttribute('tabindex')).toBe('0');
+		status.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+		const ta = root.querySelector<HTMLTextAreaElement>('#src')!;
+		expect(document.activeElement).toBe(ta);
+		expect(ta.selectionStart).toBe(ta.value.indexOf('  bogus line here'));
+		expect(ta.selectionEnd).toBe(ta.selectionStart);
+		expect(ta.scrollTop).toBe(40);
+	});
+
+	it('does not mark a line or make the strip jumpable for a non-ParseError failure', async () => {
+		vi.useFakeTimers();
+		const teamtopo = await import('@lib/teamtopo');
+		const spy = vi.spyOn(teamtopo, 'parse').mockImplementation(() => {
+			throw new Error('boom');
+		});
+		renderEditor(root, makeDoc());
+		type(root, SRC + '  stream search "Search"\n');
+		vi.advanceTimersByTime(200);
+		expect(root.querySelector('#status')!.classList.contains('error')).toBe(true);
+		expect(root.querySelector('#status-text')!.textContent).toBe('boom');
+		expect(root.querySelector('#gutter span.err')).toBeNull();
+		expect(root.querySelector('#highlight .ed-line-error')).toBeNull();
+		const status = root.querySelector<HTMLElement>('#status')!;
+		expect(status.getAttribute('role')).toBeNull();
+		expect(status.hasAttribute('tabindex')).toBe(false);
+		spy.mockRestore();
+	});
+
 	it('inserts two spaces on Tab at the caret without moving focus', () => {
 		renderEditor(root, makeDoc());
 		const ta = root.querySelector<HTMLTextAreaElement>('#src')!;

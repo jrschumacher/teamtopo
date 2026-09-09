@@ -10,7 +10,7 @@ import { parse, ParseError, render, teamApi, type Model, type Node } from '@lib/
 import { ApiError } from '../lib/api';
 import { brandMarkHtml, pageTitle } from '../lib/brand';
 import { createDocument } from '../lib/doc';
-import { highlight } from '../lib/highlight';
+import { highlight, type HighlightError } from '../lib/highlight';
 import { teamLink, versionLink } from '../lib/links';
 import { escapeHtml } from '../lib/markdown';
 import { setupPopovers, type PopoverController } from '../lib/popover';
@@ -21,6 +21,8 @@ import './editor.css';
 
 export const DRAFT_KEY = 'teamtopo.draft';
 const RENDER_DELAY_MS = 120;
+/** Matches `.ed-src`/`.ed-highlight` line-height in editor.css. */
+const LINE_HEIGHT_PX = 20;
 const TOAST_MS = 1800;
 const COPY_FEEDBACK_MS = 1400;
 const FALLBACK_STARTER =
@@ -232,6 +234,7 @@ export function renderEditor(
 
 	let model: Model | null = null;
 	let lastError: number | null = null;
+	let lastErrorMessage: string | null = null;
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	let toastTimer: ReturnType<typeof setTimeout> | undefined;
 	let saving = false;
@@ -272,7 +275,33 @@ export function renderEditor(
 	}
 
 	function updateHighlight() {
-		highlightEl.innerHTML = highlight(src.value);
+		const error: HighlightError | null =
+			lastError != null && lastErrorMessage != null
+				? { line: lastError, message: lastErrorMessage }
+				: null;
+		highlightEl.innerHTML = highlight(src.value, error);
+	}
+
+	/** Toggle whether the status strip behaves like a clickable "jump to error" control. */
+	function setStatusJumpable(on: boolean) {
+		if (on) {
+			status.setAttribute('role', 'button');
+			status.setAttribute('tabindex', '0');
+		} else {
+			status.removeAttribute('role');
+			status.removeAttribute('tabindex');
+		}
+	}
+
+	function jumpToError() {
+		if (lastError == null) return;
+		const lines = src.value.split('\n');
+		const idx = Math.min(lastError - 1, lines.length - 1);
+		let offset = 0;
+		for (let i = 0; i < idx; i++) offset += lines[i].length + 1;
+		src.focus();
+		src.setSelectionRange(offset, offset);
+		src.scrollTop = Math.max(0, idx * LINE_HEIGHT_PX);
 	}
 
 	function renderApiGrid() {
@@ -301,21 +330,33 @@ export function renderEditor(
 			const inters = model.interactions.length;
 			statusText.textContent = `${teams} team${teams === 1 ? '' : 's'}, ${inters} interaction${inters === 1 ? '' : 's'} · no errors`;
 			status.classList.remove('error');
+			setStatusJumpable(false);
 			lastError = null;
+			lastErrorMessage = null;
 			titleEl.textContent = model.title?.trim() || 'Untitled diagram';
 			document.title = pageTitle(model.title);
 			const t1 = typeof performance !== 'undefined' ? performance.now() : Date.now();
 			renderStatus.textContent = `rendered in ${Math.max(0, Math.round(t1 - t0))} ms`;
 			renderApiGrid();
 		} catch (e) {
+			const parseErr = e instanceof ParseError ? e : null;
 			statusText.textContent = e instanceof Error ? e.message : String(e);
 			status.classList.add('error');
-			lastError = e instanceof ParseError ? e.line : null;
-			if (!canvas.querySelector('svg')) {
+			lastError = parseErr ? parseErr.line : null;
+			lastErrorMessage = parseErr ? parseErr.message : null;
+			setStatusJumpable(parseErr != null);
+			const hasLastGoodRender = canvas.querySelector('svg') != null;
+			if (hasLastGoodRender) {
+				renderStatus.textContent = parseErr
+					? `showing last good render · fix line ${parseErr.line}`
+					: 'showing last good render';
+			} else {
+				renderStatus.textContent = 'Fix the source to see the diagram.';
 				canvas.innerHTML = '<p class="empty">Fix the source to see the diagram.</p>';
 			}
 		}
 		updateGutter();
+		updateHighlight();
 		updateSaveState();
 	}
 
@@ -404,6 +445,13 @@ export function renderEditor(
 		panelDiagram.hidden = !showDiagram;
 		panelApi.hidden = showDiagram;
 	}
+
+	status.addEventListener('click', jumpToError);
+	status.addEventListener('keydown', (e) => {
+		if (e.key !== 'Enter' && e.key !== ' ') return;
+		e.preventDefault();
+		jumpToError();
+	});
 
 	tabDiagram.addEventListener('click', () => selectTab('diagram'));
 	tabApi.addEventListener('click', () => selectTab('api'));
