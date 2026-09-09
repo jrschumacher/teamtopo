@@ -75,8 +75,8 @@ describe('subscribe API', () => {
 			text: string;
 		};
 		expect(message.to).toBe(email);
-		expect(message.subject).toBe('Confirm your TeamTopo subscription');
-		expect(message.from).toEqual({ email: env.EMAIL_FROM, name: 'TeamTopo' });
+		expect(message.subject).toBe('Confirm your teamtopo subscription');
+		expect(message.from).toEqual({ email: env.EMAIL_FROM, name: 'teamtopo' });
 		const row = await getRow(email);
 		expect(message.text).toContain(
 			`https://example.com/api/subscribe/confirm?t=${encodeURIComponent(row?.token as string)}`
