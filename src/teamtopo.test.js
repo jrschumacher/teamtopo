@@ -370,6 +370,26 @@ test('rail rendering is deterministic', () => {
   assert.equal(render(src), render(src));
 });
 
+test('a rail label sits on an opaque plate over the facilitating dot pattern', () => {
+  const src = `teamTopology
+    group a {
+      stream x
+    }
+    group b {
+      stream y
+    }
+    enabling research
+    research ~~> a
+    research ~~> b`;
+  const svg = render(src, { theme: 'dark' });
+  const labelsGroup = svg.split('class="tt-overlay-labels"')[1];
+  assert.ok(labelsGroup, 'overlay labels group present');
+  const railLabel = labelsGroup.split('data-id="research"')[1];
+  assert.match(railLabel, /<rect[^>]*rx="4"[^>]*fill="#0f172a"/,
+    'an opaque plate in the theme background sits behind the rail label, not the raw dot-pattern hatch');
+  assert.ok(railLabel.indexOf('<rect') < railLabel.indexOf('<text'), 'the plate is drawn before (under) the label text');
+});
+
 test('ecommerce example renders byte-identical to the committed svg (in-lane facilitating is unaffected by the rail change)', () => {
   const svg = render(readFileSync(join(examplesDir, 'ecommerce.tt'), 'utf8'));
   const committed = readFileSync(join(examplesDir, 'ecommerce.svg'), 'utf8');

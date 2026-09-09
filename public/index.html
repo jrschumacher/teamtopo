@@ -1219,6 +1219,15 @@ function teamSVG(box, T, part = 'all', prefix = 'tt') {
       x: 0, y: 0, 'text-anchor': 'middle', 'font-size': L.fs.enabling + 1, 'font-weight': 600, fill: c.text,
       transform: `translate(${num(x + w / 2 + 5)} ${num(y + h / 2)}) rotate(90)`,
     }, esc(node.label)));
+  } else if (box.kind === 'rail') {
+    // the label sits directly on the facilitating dot pattern, so give it an opaque
+    // plate to stay legible (same treatment as wedge labels use for frame fills)
+    const cy = y + h / 2;
+    const text = box.lines[0];
+    const plateW = textWidth(text, box.fs) + 16;
+    const plateH = box.fs * L.lineH + 8;
+    parts.push(el('rect', { x: cx - plateW / 2, y: cy - plateH / 2, width: plateW, height: plateH, rx: 4, fill: T.bg }));
+    parts.push(textBlock(box.lines, cx, cy, box.fs, c.text, { 'font-weight': 600 }));
   } else {
     const noteH = box.note.length ? L.noteFs * L.lineH + 2 : 0;
     parts.push(textBlock(box.lines, cx, y + h / 2 - noteH / 2, box.fs, c.text, { 'font-weight': 600 }));
