@@ -95,11 +95,19 @@ contains `[`. Attributes come last in square brackets:
 |---|---|
 | `[duration="until Q3"]` | fills the Duration column of the Team API tables |
 | `[soon]` (or `[expected]`) | an interaction expected soon: drawn dashed and faded, listed under "teams we expect to interact with soon" |
+| `[labelPos=above]` | for a labelled X-as-a-Service edge directly between two sibling frames (group/platform): parks the label above both frames on a plate with a leader down to the wedge, instead of widening the gap between them (`gap`, the default) |
 
 ```
 devex ~~> checkout : CI pipelines [duration="until Q3"]
 search <--> accounts : personalised results [soon, duration="8 weeks"]
+provider --> consumer : platform capabilities [labelPos=above]
 ```
+
+Every X-as-a-Service wedge label renders on an opaque background plate and wraps
+onto multiple lines when it's long. For a labelled edge directly between two
+sibling frames, the default (`labelPos=gap`) widens the gap between the frames to
+fit the wrapped label; `labelPos=above` keeps the gap narrow and moves the label
+above the frames instead.
 
 ### Directives
 

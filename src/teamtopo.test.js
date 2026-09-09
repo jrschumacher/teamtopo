@@ -129,6 +129,24 @@ test('reports errors with line numbers', () => {
   }
 });
 
+test('unknown labelPos value throws a ParseError on that line', () => {
+  const src = `teamTopology
+    stream a
+    stream b
+    a --> b : x [labelPos=sideways]`;
+  assert.throws(
+    () => parse(src),
+    (e) => e instanceof ParseError && /labelPos/.test(e.message) && e.line === 4,
+  );
+});
+
+test('labelPos defaults to "gap" and accepts "above"', () => {
+  const m = parse('teamTopology\nstream a\nstream b\na --> b : x');
+  assert.equal(m.interactions[0].labelPos, 'gap');
+  const m2 = parse('teamTopology\nstream a\nstream b\na --> b : x [labelPos=above]');
+  assert.equal(m2.interactions[0].labelPos, 'above');
+});
+
 // ── layout ──
 
 test('stacks lanes in declaration order with platforms beneath', () => {
@@ -247,6 +265,144 @@ test('collaboration is a parallelogram bridging the two teams', () => {
 test('wraps long labels', () => {
   assert.deepEqual(wrapText('Developer Experience Enablement', 90, 12), ['Developer', 'Experience', 'Enablement']);
   assert.deepEqual(wrapText('short', 90, 12), ['short']);
+});
+
+// ── #23: interaction label layout ──
+
+const overlaps = (a, b) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+
+/** Plate bbox for a wedge label, matching the geometry layout() computes. */
+function plateBox(label) {
+  assert.ok(Number.isFinite(label.plateW) && label.plateW > 0, 'label has a finite plate width');
+  assert.ok(Number.isFinite(label.plateH) && label.plateH > 0, 'label has a finite plate height');
+  return { x: label.x - label.plateW / 2, y: label.y - label.plateH / 2, w: label.plateW, h: label.plateH };
+}
+
+const ISSUE_23_REPRODUCER = `teamTopology
+  title Interaction label layout in nested platform diagrams
+
+  platform cloud "Cloud Platform" {
+    group provider "Provider Group" {
+      stream services "Platform Services"
+    }
+
+    group consumer "Product Group" {
+      stream app "App"
+    }
+
+    provider --> consumer : platform capabilities
+  }`;
+
+test('wedge labels render on an opaque plate with wrapping metadata', () => {
+  const lay = layout(parse('teamTopology\nstream a\nplatform p\np --> a : Kubernetes API'));
+  const [{ geo }] = lay.edges;
+  assert.equal(geo.kind, 'wedge');
+  assert.ok(Array.isArray(geo.label.lines) && geo.label.lines.length >= 1);
+  assert.ok(geo.label.plateW > 0 && geo.label.plateH > 0, 'plate has a size');
+});
+
+test('a long wedge label wraps onto multiple lines', () => {
+  const lay = layout(parse(
+    'teamTopology\nstream a\nplatform p\np --> a : a very long interaction label that will not fit on one line',
+  ));
+  const [{ geo }] = lay.edges;
+  assert.ok(geo.label.lines.length > 1, 'wraps onto multiple lines');
+});
+
+test('#23 reproducer: the frame-to-frame label plate does not collide with either frame', () => {
+  const lay = layout(parse(ISSUE_23_REPRODUCER));
+  const wedge = lay.edges.find((e) => e.geo.kind === 'wedge');
+  assert.ok(wedge, 'has a wedge edge');
+  const plate = plateBox(wedge.geo.label);
+  assert.ok(!overlaps(plate, lay.boxes.provider), 'plate does not overlap the provider frame');
+  assert.ok(!overlaps(plate, lay.boxes.consumer), 'plate does not overlap the consumer frame');
+});
+
+test('three sibling frames with labels on both gaps: no plate/frame overlaps', () => {
+  const lay = layout(parse(`teamTopology
+    platform cloud {
+      group g1 {
+        stream a
+      }
+      group g2 {
+        stream b
+      }
+      group g3 {
+        stream c
+      }
+      g1 --> g2 : platform capabilities
+      g2 --> g3 : policy, key access and audit events
+    }`));
+  const wedges = lay.edges.filter((e) => e.geo.kind === 'wedge');
+  assert.equal(wedges.length, 2);
+  const frameBoxes = [lay.boxes.g1, lay.boxes.g2, lay.boxes.g3];
+  for (const w of wedges) {
+    const plate = plateBox(w.geo.label);
+    for (const f of frameBoxes) assert.ok(!overlaps(plate, f), `plate for "${w.inter.label}" overlaps a frame`);
+  }
+});
+
+test('labelPos=above positions the plate above both frames with a leader', () => {
+  const lay = layout(parse(`teamTopology
+    platform cloud {
+      group provider {
+        stream services
+      }
+      group consumer {
+        stream app
+      }
+      provider --> consumer : platform capabilities [labelPos=above]
+    }`));
+  const wedge = lay.edges.find((e) => e.geo.kind === 'wedge');
+  assert.ok(wedge.geo.leader, 'has a leader line');
+  const topOfFrames = Math.min(lay.boxes.provider.y, lay.boxes.consumer.y);
+  assert.ok(wedge.geo.label.y + wedge.geo.label.plateH / 2 <= topOfFrames, 'plate sits above both frames');
+  const plate = plateBox(wedge.geo.label);
+  assert.ok(!overlaps(plate, lay.boxes.provider) && !overlaps(plate, lay.boxes.consumer), 'plate clears both frames');
+});
+
+test('fan-out to multiple targets with the same label renders one wedge, one label', () => {
+  const lay = layout(parse(`teamTopology
+    stream m
+    stream w
+    platform cloud {
+      stream k
+    }
+    k --> m, w : runtime`));
+  const wedges = lay.edges.filter((e) => e.geo.kind === 'wedge' && e.inter.label === 'runtime');
+  assert.equal(wedges.length, 1, 'one wedge for the fanned-out same-label interactions');
+  assert.equal(wedges[0].inters.length, 2, 'covers both targets');
+});
+
+test('fan-out with different labels keeps separate plates', () => {
+  const lay = layout(parse(`teamTopology
+    stream m
+    stream w
+    platform cloud {
+      stream k
+    }
+    k --> m : runtime
+    k --> w : dashboards`));
+  const wedges = lay.edges.filter((e) => e.geo.kind === 'wedge');
+  assert.equal(wedges.length, 2, 'different labels stay on separate wedges');
+  const plates = wedges.map((w) => plateBox(w.geo.label));
+  assert.ok(!overlaps(plates[0], plates[1]), 'the two label plates do not overlap each other');
+});
+
+test('rendering is deterministic across repeated runs', () => {
+  for (const src of [ISSUE_23_REPRODUCER, 'teamTopology\nstream m\nstream w\nplatform cloud {\nstream k\n}\nk --> m, w : runtime']) {
+    const a = render(src);
+    const b = render(src);
+    assert.equal(a, b);
+  }
+});
+
+test('every example .tt parses and renders without throwing', () => {
+  const files = readdirSync(examplesDir).filter((f) => f.endsWith('.tt'));
+  for (const f of files) {
+    const src = readFileSync(join(examplesDir, f), 'utf8');
+    assert.doesNotThrow(() => render(parse(src)), f);
+  }
 });
 
 // ── renderer ──
