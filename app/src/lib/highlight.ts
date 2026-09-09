@@ -59,7 +59,24 @@ export function countInteractions(text: string): number {
 	return (text.match(ARROW_RE) ?? []).length;
 }
 
-/** Highlights every line of `text`, joined back with `\n`. */
-export function highlight(text: string): string {
-	return text.split('\n').map(highlightLine).join('\n');
+export interface HighlightError {
+	/** 1-based line number, matching `ParseError.line`. */
+	line: number;
+	message: string;
+}
+
+/**
+ * Highlights every line of `text`, joined back with `\n`. When `error` names a line,
+ * that line is wrapped in a `.ed-line-error` span carrying the message as a `title`
+ * so the editor can paint an error band + wavy underline and show it on hover.
+ */
+export function highlight(text: string, error?: HighlightError | null): string {
+	return text
+		.split('\n')
+		.map((line, i) => {
+			const rendered = highlightLine(line);
+			if (!error || i + 1 !== error.line) return rendered;
+			return `<span class="ed-line-error" title="${escapeHtml(error.message)}">${rendered}</span>`;
+		})
+		.join('\n');
 }
