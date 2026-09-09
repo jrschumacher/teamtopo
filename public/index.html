@@ -677,6 +677,15 @@ export function wrapText(text, maxWidth, fontSize) {
   return lines.length ? lines : [''];
 }
 
+/** Truncate to one line that fits maxWidth, ending in an ellipsis. Never wraps. */
+function ellipsize(text, maxWidth, fontSize) {
+  const str = String(text);
+  if (textWidth(str, fontSize) <= maxWidth) return str;
+  let cut = str;
+  while (cut.length > 1 && textWidth(`${cut}…`, fontSize) > maxWidth) cut = cut.slice(0, -1);
+  return `${cut.trimEnd()}…`;
+}
+
 // ───────────────────────── Layout ─────────────────────────
 //
 // The layout follows the conventions of the Team Topologies book rather than
@@ -698,6 +707,7 @@ const L = {
   subW: 112, subH: 56, enW: 68, wedgeW: 64, slotGap: 22, labelMin: 170,
   pad: 24, frameTop: 26, frameBottom: 36, bandGap: 44, sideGap: 32, minW: 240,
   margin: 32, lineH: 1.25, noteFs: 11, titleH: 40, flowH: 46, legendH: 64, labelFs: 11,
+  railH: 26, railGap: 10,
   fs: { stream: 14, platform: 14, subsystem: 12, enabling: 12, group: 13 },
 };
 
@@ -736,6 +746,17 @@ function structure(children, model, forcedW = 0) {
   const topFrames = frames.filter((c) => rankOf(c) < 2);
   const botFrames = frames.filter((c) => rankOf(c) === 2);
 
+  // an enabling team that facilitates two or more sibling top-level frames is drawn as
+  // one shared horizontal rail spanning them, instead of a right-hand column with one
+  // patch/band per relationship (issue #22). Every other enabling team (a single target,
+  // or targets inside a lane) keeps the column treatment below.
+  const frameIds = new Set(topFrames.map((f) => f.id));
+  const railEnab = topFrames.length > 1 ? enab.filter((n) => {
+    const targets = new Set(model.interactions.filter((it) => it.mode === 'facilitating' && it.from === n.id).map((it) => it.to));
+    return [...targets].filter((t) => frameIds.has(t)).length >= 2;
+  }) : [];
+  const barEnab = enab.filter((n) => !railEnab.includes(n));
+
   // vertical elements get their own x slot: wedges to the left of the lane labels,
   // subsystems and enabling bars to the right
   const stackIds = new Set([...lanes, ...plats, ...subs, ...enab].map((n) => n.id));
@@ -751,7 +772,7 @@ function structure(children, model, forcedW = 0) {
   const wedgeSlots = [...wedgeGroups.values()].map((its) => ({ kind: 'wedge', its, w: L.wedgeW + Math.min(3, its.length - 1) * 28 }));
   const rightSlots = [
     ...subs.map((node) => ({ kind: 'sub', node, w: L.subW })),
-    ...enab.map((node) => ({ kind: 'en', node, w: L.enW })),
+    ...barEnab.map((node) => ({ kind: 'en', node, w: L.enW })),
   ];
   const slotsWidth = (arr) => arr.reduce((a, s) => a + s.w + L.slotGap, 0);
   const leftW = slotsWidth(wedgeSlots), rightW = slotsWidth(rightSlots) + (rightSlots.length ? 24 : 0);
@@ -777,13 +798,33 @@ function structure(children, model, forcedW = 0) {
   const items = [];
   let y = 0;
   if (topLays.length) {
-    let bx = leftW || rightW ? leftW : (innerW - topBandW) / 2;
+    const bandX0 = leftW || rightW ? leftW : (innerW - topBandW) / 2;
+    let bx = bandX0;
     const bandH = Math.max(...topLays.map((l) => l.h));
-    for (const l of topLays) { items.push({ kind: 'frame', node: l.node, x: bx, y, w: l.w, h: l.h, inner: l.inner }); bx += l.w + L.sideGap; }
+    const frameSpan = new Map();   // frame id -> [x0, x1], to size a rail that spans a subset of frames
+    for (const l of topLays) {
+      items.push({ kind: 'frame', node: l.node, x: bx, y, w: l.w, h: l.h, inner: l.inner });
+      frameSpan.set(l.node.id, [bx, bx + l.w]);
+      bx += l.w + L.sideGap;
+    }
     y += bandH;
+    // one shared rail row per facilitating enabling team, below the frame band; width
+    // spans from the leftmost to the rightmost frame it targets (untargeted frames in
+    // between are simply covered), height is fixed so canvas growth stays bounded.
+    for (const n of railEnab) {
+      const targets = model.interactions
+        .filter((it) => it.mode === 'facilitating' && it.from === n.id)
+        .map((it) => it.to)
+        .filter((t) => frameSpan.has(t));
+      const x0 = Math.min(...targets.map((t) => frameSpan.get(t)[0]));
+      const x1 = Math.max(...targets.map((t) => frameSpan.get(t)[1]));
+      y += L.railGap;
+      items.push({ kind: 'rail', node: n, x: x0, y, w: x1 - x0, h: L.railH });
+      y += L.railH;
+    }
     if (lanes.length || plats.length || botLays.length) y += L.bandGap;
   }
-  const lanesTop = y + (subs.length ? L.subH / 2 + 8 : enab.length ? 20 : 2);
+  const lanesTop = y + (subs.length ? L.subH / 2 + 8 : barEnab.length ? 20 : 2);
   y = lanesTop;
   // all lanes in a frame share one label column: clear of wedge columns when a wedge
   // crosses any lane, clear of the subsystem/enabling columns, centred when there is room
@@ -817,7 +858,7 @@ function structure(children, model, forcedW = 0) {
     items.push({ kind: 'frame', node: l.node, x: (innerW - l.w) / 2, y, w: l.w, h: l.h, inner: l.inner });
     y += l.h;
   }
-  y += enab.length ? 20 : 2;
+  y += barEnab.length ? 20 : 2;
   return { w: innerW, h: y, items, slots: [...wedgeSlots, ...rightSlots], lanesRange };
 }
 
@@ -894,6 +935,11 @@ export function layout(model, opts = {}) {
         const n = it.node;
         boxes[n.id] = { x, y, w: it.w, h: it.h, node: n, kind: 'frame', lines: [n.label], note: n.attrs.note ? [n.attrs.note] : [], fs: L.fs.group };
         place(it.inner, x + it.inner.ox, y + it.inner.oy);
+      } else if (it.kind === 'rail') {
+        boxes[it.node.id] = {
+          x, y, w: it.w, h: it.h, node: it.node, kind: 'rail', fs: L.fs.enabling,
+          lines: [ellipsize(it.node.label, it.w - 16, L.fs.enabling)], note: [],
+        };
       } else {
         boxes[it.node.id] = {
           x, y, w: it.w, h: it.h, node: it.node, kind: it.kind, lines: it.lines,
@@ -952,6 +998,7 @@ export function layout(model, opts = {}) {
     if (handled.has(inter)) continue;
     let P = boxes[inter.from], Q = boxes[inter.to];
     if (!P || !Q) continue;
+    if (inter.mode === 'facilitating' && P.kind === 'rail') continue;   // the rail itself carries the relationship
     if (inter.mode === 'xaas') {
       if (P.kind === 'sub' && P.embeddedOn === inter.to) continue;   // embedding is the relationship
       const slot = slots.find((s) => s.kind === 'wedge' && s.its.includes(inter));
@@ -1146,13 +1193,20 @@ function frameSVG(box, T) {
   ]);
 }
 
-function teamSVG(box, T, part = 'all') {
+function teamSVG(box, T, part = 'all', prefix = 'tt') {
   const { x, y, w, h, node } = box;
   const c = T[node.type === 'group' ? 'stream' : node.type];
-  const parts = [tooltip(node)];
+  // a rail's label is often ellipsised, so its tooltip carries the full name too
+  const parts = [box.kind === 'rail'
+    ? el('title', {}, esc([node.label, TEAM_TYPES[node.type].name, ...Object.entries(node.attrs).map(([k, v]) => `${k}: ${v}`)].join('\n')))
+    : tooltip(node)];
   if (part !== 'label') switch (box.kind) {
     case 'sub':
       parts.push(el('path', { d: octagonPath(x, y, w, h, 12), fill: c.fill, stroke: c.stroke, 'stroke-width': 2 }));
+      break;
+    case 'rail':
+      // enabling colour on the stroke, facilitating hatch as the fill, so the legend still explains both
+      parts.push(el('rect', { x, y, width: w, height: h, rx: 6, fill: `url(#${prefix}-dots)`, stroke: c.stroke, 'stroke-width': 2 }));
       break;
     default:
       parts.push(el('rect', { x, y, width: w, height: h, rx: box.kind === 'en' ? 10 : 8, fill: c.fill, stroke: c.stroke, 'stroke-width': 2 }));
@@ -1279,9 +1333,9 @@ export function render(input, opts = {}) {
     el('g', { class: 'tt-frames' }, frames.map((b) => frameSVG(b, T))),
     el('g', { class: 'tt-lanes' }, [...byKind('plat'), ...byKind('lane')].map((b) => teamSVG(b, T))),
     el('g', { class: 'tt-xaas' }, edgesOf('xaas')),
-    el('g', { class: 'tt-overlays' }, [...byKind('sub').map((b) => teamSVG(b, T)), ...byKind('en').map((b) => teamSVG(b, T, 'shape'))]),
+    el('g', { class: 'tt-overlays' }, [...byKind('sub').map((b) => teamSVG(b, T)), ...byKind('en').map((b) => teamSVG(b, T, 'shape')), ...byKind('rail').map((b) => teamSVG(b, T, 'shape', prefix))]),
     el('g', { class: 'tt-facilitating' }, edgesOf('facilitating')),
-    el('g', { class: 'tt-overlay-labels' }, byKind('en').map((b) => teamSVG(b, T, 'label'))),
+    el('g', { class: 'tt-overlay-labels' }, [...byKind('en').map((b) => teamSVG(b, T, 'label')), ...byKind('rail').map((b) => teamSVG(b, T, 'label'))]),
     el('g', { class: 'tt-collaboration' }, edgesOf('collaboration')),
     lay.legend ? legendSVG(lay.legend, T, prefix) : '',
   ];
@@ -1415,7 +1469,7 @@ function depth(model, node) {
 export default { parse, layout, render, teamApi, teamApis, textWidth, wrapText, VERSION, THEMES, TEAM_TYPES, MODES, TEAM_API_FIELDS, ParseError };
 
 
-const EXAMPLES = [{"name":"org-groups","title":"Product organisation","source":"teamTopology\n  title Product organisation\n\n  group customer \"Customer Group\" {\n    stream accounts \"Accounts\"\n    stream business \"Business\"\n    stream success  \"Customer Success\"\n    stream billing  \"Billing\"\n    subsystem data1 \"Data\"\n    subsystem sec1  \"Security\"\n    enabling ux1    \"UX Research\"\n    platform frontend \"Frontend Platform\"\n\n    data1 --> accounts\n    sec1  --> accounts\n    frontend --> accounts, billing\n    ux1 ~~> accounts, business, success, billing\n  }\n\n  group content \"Content Group\" {\n    stream runtime   \"Runtime\"\n    stream registry  \"Registry\"\n    stream build     \"Build\"\n    stream consumer  \"Content Consumer\"\n    stream publisher \"Content Publisher\"\n    subsystem data2  \"Data\"\n    enabling ux2     \"UX Research\"\n\n    data2 --> publisher\n    ux2 ~~> runtime, registry, build, consumer, publisher\n  }\n\n  group devexp \"Developer Experience Group\" {\n    stream pos   \"Programmable OS\"\n    stream inner \"Inner Loop\"\n    subsystem data3 \"Data\"\n    enabling ux3    \"UX Research\"\n    platform desktop \"Desktop Platform\"\n\n    data3 --> inner\n    desktop --> pos\n    ux3 ~~> pos, inner\n  }\n\n  platform cloud \"Cloud Group\" {\n    platform saas  \"SaaS Platform\"\n    platform infra \"Infrastructure\"\n    subsystem sec2 \"Security\"\n    subsystem data4 \"Data\"\n    infra --> saas\n  }\n\n  ux1 <--> content\n  ux2 <--> devexp\n  saas --> frontend, desktop\n  saas --> content\n"},{"name":"ecommerce","title":"E-commerce product organisation","source":"teamTopology\n  title E-commerce product organisation\n  flow Flow of change\n  legend\n\n  %% Stream-aligned teams own a slice of the product end to end\n  stream   checkout   \"Checkout\"            [size=7]\n  stream   search     \"Search & Discovery\"  [size=6]\n  stream   accounts   \"Accounts & Identity\" [size=5]\n\n  %% Enabling teams lift the capability of stream teams, then move on\n  enabling devex      \"Developer Experience\"\n\n  %% Complicated subsystems need deep specialist knowledge\n  subsystem ranking   \"Ranking Engine\" [note=\"ML relevance model\"]\n\n  %% Platforms reduce cognitive load for the teams above\n  platform  infra     \"Infrastructure Platform\" [note=\"Kubernetes, CI, observability\"]\n  platform  payments  \"Payments Platform\"\n\n  %% Interactions\n  infra    --> checkout, search, accounts : Kubernetes & CI [duration=ongoing]\n  payments --> checkout                   : Payments API\n  ranking  --> search                     : Ranking API\n  search   <--> ranking                   : new signals\n  devex    ~~> checkout, accounts         : CI pipelines [duration=\"until Q3\"]\n\n  %% Expected soon: drawn dashed, listed under \"teams we expect to interact with soon\"\n  search <--> accounts : personalised results [soon, duration=\"8 weeks\"]\n\n  %% Team API fields the diagram cannot infer (see the Team API panel / --api)\n  api checkout {\n    focus: the checkout experience end to end\n    software: checkout-service, cart-ui\n    SLE: 99.9% availability, p95 < 300 ms\n    versioning: semver, two releases of deprecation notice\n    wiki: checkout, cart, basket\n    chat: #checkout #checkout-alerts\n    sync: 09:30 UTC\n    working on: migrating to the new payments API\n    ways of working: trunk-based development, pairing on Tuesdays\n    improvements: shared on-call rotation with Accounts\n  }\n"},{"name":"minimal","title":"minimal","source":"teamTopology\n  stream app \"Product Team\"\n  platform infra \"Platform\"\n  infra --> app\n"},{"name":"platform-grouping","title":"Platform grouping","source":"teamTopology\n  title Platform grouping\n  flow\n\n  stream mobile \"Mobile App\"\n  stream web    \"Web Storefront\"\n  enabling sre  \"SRE Coaching\"\n\n  %% A platform can itself be a topology of teams\n  platform cloud \"Cloud Platform\" {\n    stream    k8s   \"Kubernetes\"\n    stream    obs   \"Observability\"\n    subsystem net   \"Network Fabric\"\n    platform  bare  \"Bare-metal Fleet\"\n\n    bare --> k8s, obs\n    net  --> k8s : overlay networking\n  }\n\n  k8s --> mobile, web       : runtime\n  obs --> mobile, web       : dashboards & alerts\n  sre ~~> web               : incident reviews\n  mobile <--> web           : shared design system\n"},{"name":"value-streams","title":"Two value streams sharing one platform","source":"teamTopology\n  title Two value streams sharing one platform\n  flow\n\n  group retail \"Retail\" [kind=\"value stream\"] {\n    stream storefront \"Storefront\"\n    stream fulfilment \"Fulfilment\"\n    storefront <--> fulfilment : order events\n  }\n\n  group b2b \"Business\" [kind=\"value stream\"] {\n    stream catalog \"Catalog\"\n    stream invoicing \"Invoicing\"\n  }\n\n  enabling  security \"Security Enablement\"\n  subsystem tax      \"Tax Calculation\"\n  platform  core     \"Core Platform\" [note=\"identity, billing, data\"]\n\n  core --> storefront, fulfilment, catalog, invoicing\n  tax  --> invoicing, storefront : tax rules API\n  security ~~> catalog, storefront : threat modelling\n"}];
+const EXAMPLES = [{"name":"org-groups","title":"Product organisation","source":"teamTopology\n  title Product organisation\n\n  group customer \"Customer Group\" {\n    stream accounts \"Accounts\"\n    stream business \"Business\"\n    stream success  \"Customer Success\"\n    stream billing  \"Billing\"\n    subsystem data1 \"Data\"\n    subsystem sec1  \"Security\"\n    enabling ux1    \"UX Research\"\n    platform frontend \"Frontend Platform\"\n\n    data1 --> accounts\n    sec1  --> accounts\n    frontend --> accounts, billing\n    ux1 ~~> accounts, business, success, billing\n  }\n\n  group content \"Content Group\" {\n    stream runtime   \"Runtime\"\n    stream registry  \"Registry\"\n    stream build     \"Build\"\n    stream consumer  \"Content Consumer\"\n    stream publisher \"Content Publisher\"\n    subsystem data2  \"Data\"\n    enabling ux2     \"UX Research\"\n\n    data2 --> publisher\n    ux2 ~~> runtime, registry, build, consumer, publisher\n  }\n\n  group devexp \"Developer Experience Group\" {\n    stream pos   \"Programmable OS\"\n    stream inner \"Inner Loop\"\n    subsystem data3 \"Data\"\n    enabling ux3    \"UX Research\"\n    platform desktop \"Desktop Platform\"\n\n    data3 --> inner\n    desktop --> pos\n    ux3 ~~> pos, inner\n  }\n\n  platform cloud \"Cloud Group\" {\n    platform saas  \"SaaS Platform\"\n    platform infra \"Infrastructure\"\n    subsystem sec2 \"Security\"\n    subsystem data4 \"Data\"\n    infra --> saas\n  }\n\n  ux1 <--> content\n  ux2 <--> devexp\n  saas --> frontend, desktop\n  saas --> content\n"},{"name":"ecommerce","title":"E-commerce product organisation","source":"teamTopology\n  title E-commerce product organisation\n  flow Flow of change\n  legend\n\n  %% Stream-aligned teams own a slice of the product end to end\n  stream   checkout   \"Checkout\"            [size=7]\n  stream   search     \"Search & Discovery\"  [size=6]\n  stream   accounts   \"Accounts & Identity\" [size=5]\n\n  %% Enabling teams lift the capability of stream teams, then move on\n  enabling devex      \"Developer Experience\"\n\n  %% Complicated subsystems need deep specialist knowledge\n  subsystem ranking   \"Ranking Engine\" [note=\"ML relevance model\"]\n\n  %% Platforms reduce cognitive load for the teams above\n  platform  infra     \"Infrastructure Platform\" [note=\"Kubernetes, CI, observability\"]\n  platform  payments  \"Payments Platform\"\n\n  %% Interactions\n  infra    --> checkout, search, accounts : Kubernetes & CI [duration=ongoing]\n  payments --> checkout                   : Payments API\n  ranking  --> search                     : Ranking API\n  search   <--> ranking                   : new signals\n  devex    ~~> checkout, accounts         : CI pipelines [duration=\"until Q3\"]\n\n  %% Expected soon: drawn dashed, listed under \"teams we expect to interact with soon\"\n  search <--> accounts : personalised results [soon, duration=\"8 weeks\"]\n\n  %% Team API fields the diagram cannot infer (see the Team API panel / --api)\n  api checkout {\n    focus: the checkout experience end to end\n    software: checkout-service, cart-ui\n    SLE: 99.9% availability, p95 < 300 ms\n    versioning: semver, two releases of deprecation notice\n    wiki: checkout, cart, basket\n    chat: #checkout #checkout-alerts\n    sync: 09:30 UTC\n    working on: migrating to the new payments API\n    ways of working: trunk-based development, pairing on Tuesdays\n    improvements: shared on-call rotation with Accounts\n  }\n"},{"name":"enabling-groups","title":"Cross-cutting enabling team across sibling groups","source":"teamTopology\n  title Cross-cutting enabling team across sibling groups\n\n  group product \"Product\" {\n    stream desktop \"Desktop\"\n    stream web     \"Web\"\n  }\n\n  group services \"Services\" {\n    stream policy  \"Policy\"\n    stream keys    \"Key Management\"\n  }\n\n  group platform \"Platform\" {\n    stream identity \"Identity\"\n    stream data     \"Data\"\n  }\n\n  enabling research \"UX Research\"\n\n  research ~~> product\n  research ~~> services\n  research ~~> platform\n"},{"name":"minimal","title":"minimal","source":"teamTopology\n  stream app \"Product Team\"\n  platform infra \"Platform\"\n  infra --> app\n"},{"name":"platform-grouping","title":"Platform grouping","source":"teamTopology\n  title Platform grouping\n  flow\n\n  stream mobile \"Mobile App\"\n  stream web    \"Web Storefront\"\n  enabling sre  \"SRE Coaching\"\n\n  %% A platform can itself be a topology of teams\n  platform cloud \"Cloud Platform\" {\n    stream    k8s   \"Kubernetes\"\n    stream    obs   \"Observability\"\n    subsystem net   \"Network Fabric\"\n    platform  bare  \"Bare-metal Fleet\"\n\n    bare --> k8s, obs\n    net  --> k8s : overlay networking\n  }\n\n  k8s --> mobile, web       : runtime\n  obs --> mobile, web       : dashboards & alerts\n  sre ~~> web               : incident reviews\n  mobile <--> web           : shared design system\n"},{"name":"value-streams","title":"Two value streams sharing one platform","source":"teamTopology\n  title Two value streams sharing one platform\n  flow\n\n  group retail \"Retail\" [kind=\"value stream\"] {\n    stream storefront \"Storefront\"\n    stream fulfilment \"Fulfilment\"\n    storefront <--> fulfilment : order events\n  }\n\n  group b2b \"Business\" [kind=\"value stream\"] {\n    stream catalog \"Catalog\"\n    stream invoicing \"Invoicing\"\n  }\n\n  enabling  security \"Security Enablement\"\n  subsystem tax      \"Tax Calculation\"\n  platform  core     \"Core Platform\" [note=\"identity, billing, data\"]\n\n  core --> storefront, fulfilment, catalog, invoicing\n  tax  --> invoicing, storefront : tax rules API\n  security ~~> catalog, storefront : threat modelling\n"}];
 
 const $ = (id) => document.getElementById(id);
 const src = $('src'), gutter = $('gutter'), canvas = $('canvas'), status = $('status'), statusText = $('status-text');

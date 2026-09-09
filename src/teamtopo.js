@@ -296,6 +296,15 @@ export function wrapText(text, maxWidth, fontSize) {
   return lines.length ? lines : [''];
 }
 
+/** Truncate to one line that fits maxWidth, ending in an ellipsis. Never wraps. */
+function ellipsize(text, maxWidth, fontSize) {
+  const str = String(text);
+  if (textWidth(str, fontSize) <= maxWidth) return str;
+  let cut = str;
+  while (cut.length > 1 && textWidth(`${cut}…`, fontSize) > maxWidth) cut = cut.slice(0, -1);
+  return `${cut.trimEnd()}…`;
+}
+
 // ───────────────────────── Layout ─────────────────────────
 //
 // The layout follows the conventions of the Team Topologies book rather than
@@ -317,6 +326,7 @@ const L = {
   subW: 112, subH: 56, enW: 68, wedgeW: 64, slotGap: 22, labelMin: 170,
   pad: 24, frameTop: 26, frameBottom: 36, bandGap: 44, sideGap: 32, minW: 240,
   margin: 32, lineH: 1.25, noteFs: 11, titleH: 40, flowH: 46, legendH: 64, labelFs: 11,
+  railH: 26, railGap: 10,
   fs: { stream: 14, platform: 14, subsystem: 12, enabling: 12, group: 13 },
 };
 
@@ -355,6 +365,17 @@ function structure(children, model, forcedW = 0) {
   const topFrames = frames.filter((c) => rankOf(c) < 2);
   const botFrames = frames.filter((c) => rankOf(c) === 2);
 
+  // an enabling team that facilitates two or more sibling top-level frames is drawn as
+  // one shared horizontal rail spanning them, instead of a right-hand column with one
+  // patch/band per relationship (issue #22). Every other enabling team (a single target,
+  // or targets inside a lane) keeps the column treatment below.
+  const frameIds = new Set(topFrames.map((f) => f.id));
+  const railEnab = topFrames.length > 1 ? enab.filter((n) => {
+    const targets = new Set(model.interactions.filter((it) => it.mode === 'facilitating' && it.from === n.id).map((it) => it.to));
+    return [...targets].filter((t) => frameIds.has(t)).length >= 2;
+  }) : [];
+  const barEnab = enab.filter((n) => !railEnab.includes(n));
+
   // vertical elements get their own x slot: wedges to the left of the lane labels,
   // subsystems and enabling bars to the right
   const stackIds = new Set([...lanes, ...plats, ...subs, ...enab].map((n) => n.id));
@@ -370,7 +391,7 @@ function structure(children, model, forcedW = 0) {
   const wedgeSlots = [...wedgeGroups.values()].map((its) => ({ kind: 'wedge', its, w: L.wedgeW + Math.min(3, its.length - 1) * 28 }));
   const rightSlots = [
     ...subs.map((node) => ({ kind: 'sub', node, w: L.subW })),
-    ...enab.map((node) => ({ kind: 'en', node, w: L.enW })),
+    ...barEnab.map((node) => ({ kind: 'en', node, w: L.enW })),
   ];
   const slotsWidth = (arr) => arr.reduce((a, s) => a + s.w + L.slotGap, 0);
   const leftW = slotsWidth(wedgeSlots), rightW = slotsWidth(rightSlots) + (rightSlots.length ? 24 : 0);
@@ -396,13 +417,33 @@ function structure(children, model, forcedW = 0) {
   const items = [];
   let y = 0;
   if (topLays.length) {
-    let bx = leftW || rightW ? leftW : (innerW - topBandW) / 2;
+    const bandX0 = leftW || rightW ? leftW : (innerW - topBandW) / 2;
+    let bx = bandX0;
     const bandH = Math.max(...topLays.map((l) => l.h));
-    for (const l of topLays) { items.push({ kind: 'frame', node: l.node, x: bx, y, w: l.w, h: l.h, inner: l.inner }); bx += l.w + L.sideGap; }
+    const frameSpan = new Map();   // frame id -> [x0, x1], to size a rail that spans a subset of frames
+    for (const l of topLays) {
+      items.push({ kind: 'frame', node: l.node, x: bx, y, w: l.w, h: l.h, inner: l.inner });
+      frameSpan.set(l.node.id, [bx, bx + l.w]);
+      bx += l.w + L.sideGap;
+    }
     y += bandH;
+    // one shared rail row per facilitating enabling team, below the frame band; width
+    // spans from the leftmost to the rightmost frame it targets (untargeted frames in
+    // between are simply covered), height is fixed so canvas growth stays bounded.
+    for (const n of railEnab) {
+      const targets = model.interactions
+        .filter((it) => it.mode === 'facilitating' && it.from === n.id)
+        .map((it) => it.to)
+        .filter((t) => frameSpan.has(t));
+      const x0 = Math.min(...targets.map((t) => frameSpan.get(t)[0]));
+      const x1 = Math.max(...targets.map((t) => frameSpan.get(t)[1]));
+      y += L.railGap;
+      items.push({ kind: 'rail', node: n, x: x0, y, w: x1 - x0, h: L.railH });
+      y += L.railH;
+    }
     if (lanes.length || plats.length || botLays.length) y += L.bandGap;
   }
-  const lanesTop = y + (subs.length ? L.subH / 2 + 8 : enab.length ? 20 : 2);
+  const lanesTop = y + (subs.length ? L.subH / 2 + 8 : barEnab.length ? 20 : 2);
   y = lanesTop;
   // all lanes in a frame share one label column: clear of wedge columns when a wedge
   // crosses any lane, clear of the subsystem/enabling columns, centred when there is room
@@ -436,7 +477,7 @@ function structure(children, model, forcedW = 0) {
     items.push({ kind: 'frame', node: l.node, x: (innerW - l.w) / 2, y, w: l.w, h: l.h, inner: l.inner });
     y += l.h;
   }
-  y += enab.length ? 20 : 2;
+  y += barEnab.length ? 20 : 2;
   return { w: innerW, h: y, items, slots: [...wedgeSlots, ...rightSlots], lanesRange };
 }
 
@@ -513,6 +554,11 @@ export function layout(model, opts = {}) {
         const n = it.node;
         boxes[n.id] = { x, y, w: it.w, h: it.h, node: n, kind: 'frame', lines: [n.label], note: n.attrs.note ? [n.attrs.note] : [], fs: L.fs.group };
         place(it.inner, x + it.inner.ox, y + it.inner.oy);
+      } else if (it.kind === 'rail') {
+        boxes[it.node.id] = {
+          x, y, w: it.w, h: it.h, node: it.node, kind: 'rail', fs: L.fs.enabling,
+          lines: [ellipsize(it.node.label, it.w - 16, L.fs.enabling)], note: [],
+        };
       } else {
         boxes[it.node.id] = {
           x, y, w: it.w, h: it.h, node: it.node, kind: it.kind, lines: it.lines,
@@ -571,6 +617,7 @@ export function layout(model, opts = {}) {
     if (handled.has(inter)) continue;
     let P = boxes[inter.from], Q = boxes[inter.to];
     if (!P || !Q) continue;
+    if (inter.mode === 'facilitating' && P.kind === 'rail') continue;   // the rail itself carries the relationship
     if (inter.mode === 'xaas') {
       if (P.kind === 'sub' && P.embeddedOn === inter.to) continue;   // embedding is the relationship
       const slot = slots.find((s) => s.kind === 'wedge' && s.its.includes(inter));
@@ -765,13 +812,20 @@ function frameSVG(box, T) {
   ]);
 }
 
-function teamSVG(box, T, part = 'all') {
+function teamSVG(box, T, part = 'all', prefix = 'tt') {
   const { x, y, w, h, node } = box;
   const c = T[node.type === 'group' ? 'stream' : node.type];
-  const parts = [tooltip(node)];
+  // a rail's label is often ellipsised, so its tooltip carries the full name too
+  const parts = [box.kind === 'rail'
+    ? el('title', {}, esc([node.label, TEAM_TYPES[node.type].name, ...Object.entries(node.attrs).map(([k, v]) => `${k}: ${v}`)].join('\n')))
+    : tooltip(node)];
   if (part !== 'label') switch (box.kind) {
     case 'sub':
       parts.push(el('path', { d: octagonPath(x, y, w, h, 12), fill: c.fill, stroke: c.stroke, 'stroke-width': 2 }));
+      break;
+    case 'rail':
+      // enabling colour on the stroke, facilitating hatch as the fill, so the legend still explains both
+      parts.push(el('rect', { x, y, width: w, height: h, rx: 6, fill: `url(#${prefix}-dots)`, stroke: c.stroke, 'stroke-width': 2 }));
       break;
     default:
       parts.push(el('rect', { x, y, width: w, height: h, rx: box.kind === 'en' ? 10 : 8, fill: c.fill, stroke: c.stroke, 'stroke-width': 2 }));
@@ -898,9 +952,9 @@ export function render(input, opts = {}) {
     el('g', { class: 'tt-frames' }, frames.map((b) => frameSVG(b, T))),
     el('g', { class: 'tt-lanes' }, [...byKind('plat'), ...byKind('lane')].map((b) => teamSVG(b, T))),
     el('g', { class: 'tt-xaas' }, edgesOf('xaas')),
-    el('g', { class: 'tt-overlays' }, [...byKind('sub').map((b) => teamSVG(b, T)), ...byKind('en').map((b) => teamSVG(b, T, 'shape'))]),
+    el('g', { class: 'tt-overlays' }, [...byKind('sub').map((b) => teamSVG(b, T)), ...byKind('en').map((b) => teamSVG(b, T, 'shape')), ...byKind('rail').map((b) => teamSVG(b, T, 'shape', prefix))]),
     el('g', { class: 'tt-facilitating' }, edgesOf('facilitating')),
-    el('g', { class: 'tt-overlay-labels' }, byKind('en').map((b) => teamSVG(b, T, 'label'))),
+    el('g', { class: 'tt-overlay-labels' }, [...byKind('en').map((b) => teamSVG(b, T, 'label')), ...byKind('rail').map((b) => teamSVG(b, T, 'label'))]),
     el('g', { class: 'tt-collaboration' }, edgesOf('collaboration')),
     lay.legend ? legendSVG(lay.legend, T, prefix) : '',
   ];
