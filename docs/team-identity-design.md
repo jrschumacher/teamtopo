@@ -57,7 +57,8 @@ api alpha { focus: … }
   streams nested inside a `group`/`platform` block. Repeated `owns` lines for one team accumulate.
   Team ids join the existing identifier namespace; the `team` branch repeats the duplicate check of
   `src/teamtopo.js:182` against `model.index` so team-vs-node and team-vs-team collisions error the
-  same way. Both keywords match case-insensitively, and `owns` is tried after the type keywords (d12).
+  same way. Both keywords match case-insensitively, and `owns` is tried *before* `RE_NODE`, guarded
+  by an LHS check rather than by ordering (d12).
 - **`api` blocks.** No syntax change at `src/teamtopo.js:154-157`; `api alpha {}` is the team's. An
   `api` block on an *owned* node is a `ParseError` (d9) — fields live on the team, no inheritance.
 - **Cardinality.** One-to-many is the base case; many-to-many is free, since `owners` is a list and
@@ -159,10 +160,12 @@ the owner's addendum, his D9 and D10, renumbered here to avoid colliding with d9
 9. **An `api` block on an owned node is a `ParseError` on that line**, naming the owner: ``api
    desktop belongs to team alpha, which owns desktop; move these fields into `api alpha` ``. There is
    no inheritance, no override, and no merge in either direction. In exchange the Team API gains two
-   diagnostic lines below "Team type", both rendered from d15's diagnostic rather than recomputed:
-   `* Owns N streams: desktop, sharepoint` and, when N > 1, `* A team aligned to more than one stream
-   carries the cognitive load of all of them; the streams above are split candidates.` The team
-   legend row carries the same count — `Alpha (3 streams)` — so it doubles as an overload table.
+   diagnostic lines below "Team type", both rendered from `load` (d14) rather than recomputed: the
+   full ownership list with each node's type, `* Owns 2: desktop (stream-aligned), billing_api
+   (platform)` — pluralised correctly, so a single-node team reads `* Owns 1: desktop
+   (stream-aligned)` — and a separate `* Streams: 1` count, which is the number the warning uses.
+   When `load.streams > 1` a third line follows: `* A team aligned to more than one stream carries
+   the cognitive load of all of them; the streams above are split candidates.`
 10. **A team id as an interaction endpoint is a `ParseError`** at `src/teamtopo.js:234`, naming the
     team and pointing at an owned node: `` "alpha" is a team, not a node; use one of the nodes it
     owns (desktop, sharepoint) ``. Interactions stay between topology nodes; teams aggregate them.
@@ -172,10 +175,15 @@ the owner's addendum, his D9 and D10, renumbered here to avoid colliding with d9
     the team's owned ids rather than `=== node.id` (`src/teamtopo.js:984-986`). Duplicate rows
     collapse where two owned nodes face the same external team, keeping each distinct purpose label.
     "Part of a Platform?" is `y` only when *every* owned node sits inside the same platform;
-    otherwise the line is omitted rather than guessed.
-12. Parse order: `owns` is tried **after** the type-keyword check (`src/teamtopo.js:178`), so
-    `stream owns "Owns"` stays a node declaration and only a bare id followed by `owns` is ownership.
-    `team` and `owns` match case-insensitively, like every other keyword (`src/teamtopo.js:66,73`).
+    otherwise the line is omitted rather than guessed — including for a placeholder team, which owns
+    nothing and so has no platform to be part of.
+12. Parse order: `owns` is tried **before** `RE_NODE` (`src/teamtopo.js:66-67,178`), because that
+    regex has no word boundary after the keyword — `sales owns x` would match the `sa` alias and die
+    as "sa needs an identifier" if the node branch ran first, and so would `engineering` (`en`) and
+    `platform_core` (`platform`). The guard that keeps `stream owns "Owns"` a node declaration is
+    instead a check on the left-hand side: the `owns` form matches only when the LHS is **not** an
+    exact `TYPE_ALIASES` key (`src/teamtopo.js:28-34`). `team` and `owns` match case-insensitively,
+    like every other keyword (`src/teamtopo.js:66,73`).
 13. The app's team sidebar (`app/src/views/team.ts:285`) lists **teams first, each with its owned
     nodes indented beneath it as non-links, then unowned nodes**. The indent is what makes a
     three-stream team visible in the app the way the legend makes it visible in the diagram.
@@ -183,22 +191,26 @@ the owner's addendum, his D9 and D10, renumbered here to avoid colliding with d9
     I have to model something that doesn't truly exist" — so the model states the reading rule rather
     than letting a reader infer four teams from four lanes. In the README, the Skill and `--json`:
     *a node whose `owners` list is non-empty is not a team; it is work owned by the teams named
-    there.* Every node carries `owners: string[]` (ids, d1); every `model.orgTeams` entry carries
-    `owns: string[]` and a derived `load: { streams: N }` counting its stream-aligned nodes, so the
-    CLI, the app and the Team API read one number instead of each recomputing it. That `load` is what
-    the legend, the Team API line and d15's diagnostic all render.
+    there.* Every node carries `owners: string[]` (ids, d1) — **always present, `[]` when unowned**,
+    never absent. Every `model.orgTeams` entry carries `owns: string[]` and a derived
+    `load: { streams: N, nodes: M }` computed in `parse()`: `M` is everything owned, `N` only the
+    stream-aligned nodes. `load` is the **single source** — d15's diagnostic, the legend count and
+    the Team API lines are all derived from it, never recomputed. Both `owns` and the lists rendered
+    from it use `owns`-line order, deduped, matching d5.
 15. **A diagnostics channel.** `parse()` attaches `model.diagnostics: [{ level: 'warning', code,
-    line, message }]`, **never fatal** — `ParseError` stays the only fatal path. The tool must accept
-    the org as it is and make the cost visible, not refuse the document. First rule,
-    `team-multi-stream`: a team whose owned nodes include more than one stream-aligned node, in the
-    book's terms — `team alpha is aligned to 2 streams: desktop, sharepoint; a team aligned to more
-    than one stream carries extra cognitive load` — with `line` set to the `owns` line that completed
-    the count. Only stream-aligned nodes count, so a team owning one stream plus a subsystem does not
-    trigger it. Surfaces: the CLI writes diagnostics to **stderr**, never mixed into SVG or JSON on
-    stdout, and `--json` carries them as a `diagnostics` key (`src/cli.js:39-42`); the Team API's
-    "Owns N streams" line and load note (d9) render *from* this diagnostic; the app editor marks the
-    gutter line in a warning colour, reusing PR #26 (`feat/editor-error-line`) — an app follow-up
-    phase (P7), not part of the P1-P4 release.
+    line, message }]`, **always an array** — empty when the document is clean, never absent — and
+    **never fatal**: `ParseError` stays the only fatal path. The tool must accept the org as it is
+    and make the cost visible, not refuse the document. First rule, `team-multi-stream`: fires when a
+    team's `load.streams` exceeds 1, in the book's terms — `team alpha is aligned to 3 streams:
+    desktop, sharepoint, web; a team aligned to more than one stream carries extra cognitive load`.
+    It is computed in a **post-pass**, after every `owns` line is resolved, so `line` is the team's
+    **last** `owns` line and the message carries the **final** count: a 3-stream team declared across
+    three `owns` lines reports "3 streams" once, on the last line, not three growing warnings. Only
+    stream-aligned nodes count, so a team owning one stream plus a subsystem does not trigger it.
+    Surfaces: the CLI writes diagnostics to **stderr**, never mixed into SVG or JSON on stdout, and
+    `--json` carries them as a `diagnostics` key, always present (`src/cli.js:39-42`); the Team API
+    ownership lines (d9) come from `load`; the app editor marks the gutter line in a warning colour,
+    reusing PR #26 (`feat/editor-error-line`) — an app follow-up phase (P7), not the P1-P4 release.
 
 **Badge design — staying legible at scale**
 
@@ -213,8 +225,9 @@ name on every owned lane. A per-lane text pill fails both once a diagram has eig
 - *Option 2 — chips everywhere plus a team legend.* Every owned node gets a compact chip: team colour
   plus a short code (first two characters of the id, uppercased, digit-disambiguated on collision),
   `<title>` carrying the full label. Beneath the diagram, reusing `legendSVG`
-  (`src/teamtopo.js:847-869`), a **team legend** lists colour + code → team name **and owned-stream
-  count**, `Alpha (3 streams)`, once per team.
+  (`src/teamtopo.js:847-869`), a **team legend** lists colour + code → team name **and count**, once
+  per team: `load.streams` when it is non-zero (`Alpha (3 streams)`), otherwise `load.nodes` with the
+  owned type (`Alpha (1 subsystem)`), and nothing for a placeholder team.
 
 **Recommend Option 2.** Its per-lane footprint does not grow with the team label, it meets both
 gallery criteria without depending on layout order, it degrades predictably (one legend row per team,
@@ -321,15 +334,19 @@ are unchanged bytes either way.
   streams is Internal for Alpha; under two owners it is Internal for one team and external for the
   other. d4: `alpha owns pep_group` is a `ParseError` naming the container. d5: a team owning a
   stream and a subsystem renders `Stream-Aligned, Complicated Subsystem`. d7: a placeholder team
-  parses, gets a document, adds no SVG element. d9: `api desktop` on an owned node errors naming
-  alpha; a 3-stream team's document carries "Owns 3 streams" and the load note; a 1-stream team's
-  does not. d10: `alpha --> foo` errors naming an owned node. d11: a row for an owned counterpart
-  shows the owning team's label and focus; "Part of a Platform?" is omitted when owned nodes sit in
-  different platforms. d12: `stream owns "Owns"` parses as a node; `TEAM Alpha` / `OWNS x` parse.
-  d14: `--json` shows `owners` on the node and `owns` + `load.streams` on the team, and the numbers
-  agree. d15: a 2-stream team yields one `team-multi-stream` warning whose `line` is the `owns` line;
-  a 1-stream team yields none; a team owning a stream **plus a subsystem** yields none (only
-  stream-aligned nodes count); `--json` output includes a `diagnostics` key; diagnostics never make
+  parses, gets a document, adds no SVG element, and omits "Part of a Platform?". d9: `api desktop` on
+  an owned node errors naming alpha; a 2-node team's document reads `Owns 2: …` with types and
+  `Streams: 1`; a 1-node team reads `Owns 1: …`; the load note appears only when `streams > 1`.
+  d10: `alpha --> foo` errors naming an owned node. d11: a row for an owned counterpart shows the
+  owning team's label and focus; "Part of a Platform?" is omitted when owned nodes sit in different
+  platforms. d12: `stream owns "Owns"` parses as a node, while `sales owns x`, `engineering owns x`
+  and `platform_core owns x` all parse as ownership (they collide with the `sa`, `en` and `platform`
+  aliases under `RE_NODE`); `TEAM Alpha` / `OWNS x` parse. d14: `--json` shows `owners` on every node
+  (`[]` when unowned) and `owns` + `load.{streams,nodes}` on the team, and the numbers agree.
+  d15: a team with 3 streams split across three `owns` lines yields exactly **one**
+  `team-multi-stream` warning, on the **last** `owns` line, saying "3 streams"; a 1-stream team
+  yields none; a team owning a stream **plus a subsystem** yields none; `model.diagnostics` is `[]`
+  on a clean document and a `diagnostics` key is always present in `--json`; diagnostics never make
   `parse()` throw; the CLI writes them to stderr and leaves stdout byte-identical.
 - *SVG.* Palette assignment is deterministic across two renders; a node with four owners renders
   three chips and a `+1`; a 21-team document emits no chips and the suppression note; the legend row
