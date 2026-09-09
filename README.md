@@ -155,7 +155,12 @@ Team Topologies book, so the domain does most of the work:
    and covers the ones between, with a wider base, as in the book. Wedges from a
    platform to lanes get a reserved column on the left of the lane labels, so they can
    pass through intermediate lanes. Wedges between frames pick a free
-   column in the horizontal overlap of the two boxes.
+   column in the horizontal overlap of the two boxes. The one exception: a single-target
+   X-as-a-Service between two platform bars that stack directly adjacent, with nothing
+   between them, draws no wedge at all — the stack itself already shows the layering.
+   Instead a small chevron marks the shared boundary, with the label (if any) on an
+   opaque plate beside it, clear of both bars' titles. The interaction is unchanged in
+   the parsed model, JSON and Team APIs; only this one rendering case is compact.
 4. **Frames.** Groups and platform groupings are dashed frames laid out with the same
    rules, recursively. Frames of streams sit side by side; platform groupings stretch
    to full width beneath. Overlays declared at a level with no lanes of their own get a
@@ -212,7 +217,7 @@ const all = teamApis(model);              // [{ id, label, markdown }] for every
 directive), `idPrefix` (when several diagrams share a page), `fontFamily`.
 
 `layout` returns absolute boxes per team plus one geometry per interaction
-(`wedge`, `bridge`, `patch` or `band`), which is what the tests assert against.
+(`wedge`, `bridge`, `patch`, `band` or `boundary`), which is what the tests assert against.
 
 ## Agent Skill
 

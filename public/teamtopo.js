@@ -471,6 +471,63 @@ function intersect(a, b) {
 
 const overlap1d = (a0, a1, b0, b1) => Math.min(a1, b1) - Math.max(a0, b0);
 
+/**
+ * Vertical extent [top, bottom] of a box's rendered text (main label + note line),
+ * mirroring the placement math in `teamSVG()`. Used to keep the boundary-marker
+ * label plate clear of both platforms' actual rendered text.
+ */
+export function textVerticalExtent(box) {
+  const noteH = box.note.length ? L.noteFs * L.lineH + 2 : 0;
+  const cy = box.y + box.h / 2 - noteH / 2;
+  const mainH = box.lines.length * box.fs * L.lineH;
+  let top = cy - mainH / 2, bottom = cy + mainH / 2;
+  if (box.note.length) {
+    const noteLineH = L.noteFs * L.lineH;
+    bottom = box.y + box.h / 2 + mainH / 2 + 8 + noteLineH / 2;
+  }
+  return [top, bottom];
+}
+
+/**
+ * Compact "boundary marker" geometry for a platform-to-platform xaas interaction whose
+ * bars are visually adjacent (nothing between them) — see the qualifying criteria in
+ * `layout()`. Returns:
+ *   { kind: 'boundary',
+ *     marker: [{x,y},{x,y},{x,y}],                          // chevron triangle
+ *     label: null | { lines, plate: {x,y,w,h}, cx, cy } }   // optional label plate
+ */
+function boundaryGeo(P, Q, inter) {
+  const top = P.y < Q.y ? P : Q;
+  const bot = top === P ? Q : P;
+  const boundaryY = (top.y + top.h + bot.y) / 2;
+  const spanX0 = Math.max(top.x, bot.x), spanX1 = Math.min(top.x + top.w, bot.x + bot.w);
+  const cx = (spanX0 + spanX1) / 2;
+  const hw = 9, hh = 6;
+  const pointsDown = inter.from === top.node.id;   // provider above → arrow points down into the bar below
+  const marker = pointsDown
+    ? [{ x: cx - hw, y: boundaryY - hh }, { x: cx + hw, y: boundaryY - hh }, { x: cx, y: boundaryY + hh }]
+    : [{ x: cx - hw, y: boundaryY + hh }, { x: cx + hw, y: boundaryY + hh }, { x: cx, y: boundaryY - hh }];
+
+  let label = null;
+  if (inter.label) {
+    const [, clearTop] = textVerticalExtent(top);
+    const [clearBot] = textVerticalExtent(bot);
+    const maxWidth = Math.max(40, Math.min(top.w, bot.w) - (hw * 2 + 24));
+    const lines = wrapText(inter.label, maxWidth, L.labelFs);
+    const lh = L.labelFs * L.lineH;
+    const plateH = lines.length * lh + 8;
+    const plateW = Math.max(...lines.map((ln) => textWidth(ln, L.labelFs))) + 12;
+    const plateCy = clearBot - clearTop >= plateH ? clamp(boundaryY, clearTop + plateH / 2, clearBot - plateH / 2) : (clearTop + clearBot) / 2;
+    let plateCx = cx + hw + 8 + plateW / 2;
+    if (plateCx + plateW / 2 > spanX1) {
+      const leftCx = cx - hw - 8 - plateW / 2;
+      plateCx = leftCx >= spanX0 ? leftCx : plateCx;
+    }
+    label = { lines, plate: { x: plateCx - plateW / 2, y: plateCy - plateH / 2, w: plateW, h: plateH }, cx: plateCx, cy: plateCy };
+  }
+  return { kind: 'boundary', marker, label };
+}
+
 /** Base point on P and apex on Q for a wedge or bridge between two boxes, preferring axis-aligned placement. */
 function facing(P, Q, xOverride) {
   const xo = overlap1d(P.x, P.x + P.w, Q.x, Q.x + Q.w);
@@ -494,7 +551,7 @@ function facing(P, Q, xOverride) {
  * Compute absolute boxes for every team and geometry for every interaction.
  * Returns { width, height, boxes, edges, content, legend, flow, title }.
  *   boxes[id] = { x, y, w, h, node, kind, lines, note, fs, labelZone?, rotate? }
- *   edges     = [{ inter, geo }] with geo.kind ∈ wedge | bridge | patch | band
+ *   edges     = [{ inter, geo }] with geo.kind ∈ wedge | bridge | patch | band | boundary
  */
 export function layout(model, opts = {}) {
   const root = structure(model.nodes, model);
@@ -573,6 +630,19 @@ export function layout(model, opts = {}) {
     if (!P || !Q) continue;
     if (inter.mode === 'xaas') {
       if (P.kind === 'sub' && P.embeddedOn === inter.to) continue;   // embedding is the relationship
+      if (
+        model.index[inter.from].type === 'platform' && model.index[inter.to].type === 'platform' &&
+        P.kind === 'plat' && Q.kind === 'plat' &&
+        Math.abs(P.x - Q.x) < 1 && Math.abs(P.w - Q.w) < 1 &&
+        Math.abs((P.y < Q.y ? Q.y - (P.y + P.h) : P.y - (Q.y + Q.h)) - L.platGap) < 0.5 &&
+        model.interactions.filter((i) => i.line === inter.line).length === 1
+      ) {
+        // provider and consumer bars stack directly adjacent with nothing between —
+        // a compact boundary marker replaces the normal wedge (issue #27)
+        handled.add(inter);
+        edges.push({ inter, geo: boundaryGeo(P, Q, inter) });
+        continue;
+      }
       const slot = slots.find((s) => s.kind === 'wedge' && s.its.includes(inter));
       const group = slot ? slot.its.filter((i) => boxes[i.to]) : [inter];
       for (const i of group) handled.add(i);
@@ -823,6 +893,13 @@ function edgeSVG({ inter, inters, geo }, lay, T, prefix) {
       parts.push(el('polygon', { points: pts(geo.points), fill: `url(#${prefix}-dots)`, stroke: T.facil.dot, 'stroke-width': 1, 'stroke-dasharray': '2 3', opacity: inter.soon ? 0.55 : null }));
       parts.push(labelSVG(geo.label, T.facil.text, T));
       break;
+    case 'boundary':
+      parts.push(el('polygon', { points: pts(geo.marker), fill: T.xaas.fill, stroke: inter.soon ? T.xaas.text : T.xaas.stroke, 'stroke-width': 1, 'stroke-linejoin': 'round', ...soon }));
+      if (geo.label) {
+        parts.push(el('rect', { x: geo.label.plate.x, y: geo.label.plate.y, width: geo.label.plate.w, height: geo.label.plate.h, fill: T.bg }));
+        parts.push(textBlock(geo.label.lines, geo.label.cx, geo.label.cy, L.labelFs, T.xaas.text));
+      }
+      break;
   }
   return el('g', { class: `tt-edge tt-${inter.mode}` }, parts);
 }
@@ -1031,4 +1108,4 @@ function depth(model, node) {
   return d;
 }
 
-export default { parse, layout, render, teamApi, teamApis, textWidth, wrapText, VERSION, THEMES, TEAM_TYPES, MODES, TEAM_API_FIELDS, ParseError };
+export default { parse, layout, render, teamApi, teamApis, textWidth, wrapText, textVerticalExtent, VERSION, THEMES, TEAM_TYPES, MODES, TEAM_API_FIELDS, ParseError };

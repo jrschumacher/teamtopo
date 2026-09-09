@@ -30,7 +30,14 @@ the same rules, recursively:
    point reaching the far edge of the consumer. A fan-out (`infra --> a, b, c` on one
    line, or several lines with the same provider and label) is one wedge that reaches
    the farthest consumer and covers the ones between, with a wider base. Wedges from a
-   platform bar up to lanes get a reserved column on the left of the lane labels.
+   platform bar up to lanes get a reserved column on the left of the lane labels. The
+   one exception: a single-target X-as-a-Service between two platform bars that stack
+   directly adjacent (nothing between them) draws no wedge — the stack already shows
+   the layering. A small chevron marks the shared boundary instead, with the label (if
+   any) on an opaque plate beside it, clear of both bars' titles. This is a rendering
+   choice only; the interaction still shows up in the parsed model, JSON, and Team
+   APIs exactly as written. A fan-out or a pair of non-adjacent platforms still gets
+   the normal wedge.
 7. **Collaboration** is a purple parallelogram bridging the two teams.
 8. **Cross-frame interactions** (a wedge from one group's platform to another group, an
    enabling team declared outside the lanes it helps) fall back to geometry between the

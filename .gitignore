@@ -1,4 +1,5 @@
 node_modules/
+scratch/
 app/dist
 app/node_modules
 app/.wrangler
