@@ -1,0 +1,14 @@
+teamTopology
+  title One team, three streams, expressed with today's syntax
+
+  group payments_team "Payments Team (one team owns all three lanes below)" {
+    stream cards "Cards" [note="owner: payments-team"]
+    stream wallets "Wallets" [note="owner: payments-team"]
+    stream disputes "Disputes" [note="owner: payments-team"]
+  }
+
+  group other "Other Teams" {
+    stream checkout "Checkout"
+  }
+
+  cards --> checkout

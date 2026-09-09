@@ -1,0 +1,15 @@
+teamTopology
+  title Tribe, area, streams: three levels of nesting
+
+  group tribe_commerce "Commerce Tribe" {
+    group area_checkout "Checkout Area" {
+      stream cart "Cart"
+      stream payment "Payment"
+    }
+    group area_catalog "Catalog Area" {
+      stream search "Search"
+      stream pricing "Pricing"
+    }
+  }
+
+  cart --> payment : order total

@@ -1,0 +1,19 @@
+teamTopology
+  title Three providers, three consumers, nine dependencies
+
+  stream provider_a "Provider A"
+  stream provider_b "Provider B"
+  stream provider_c "Provider C"
+  stream consumer_x "Consumer X"
+  stream consumer_y "Consumer Y"
+  stream consumer_z "Consumer Z"
+
+  provider_a --> consumer_x
+  provider_a --> consumer_y
+  provider_a --> consumer_z
+  provider_b --> consumer_x
+  provider_b --> consumer_y
+  provider_b --> consumer_z
+  provider_c --> consumer_x
+  provider_c --> consumer_y
+  provider_c --> consumer_z

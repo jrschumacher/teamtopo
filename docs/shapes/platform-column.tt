@@ -1,0 +1,19 @@
+teamTopology
+  title Core platform consumed by three product groups
+
+  platform core "Core Platform" [note="identity, billing, data"]
+
+  group alpha "Alpha" {
+    stream web "Web"
+    stream mobile "Mobile"
+  }
+
+  group beta "Beta" {
+    stream portal "Partner Portal"
+  }
+
+  group gamma "Gamma" {
+    stream ops "Ops Console"
+  }
+
+  core --> web, mobile, portal, ops
