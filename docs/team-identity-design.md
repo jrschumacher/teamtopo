@@ -3,7 +3,11 @@
 Design spec for [#24](https://github.com/jrschumacher/teamtopo/issues/24) (model actual teams
 separately from streams/capabilities) folded with [#9](https://github.com/jrschumacher/teamtopo/issues/9)
 (`apiFields` document-level schema). Both change what the Team API is keyed on and what fields it
-carries, so they are decided together and sequenced together. Status: proposed, not implemented.
+carries, so they are decided together and sequenced together. Status: decided (§4), not implemented.
+
+Visual evidence: the shape gallery on branch `spike/shape-gallery`, `docs/shapes/README.md`
+finding 5 (`team-owns-streams`), renders this exact shape with today's syntax and confirms it reads
+as three independent stream-aligned teams; its two acceptance criteria constrain §4's badge design.
 
 ## 1. Problem
 
@@ -51,11 +55,10 @@ api alpha { focus: … }
   `src/teamtopo.js:154-157`. `api alpha {}` is the team's; `api desktop {}` stays the stream's. Where
   both exist, node fields override team fields for that node's document.
 - **Cardinality.** One-to-many is the base case. Many-to-many is free: `owners` is a list on the
-  node, and nothing forbids two `owns` lines naming the same stream. The cost of many-to-many lands
-  entirely in §3's rendering and in the "which document lists this interaction" question, not in the
-  grammar.
-- **SVG.** A small pill in the lane's top-right corner carrying the team label, drawn per owned box.
-  No geometry change, so unowned diagrams are byte-identical. Multi-owned lanes carry two pills.
+  node, and nothing forbids two `owns` lines naming the same stream. Its cost lands entirely in §4's
+  badge design, not in the grammar.
+- **SVG.** A corner badge on each owned box, designed in §4 below. No geometry change, so unowned
+  diagrams are byte-identical.
 - **Backward compatibility.** Total. New keyword, new statement, no attribute reinterpreted.
 - **Cost.** Parser: ~35 lines. Model: `model.orgTeams[]` + `node.owners[]`. JSON: additive
   (`src/cli.js:41` serialises the model wholesale). SVG: one badge helper. Team API: the real work
@@ -125,18 +128,73 @@ Two couplings do exist and must be decided even if #9 ships later:
    values, saving a stream copies the team's `focus`/`chat` into the stream's block, and the two
    drift apart forever. The form must track which values are inherited and omit them on save.
 
-**Ship order: #24 first, #9 after.** Not because they conflict, but because #9's real weight is the
-app form (selects, visual groups, "Other"), and doing it simultaneously means that rewrite has to
-absorb schema and inheritance in one step. The exception: parse `apiFields` into `model.apiFields`
-during #24's parser phase — it is ~15 lines in the same block-parsing region
-(`src/teamtopo.js:127-134,154-157`) and lets `teamApi()` be written against a schema from the start
-rather than being reordered twice.
+**Decided: #9 ships next release, #24 this one.** #24 parses `apiFields` into `model.apiFields` now
+and nothing more — ~15 lines in the same block-parsing region (`src/teamtopo.js:127-134,154-157`),
+which lets `teamApi()` be written against a schema from the start rather than being reordered twice.
+#9's real weight is the app form (selects, visual groups, "Other"); doing it simultaneously would
+make that rewrite absorb schema and inheritance in one step.
 
 ## 4. Recommendation
 
 **Take Option A: `team <id> "Label"` plus standalone `<id> owns a, b` lines, with `api` binding to
 either namespace and node-level fields overriding team-level ones.** Model many-to-many as a list
-from day one because the grammar gets it for free; defer only its *visual* treatment.
+from day one because the grammar gets it for free.
+
+**Decisions** (settled; the numbering matches the questions this spec originally asked)
+
+1. Real teams live in a new `model.orgTeams` collection. `model.teams` keeps its current meaning and
+   contents (`src/teamtopo.js:210`) — no rename, no break for `--json` or the app.
+2. An owned node gets **no** Team API document of its own; only its team does. Unowned nodes keep
+   theirs. `teamApis()` (`src/teamtopo.js:1025`) becomes: every `orgTeams` entry, plus every non-group
+   node with an empty `owners`.
+3. An interaction whose two endpoints are owned by the same team is listed in that team's Team API
+   under a new **"Internal"** heading, not dropped and not mixed into "Teams we currently interact
+   with". A node's own document never sees this case, because owned nodes have no document (2).
+4. v1: a team may own **leaf nodes only** — streams, subsystems, enabling teams, and platform leaves.
+   Owning a `group` or a `platform` container is a parse error naming the container. Revisit when
+   someone declares a team whose whole footprint is one container.
+5. "Team type" (`src/teamtopo.js:995`) is the **union of the owned nodes' type names** in declaration
+   order, e.g. `Stream-aligned, Complicated subsystem`. A placeholder team with no owned nodes
+   renders `Team`.
+6. Corner badge for v1 — design below. Band/overlay stays deferred.
+7. `team alpha "Alpha"` with no `owns` line is **valid**: a placeholder team. It gets a Team API
+   document (type `Team`, empty interaction tables, whatever its `api` block holds) and draws nothing.
+8. `apiFields` ships next release; #24 parses it into `model.apiFields` and stops there (§3).
+
+**Badge design — staying legible at scale**
+
+The constraint is Ryan's: a real org can put many teams across many lanes, and the gallery's finding
+5 adds two acceptance criteria — shared ownership must be readable from shape or colour *without*
+reading notes, and the treatment must not repeat the team name on every owned lane. A per-lane text
+pill fails both the moment a diagram has eight teams.
+
+- *Option 1 — name on first, colour thereafter.* Assign each team a colour deterministically by its
+  index in `model.orgTeams` (stable across renders because declaration order is stable). Draw a full
+  pill — colour chip plus team label — on the **first** owned node in layout order, and a bare colour
+  chip on every other owned node. Every chip carries an SVG `<title>` with the team label, so hover
+  gives the name back. Cheap, and the name appears exactly once as the gallery asks. Weakness: "first
+  in layout order" is arbitrary, so the one lane that carries the name moves when a lane is
+  reordered, and a reader scanning the bottom of a tall diagram sees only chips.
+- *Option 2 — chips everywhere plus a team legend.* Every owned node gets a compact chip: the team's
+  colour plus a short code (the first two characters of the team id, uppercased, disambiguated with a
+  digit on collision), with `<title>` for the full label. Beneath the diagram — reusing the existing
+  legend row machinery (`legendSVG`, `src/teamtopo.js:847-869`) and appearing whenever any team is
+  declared, independent of the `legend` directive — a **team legend** lists colour + code → team
+  name, once per team. Uniform per-lane cost (a chip is a fixed ~22px), the name is stated exactly
+  once, and the mapping is resolvable anywhere on the page.
+
+**Recommend Option 2.** It is the only one whose per-lane footprint does not grow with the team
+label, it satisfies both gallery criteria without depending on layout order, and it degrades
+predictably: the legend grows by one row per team while the lanes do not change at all.
+
+- *Cap rule.* Palette is 8 distinct hues. Past 8 teams, hues cycle and the short code becomes the
+  disambiguator — teams 1 and 9 share a hue but never a code, and the legend always shows both. Past
+  20 teams the badge layer is suppressed entirely and the renderer emits a single note in the legend
+  ("21 teams — ownership shown in the Team APIs"), because 20+ chip colours is noise, not signal.
+  20 is a guess, not a measurement; see §5.
+- *Many-to-many.* A node with two owners gets two chips side by side, in owner-declaration order. A
+  node with more than three owners renders three chips plus a `+N` chip whose `<title>` lists the
+  rest. Both owners' Team APIs list the node.
 
 **Alternatives rejected**
 
@@ -158,14 +216,20 @@ from day one because the grammar gets it for free; defer only its *visual* treat
 - `model.index` becomes heterogeneous. Every `model.index[x]` consumer must tolerate a record with no
   `type`/`children`/`parent`; the unchecked cast at `app/src/views/team.ts:361` (`as Node`) becomes
   unsound and must be narrowed.
-- `model.teams` (`src/teamtopo.js:210`) is now a misnomer — it is the flat list of topology nodes.
-  Renaming it breaks `--json` consumers (`src/cli.js:41`), `teamApis()`, and three app call sites
-  (`app/src/views/team.ts:80,285`). The spec assumes it stays and real teams land in a new field.
-- `teamApis()` returns a different *set* for documents that use teams (one document per team, plus
-  unowned nodes). Unchanged for every document that does not.
+- `model.teams` (`src/teamtopo.js:210`) is a permanent misnomer under decision 1 — it is the flat
+  list of topology nodes, and `model.orgTeams` sitting beside it is a name every future reader has to
+  learn. Accepted to avoid breaking `--json` consumers (`src/cli.js:41`), `teamApis()`, and the app
+  call sites at `app/src/views/team.ts:80,285`.
+- Under decision 2 an owned node's Team API **disappears**. Anyone deep-linking
+  `/d/<id>/team/<streamId>` for a now-owned stream gets a dead route; the app must redirect to the
+  owning team's page rather than 404. Adding one `owns` line silently removes documents from
+  `teamApis()` output.
 - Error messages get vaguer: "unknown team" at `src/teamtopo.js:227,234,969` now spans two kinds of
   thing.
-- The team badge consumes lane label width; a long team label on a narrow lane wraps or clips.
+- Decision 4 means the natural shorthand — "this team owns that whole group" — is a parse error in
+  v1, and an author with a 6-stream group must list all six ids.
+- Every owned lane loses ~22px of label width to a chip, on every diagram that uses teams. The team
+  legend adds a row per team below the diagram, growing the SVG height.
 - `apiblock.ts` derives a new block's indentation from `node.line` (`app/src/lib/apiblock.ts:177`),
   so team records must carry `line` — a small but load-bearing constraint on the model shape.
 
@@ -173,12 +237,15 @@ from day one because the grammar gets it for free; defer only its *visual* treat
 
 | Phase | Lands | Additive? | Could break |
 |---|---|---|---|
-| P1 | Parser: `team` decl, `owns` lines, `model.orgTeams`, `node.owners`, `model.apiFields` parsed only | yes | nothing; new keywords |
-| P2 | Team API binding: `api <teamId>`, `teamApi()` over an owned set, `teamApis()` per team + unowned | yes for team-free docs | output *set* for team-using docs |
-| P3 | SVG badge on owned boxes | yes | lane label width on narrow lanes |
-| P4 | App: route resolves both namespaces, sidebar lists real teams, `apiblock.ts` team-aware, `teamtopo.d.ts` types | yes | the `as Node` cast at `team.ts:361` |
+| P1 | Parser: `team` decl (placeholder legal, d7), `owns` lines with the leaf-only guard (d4), `model.orgTeams` (d1), `node.owners`, `model.apiFields` parsed and otherwise unused (d8) | yes | nothing; `team`/`owns` are new keywords |
+| P2 | Team API: `api <teamId>` binding, `teamApi()` over an owned set with the union type line (d5) and the "Internal" heading (d3), `teamApis()` = teams + unowned nodes (d2) | yes for team-free docs | owned nodes lose their own document |
+| P3 | SVG: deterministic team palette, chip per owned node, `+N` for >3 owners, team legend row, 8-hue cycle and 20-team suppression (Option 2) | yes | ~22px of lane label width; taller SVG |
+| P4 | App: route resolves both namespaces **and redirects an owned node's URL to its team**, sidebar lists teams + unowned nodes, `apiblock.ts` team-aware, `teamtopo.d.ts` types | yes | the `as Node` cast at `team.ts:361`; existing team-page deep links |
 | P5 | Docs: README §Teams/§Team API blocks/§Team API, `skills/teamtopo/references/syntax.md` + `modeling.md`, **one new example file** (do not edit existing examples) | yes | skill fence test if a new fence is malformed |
-| P6 | #9: `teamApi()` order from schema, app form with selects and "Other", inherited-value handling | yes | field order in existing exports if a doc declares `apiFields` |
+| P6 | *Next release* — #9: `teamApi()` order from schema, app form with selects and "Other", inherited-value handling | yes | field order in exports once a doc declares `apiFields` |
+
+P1-P3 are one release and can land as one PR each; P4 must not ship before P2, or the app will link
+to documents `teamApis()` no longer produces.
 
 **Tests to add**
 
@@ -189,28 +256,27 @@ from day one because the grammar gets it for free; defer only its *visual* treat
   before P1 lands.
 - *Skill fences.* `src/skill.test.js:21` parses all 18 ```tt fences. Extend it to assert that a
   fence declaring no `team` yields an empty `orgTeams` and that every fence still renders.
-- *New behaviour.* One team owning two streams produces one Team API document, not two; an
-  interaction between two streams of the same team is handled per open question 3; node-level `api`
-  fields override team-level ones; a stream owned by two teams appears in both documents.
+- *New behaviour, one test per decision.* d2: a team owning two streams yields exactly one document
+  and the two streams yield none. d3: an interaction between two same-team streams lands under
+  "Internal" and nowhere else. d4: `alpha owns pep_group` is a `ParseError` naming the container.
+  d5: a team owning a stream and a subsystem renders both type names. d7: a placeholder team parses,
+  gets a document, and adds no SVG element. Plus: node-level `api` fields override team-level ones,
+  and a node owned by two teams appears in both documents.
+- *SVG.* Palette assignment is deterministic across two renders of the same source; a node with four
+  owners renders three chips and a `+1`; a 21-team document emits no chips and the suppression note.
 - *App.* `apiblock.test.ts` round-trip for a team-bound block, including the "do not write inherited
-  values" rule from §3.
+  values" rule from §3, and a route test that an owned node's URL redirects to its team's page.
 
-Recommend running `plan-review` on this spec before it moves to accepted, and again on P2's
-semantics once open questions 2, 3, and 5 are answered.
+Recommend running `plan-review` on this spec before implementation starts, with particular attention
+to P2's "Internal" heading and to the owned-node redirect in P4.
 
-## 5. Open questions
+## 5. Still open
 
-1. New model field for real teams — `model.orgTeams`, or take the break and rename today's
-   `model.teams` (`src/teamtopo.js:210`) to something honest like `model.nodes flat`?
-2. If a stream is owned by a team, does that stream still get its own Team API document from
-   `teamApis()`, or only the team?
-3. An interaction between two streams owned by the same team: drop it from the team's Team API, or
-   list it under a new "internal" heading?
-4. Can a team own a `group` or a `platform` container (meaning everything inside it), or only leaf
-   teams?
-5. The "Team type" line (`src/teamtopo.js:995`) for a team owning a stream *and* a subsystem — union
-   both names, take the first owned node's type, or require `[type=…]` on the `team` declaration?
-6. Badge for v1 with band/overlay deferred until ownership sets are proven contiguous — accept, or
-   is the band the point of the feature?
-7. Does `team alpha "Alpha"` with no `owns` line parse as a placeholder team, or error?
-8. Ship #9 `apiFields` in the same release as #24, or the next one?
+The eight questions this spec opened are answered in §4. What the decisions leave open:
+
+1. The 20-team badge-suppression cap is a guess, not a measurement — keep 20, or set it after
+   rendering the gallery's largest fixture with chips on?
+2. Where does the 8-hue team palette come from — a new entry in `THEMES` (`src/teamtopo.js:698`
+   onward, needing light and dark variants), or a fixed hue-rotation computed from the team index?
+3. Does the app's team sidebar (`app/src/views/team.ts:285`) list owned nodes at all under decision
+   2 — hidden entirely, or shown indented beneath their team as non-links?
