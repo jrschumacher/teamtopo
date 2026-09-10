@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parse, layout, render, wrapText, ParseError } from './teamtopo.js';
+import { parse, layout, render, wrapText, ParseError, textVerticalExtent } from './teamtopo.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const examplesDir = join(here, '..', 'examples');
@@ -214,6 +214,96 @@ test('wedges between frames are spread apart', () => {
     o --> m, w`));
   const xs = lay.edges.map((e) => e.geo.points[2].x);
   assert.equal(new Set(xs).size, 4, 'four wedges, four columns');
+});
+
+// ── platform-to-platform xaas: boundary marker (issue #27) ──
+
+const BOUNDARY_SRC = `teamTopology
+  platform infrastructure "Infrastructure"
+  platform hosted "Hosted Product Platform"
+  stream app1 "Consumer App 1"
+  stream app2 "Consumer App 2"
+  infrastructure --> hosted : hosted infrastructure
+  hosted --> app1, app2 : platform capabilities`;
+
+test('adjacent platform-to-platform xaas draws a boundary marker instead of a wedge', () => {
+  const lay = layout(parse(BOUNDARY_SRC));
+  const boundary = lay.edges.find((e) => e.inter.from === 'infrastructure' && e.inter.to === 'hosted');
+  assert.ok(boundary, 'edge for infrastructure --> hosted exists');
+  assert.equal(boundary.geo.kind, 'boundary');
+  assert.equal(boundary.geo.marker.length, 3, 'chevron is a 3-point triangle');
+
+  // the fan-out from `hosted` to two stream consumers is unaffected
+  const fanout = lay.edges.filter((e) => e.inter.from === 'hosted');
+  assert.equal(fanout.length, 1, 'fan-out stays one grouped edge');
+  assert.equal(fanout[0].geo.kind, 'wedge');
+  assert.equal(fanout[0].inters.length, 2);
+});
+
+test('model, parse output and Team API are unaffected by the boundary-marker rendering change', () => {
+  const model = parse(BOUNDARY_SRC);
+  const it = model.interactions.find((i) => i.from === 'infrastructure' && i.to === 'hosted');
+  assert.deepEqual(
+    { mode: it.mode, from: it.from, to: it.to, label: it.label },
+    { mode: 'xaas', from: 'infrastructure', to: 'hosted', label: 'hosted infrastructure' },
+  );
+  const md = teamApi(BOUNDARY_SRC, 'hosted', { date: '2026-01-02' });
+  assert.ok(md.includes('| Infrastructure | X-as-a-Service (we consume) | hosted infrastructure |'));
+});
+
+test('non-adjacent platform stack (something between provider and consumer) keeps the wedge', () => {
+  const lay = layout(parse(`teamTopology
+    platform top "Top"
+    platform mid "Middle"
+    platform bottom "Bottom"
+    top --> bottom`));
+  const [{ geo }] = lay.edges;
+  assert.equal(geo.kind, 'wedge', 'top and bottom are not adjacent — mid sits between them');
+});
+
+test('labelled boundary marker: the label plate never overlaps either platform bar\'s rendered text', () => {
+  const lay = layout(parse(`teamTopology
+    platform infrastructure "Infrastructure Platform" [note="Kubernetes, CI, observability, logging"]
+    platform hosted "Hosted Product Platform" [note="managed by the platform team"]
+    stream app1 "Consumer App 1"
+    infrastructure --> hosted : shared identity, secrets and network policy enforcement
+    hosted --> app1`));
+  const boundary = lay.edges.find((e) => e.inter.from === 'infrastructure' && e.inter.to === 'hosted');
+  assert.equal(boundary.geo.kind, 'boundary');
+  assert.ok(boundary.geo.label, 'a labelled interaction gets a label plate');
+  const { plate } = boundary.geo.label;
+  const plateTop = plate.y, plateBottom = plate.y + plate.h;
+
+  const [, infraTextBottom] = textVerticalExtent(lay.boxes.infrastructure);
+  const [hostedTextTop] = textVerticalExtent(lay.boxes.hosted);
+
+  assert.ok(plateTop >= infraTextBottom - 0.01, `plate top (${plateTop}) overlaps infrastructure's text (bottom ${infraTextBottom})`);
+  assert.ok(plateBottom <= hostedTextTop + 0.01, `plate bottom (${plateBottom}) overlaps hosted's text (top ${hostedTextTop})`);
+});
+
+test('boundary marker rendering is deterministic', () => {
+  const svg1 = render(BOUNDARY_SRC);
+  const svg2 = render(BOUNDARY_SRC);
+  assert.equal(svg1, svg2);
+});
+
+test('no example other than org-groups.tt has a qualifying adjacent platform-to-platform xaas edge', () => {
+  // examples/org-groups.tt has `infra --> saas` — two adjacent platform bars inside the
+  // "cloud" platform group — which DOES qualify for the boundary-marker treatment (see the
+  // dedicated assertion below). Every other shipped example has no platform-to-platform xaas
+  // edge at all, so none of them can pick up a 'boundary' geo kind from this feature.
+  const files = readdirSync(examplesDir).filter((f) => f.endsWith('.tt') && f !== 'org-groups.tt');
+  for (const f of files) {
+    const lay = layout(parse(readFileSync(join(examplesDir, f), 'utf8')));
+    assert.ok(lay.edges.every((e) => e.geo.kind !== 'boundary'), `${f} should have no boundary-marker edges`);
+  }
+});
+
+test('org-groups.tt: infra --> saas (adjacent platform bars) now renders as a boundary marker', () => {
+  const lay = layout(parse(readFileSync(join(examplesDir, 'org-groups.tt'), 'utf8')));
+  const boundary = lay.edges.find((e) => e.inter.from === 'infra' && e.inter.to === 'saas');
+  assert.ok(boundary, 'infra --> saas edge exists');
+  assert.equal(boundary.geo.kind, 'boundary', 'infra and saas are adjacent platform bars in the cloud group');
 });
 
 test('root-level overlays get their own column beside a band of frames', () => {
