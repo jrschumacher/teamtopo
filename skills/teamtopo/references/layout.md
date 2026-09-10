@@ -25,7 +25,10 @@ the same rules, recursively:
 5. **Enabling bars.** Enabling teams are tall purple bars in their own column on the
    right (after the subsystems), spanning from the first to the last team they
    facilitate (`~~>`), overlapping each one with a dotted patch. An enabling team with
-   no `~~>` spans all the frame's lanes.
+   no `~~>` spans all the frame's lanes. **Exception — the shared rail:** an enabling
+   team that facilitates two or more sibling top-level groups (`~~>` to the group ids
+   themselves, not lanes inside them) is drawn once as a thin horizontal rail below the
+   frame band instead — see rule 8b.
 6. **Wedges.** Every other X-as-a-Service is a grey wedge: wide base on the provider,
    point reaching the far edge of the consumer. A fan-out (`infra --> a, b, c` on one
    line, or several lines with the same provider and label) is one wedge that reaches
@@ -43,6 +46,29 @@ the same rules, recursively:
    enabling team declared outside the lanes it helps) fall back to geometry between the
    two boxes: legible, not pretty. Facilitating that cannot cross a lane becomes a
    dotted band.
+8b. **The shared rail.** `enabling research` with `research ~~> product`,
+    `research ~~> services`, `research ~~> platform` where `product`, `services` and
+    `platform` are sibling `group { }` blocks draws `research` once as a rail spanning
+    from the leftmost to the rightmost group it targets (a group in between that it does
+    not target is simply covered, not excluded), labelled once, in the enabling colour
+    with the facilitating hatch. A second facilitating enabling team at the same level
+    stacks as another rail row of the same fixed height below the first — canvas growth
+    is one row per team, not per group spanned. Facilitating a single group, or
+    facilitating a lane/team directly instead of a whole group, keeps the tall column
+    treatment from rule 5 instead.
+
+    ```tt
+    teamTopology
+      group product {
+        stream desktop
+      }
+      group services {
+        stream policy
+      }
+      enabling research
+      research ~~> product
+      research ~~> services
+    ```
 9. **Canvas** grows to fit; nothing is clipped. `title` goes at the top, `flow` is an
    arrow across the top, `legend` sits at the bottom.
 
@@ -58,7 +84,10 @@ the same rules, recursively:
   same block as the streams it facilitates or serves. If asked to add "security
   enablement for the retail teams" and the retail teams are in `group retail { }`,
   declare `enabling security` inside that group, not at top level. If it helps lanes in
-  several groups, declare it at top level and accept dotted bands.
+  several groups, declare it at top level and accept dotted bands. If instead it
+  facilitates whole sibling groups (`security ~~> groupA`, `security ~~> groupB`), it
+  gets the shared rail (rule 8b) — cleaner than a column, and the intended shape for
+  that case.
 - **The first `sub --> lane` line decides where a subsystem sits.** Order the fan-out so
   the lane it is most associated with comes first.
 - **Facilitation targets set an enabling bar's height.** `~~>` to the first and last

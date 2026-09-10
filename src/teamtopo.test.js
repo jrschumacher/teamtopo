@@ -319,6 +319,171 @@ test('root-level overlays get their own column beside a band of frames', () => {
   const { g1, g2, e } = lay.boxes;
   assert.ok(e.x >= g1.x + g1.w && e.x >= g2.x + g2.w, 'bar is to the right of both frames');
   assert.equal(lay.edges.filter((ed) => ed.geo.kind === 'band').length, 2, 'facilitating drawn as dotted bands when the bar cannot cross');
+  assert.equal(e.kind, 'en', 'a leaf target inside a group keeps the column, not the rail, even across frames');
+});
+
+// ── enabling rail (issue #22) ──
+
+test('a cross-cutting enabling team facilitating every sibling group renders as a shared rail', () => {
+  const lay = layout(parse(`teamTopology
+    group product {
+      stream desktop
+    }
+    group services {
+      stream policy
+    }
+    group platform2 {
+      stream identity
+    }
+    enabling research
+    research ~~> product
+    research ~~> services
+    research ~~> platform2`));
+  const { product, services, platform2, research } = lay.boxes;
+  assert.equal(research.kind, 'rail', 'gets the shared rail treatment, not a column');
+  assert.equal(research.x, product.x, 'rail starts at the leftmost targeted frame');
+  assert.equal(research.x + research.w, platform2.x + platform2.w, 'rail ends at the rightmost targeted frame');
+  assert.ok(research.y >= Math.max(product.y + product.h, services.y + services.h, platform2.y + platform2.h),
+    'rail is drawn below the frame band');
+  assert.equal(lay.edges.filter((ed) => ed.inter.mode === 'facilitating').length, 0,
+    'the rail itself carries the relationship; no separate per-pair patches or bands');
+});
+
+test('a rail spans leftmost-to-rightmost among a subset of targeted sibling frames', () => {
+  const lay = layout(parse(`teamTopology
+    group product {
+      stream desktop
+    }
+    group services {
+      stream policy
+    }
+    group platform2 {
+      stream identity
+    }
+    enabling research
+    research ~~> product
+    research ~~> platform2`));
+  const { product, services, platform2, research } = lay.boxes;
+  assert.equal(research.kind, 'rail');
+  assert.equal(research.x, product.x);
+  assert.equal(research.x + research.w, platform2.x + platform2.w);
+  assert.ok(research.x < services.x && research.x + research.w > services.x + services.w,
+    'the untargeted frame in between is simply spanned, not excluded');
+});
+
+test('an enabling team targeting only one sibling frame keeps the column', () => {
+  const lay = layout(parse(`teamTopology
+    group a {
+      stream x
+    }
+    group b {
+      stream y
+    }
+    enabling e
+    e ~~> a`));
+  assert.equal(lay.boxes.e.kind, 'en');
+});
+
+test('two facilitating enabling teams stack as additional fixed-height rail rows', () => {
+  const src = (extra) => `teamTopology
+    group a {
+      stream x
+    }
+    group b {
+      stream y
+    }
+    enabling e1
+    e1 ~~> a
+    e1 ~~> b
+    ${extra}`;
+  const one = layout(parse(src('')));
+  const two = layout(parse(src('enabling e2\ne2 ~~> a\ne2 ~~> b')));
+  assert.equal(one.boxes.e1.kind, 'rail');
+  assert.equal(two.boxes.e1.kind, 'rail');
+  assert.equal(two.boxes.e2.kind, 'rail');
+  assert.equal(two.boxes.e1.y, one.boxes.e1.y, 'the first rail row does not move when a second team is added');
+  assert.ok(two.boxes.e2.y > two.boxes.e1.y, 'the second rail stacks below the first');
+  const rowHeight = two.boxes.e2.y - two.boxes.e1.y;
+  assert.equal(two.height - one.height, rowHeight, 'canvas height grows by exactly one fixed rail row for the second team');
+});
+
+test('a rail label that does not fit is ellipsised, never wraps, and never grows the rail height', () => {
+  const shortSrc = `teamTopology
+    group a {
+      stream x
+    }
+    group b {
+      stream y
+    }
+    enabling e
+    e ~~> a
+    e ~~> b`;
+  const longSrc = `teamTopology
+    group a {
+      stream x
+    }
+    group b {
+      stream y
+    }
+    enabling research "User Experience Research Insights and Behavioral Analytics Enablement Coaching Team for Product Organizations Worldwide"
+    research ~~> a
+    research ~~> b`;
+  const fullLabel = 'User Experience Research Insights and Behavioral Analytics Enablement Coaching Team for Product Organizations Worldwide';
+  const shortLay = layout(parse(shortSrc));
+  const longLay = layout(parse(longSrc));
+  const research = longLay.boxes.research;
+  assert.equal(research.kind, 'rail');
+  assert.equal(research.lines.length, 1, 'a rail label is always a single line');
+  assert.ok(research.lines[0].endsWith('…'), 'a too-wide label is ellipsised');
+  assert.notEqual(research.lines[0], fullLabel);
+  assert.equal(research.h, shortLay.boxes.e.h, 'rail height is fixed regardless of label length');
+
+  const svg = render(longSrc);
+  assert.ok(svg.includes(fullLabel), 'the full name is kept in the title tooltip');
+});
+
+test('rail rendering is deterministic', () => {
+  const src = `teamTopology
+    group product {
+      stream desktop
+    }
+    group services {
+      stream policy
+    }
+    group platform2 {
+      stream identity
+    }
+    enabling research
+    research ~~> product
+    research ~~> services
+    research ~~> platform2`;
+  assert.equal(render(src), render(src));
+});
+
+test('a rail label sits on an opaque plate over the facilitating dot pattern', () => {
+  const src = `teamTopology
+    group a {
+      stream x
+    }
+    group b {
+      stream y
+    }
+    enabling research
+    research ~~> a
+    research ~~> b`;
+  const svg = render(src, { theme: 'dark' });
+  const labelsGroup = svg.split('class="tt-overlay-labels"')[1];
+  assert.ok(labelsGroup, 'overlay labels group present');
+  const railLabel = labelsGroup.split('data-id="research"')[1];
+  assert.match(railLabel, /<rect[^>]*rx="4"[^>]*fill="#0f172a"/,
+    'an opaque plate in the theme background sits behind the rail label, not the raw dot-pattern hatch');
+  assert.ok(railLabel.indexOf('<rect') < railLabel.indexOf('<text'), 'the plate is drawn before (under) the label text');
+});
+
+test('ecommerce example renders byte-identical to the committed svg (in-lane facilitating is unaffected by the rail change)', () => {
+  const svg = render(readFileSync(join(examplesDir, 'ecommerce.tt'), 'utf8'));
+  const committed = readFileSync(join(examplesDir, 'ecommerce.svg'), 'utf8');
+  assert.equal(`${svg}\n`, committed);
 });
 
 test('collaboration is a parallelogram bridging the two teams', () => {

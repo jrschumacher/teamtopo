@@ -8,3 +8,4 @@ app/.env
 app/.env.*
 app/worker-configuration.d.ts
 public/articles/
+scratch/
