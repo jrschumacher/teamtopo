@@ -28,6 +28,7 @@ is the reasoning; `syntax.md` is the spelling. Every ```tt snippet here parses.
 | DevOps team | `platform` (runs CI/CD and infra) or `enabling` (spreads DevOps practices) | A DevOps team that deploys for others is a gate; model as platform and flag. |
 | Operations, support, run team | `platform` if they run something teams consume; otherwise not a separate team (you build it, you run it) | Ask what they run. |
 | One team staffing several streams | `team` + `owns` | Model the streams as they are and declare the team over them — the warning is the point, not a problem to model away. |
+| One team holding several complicated subsystems | `team` + `owns` | Same treatment: each subsystem is its own deep specialism, so the diagnostic names them as split candidates. |
 
 When a mapping is ambiguous, ask the resolving question rather than guessing. One
 question, then write the file.

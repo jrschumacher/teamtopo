@@ -37,7 +37,7 @@ declare module '@lib/teamtopo' {
 		attrs: Record<string, string>;
 		api: Record<string, string> | null;
 		owns: string[];
-		load: { streams: number; nodes: number };
+		load: { streams: number; subsystems: number; nodes: number };
 		ownsLine: number;
 		line: number;
 	}

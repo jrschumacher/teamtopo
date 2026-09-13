@@ -678,8 +678,10 @@ export function parse(source) {
   // the single source for the cognitive-load numbers: the diagnostic, the legend and the
   // Team API all read this, none of them recomputes it
   for (const t of model.orgTeams) {
+    const owned = t.owns.map((id) => model.index[id]);
     t.load = {
-      streams: t.owns.filter((id) => model.index[id].type === 'stream').length,
+      streams: owned.filter((n) => n.type === 'stream').length,
+      subsystems: owned.filter((n) => n.type === 'subsystem').length,
       nodes: t.owns.length,
     };
   }
@@ -709,15 +711,26 @@ export function parse(source) {
 
   // Non-fatal diagnostics, computed after every owns line is resolved so each team warns once,
   // on its last owns line, with the final count. ParseError stays the only fatal path.
+  const ownedOfType = (t, type) => t.owns.filter((id) => model.index[id].type === type);
   for (const t of model.orgTeams) {
-    if (t.load.streams <= 1) continue;
-    const streams = t.owns.filter((id) => model.index[id].type === 'stream');
-    model.diagnostics.push({
-      level: 'warning',
-      code: 'team-multi-stream',
-      line: t.ownsLine,
-      message: `team ${t.id} is aligned to ${t.load.streams} streams: ${streams.join(', ')}; a team aligned to more than one stream carries extra cognitive load`,
-    });
+    if (t.load.streams > 1) {
+      model.diagnostics.push({
+        level: 'warning',
+        code: 'team-multi-stream',
+        line: t.ownsLine,
+        message: `team ${t.id} is aligned to ${t.load.streams} streams: ${ownedOfType(t, 'stream').join(', ')}; a team aligned to more than one stream carries extra cognitive load`,
+      });
+    }
+    // a complicated-subsystem team exists because one deep specialism is already a full
+    // load, so several of them in one team is the same finding as several streams
+    if (t.load.subsystems > 1) {
+      model.diagnostics.push({
+        level: 'warning',
+        code: 'team-multi-subsystem',
+        line: t.ownsLine,
+        message: `team ${t.id} owns ${t.load.subsystems} complicated subsystems: ${ownedOfType(t, 'subsystem').join(', ')}; each carries its own deep specialism, so one team owning several carries extra cognitive load`,
+      });
+    }
   }
   return model;
 }
@@ -847,9 +860,14 @@ function chipStripW(node, model) {
   return n * (L.chipW + L.chipGap) + 8;
 }
 
-/** "3 streams", or the node count and type when a team owns no stream. */
+/** "3 streams", or the node count and type when a team owns no stream. Several complicated
+ *  subsystems ride alongside the stream count, so that load is not hidden behind it. */
 function loadLabel(team, model) {
-  if (team.load.streams > 0) return `${team.load.streams} stream${team.load.streams === 1 ? '' : 's'}`;
+  const subs = team.load.subsystems > 1 ? `${team.load.subsystems} subsystems` : '';
+  if (team.load.streams > 0) {
+    const streams = `${team.load.streams} stream${team.load.streams === 1 ? '' : 's'}`;
+    return subs ? `${streams}, ${subs}` : streams;
+  }
   if (team.load.nodes === 0) return '';
   const first = model.index[team.owns[0]];
   return `${team.load.nodes} ${first.type}${team.load.nodes === 1 ? '' : 's'}`;
@@ -1753,8 +1771,12 @@ function orgTeamApi(model, team, opts) {
     `* Owns ${team.load.nodes}: ${owned.map((n) => `${n.id} (${TYPE_KEYWORDS[n.type]})`).join(', ')}`,
     `* Streams: ${team.load.streams}`,
   ];
+  if (team.load.subsystems) lines.push(`* Subsystems: ${team.load.subsystems}`);
   if (team.load.streams > 1) {
     lines.push('* A team aligned to more than one stream carries the cognitive load of all of them; the streams above are split candidates.');
+  }
+  if (team.load.subsystems > 1) {
+    lines.push('* A team owning more than one complicated subsystem carries each one\'s deep specialism; the subsystems above are split candidates.');
   }
   if (samePlatform) lines.push(`* Part of a Platform? (y/n) Details: y — part of ${samePlatform.label}`);
   lines.push(

@@ -157,9 +157,13 @@ An `api` block on an owned node is a parse error naming the owning team.
 - A team id cannot be an interaction endpoint — interactions stay between nodes, and the
   team's Team API aggregates them, with same-team edges under an `### Internal` heading.
 - A team with no `owns` line is a placeholder: it gets a Team API and draws nothing.
-- A team aligned to more than one stream produces a non-fatal warning in
-  `model.diagnostics` (CLI: stderr; `--json`: a `diagnostics` key). That is the point of
-  the feature, not a failure — the cost is meant to be visible.
+- Cognitive load is reported as non-fatal warnings in `model.diagnostics` (CLI: stderr;
+  `--json`: a `diagnostics` key): `team-multi-stream` when a team is aligned to more than
+  one stream, `team-multi-subsystem` when it owns more than one complicated subsystem.
+  That is the point of the feature, not a failure — the cost is meant to be visible, and
+  the nodes each warning names are the split candidates.
+- `orgTeams[].load` is `{ streams, subsystems, nodes }` and is the single source for every
+  count: the warnings, the diagram legend and the Team API all read it.
 
 ## Interactions
 

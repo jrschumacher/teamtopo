@@ -333,10 +333,14 @@ function ownedRowHtml(node: Node): string {
 	`;
 }
 
-/** "3 streams", or "1 subsystem" when a team owns no stream at all. */
+/** "3 streams", or "1 subsystem" when a team owns no stream at all. Several complicated
+ *  subsystems ride alongside the stream count, so that load is not hidden behind it. */
 function loadLabel(team: OrgTeam, model: Model): string {
-	if (team.load.streams > 0)
-		return `${team.load.streams} stream${team.load.streams === 1 ? '' : 's'}`;
+	const subs = team.load.subsystems > 1 ? `${team.load.subsystems} subsystems` : '';
+	if (team.load.streams > 0) {
+		const streams = `${team.load.streams} stream${team.load.streams === 1 ? '' : 's'}`;
+		return subs ? `${streams}, ${subs}` : streams;
+	}
 	if (team.load.nodes === 0) return '';
 	const first = model.index[team.owns[0]] as Node;
 	return `${team.load.nodes} ${first.type}${team.load.nodes === 1 ? '' : 's'}`;

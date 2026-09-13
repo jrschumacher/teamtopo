@@ -659,7 +659,7 @@ test('declares teams and resolves ownership', () => {
   assert.equal(alpha.isTeam, true);
   assert.equal(alpha.label, 'Alpha');
   assert.deepEqual(alpha.owns, ['desktop', 'sharepoint']);
-  assert.deepEqual(alpha.load, { streams: 2, nodes: 2 });
+  assert.deepEqual(alpha.load, { streams: 2, subsystems: 0, nodes: 2 });
   assert.deepEqual(m.index.desktop.owners, ['alpha']);
   assert.deepEqual(m.index.crypto.owners, []);
   assert.equal(m.index.alpha.api.focus, 'endpoint protection');
@@ -674,14 +674,14 @@ test('owns accumulates across lines, deduped, and counts only streams', () => {
     alpha owns desktop
     alpha owns crypto, desktop`);
   assert.deepEqual(m.orgTeams[0].owns, ['desktop', 'crypto']);
-  assert.deepEqual(m.orgTeams[0].load, { streams: 1, nodes: 2 });
+  assert.deepEqual(m.orgTeams[0].load, { streams: 1, subsystems: 1, nodes: 2 });
   assert.equal(m.orgTeams[0].ownsLine, 6);
 });
 
 test('a placeholder team with no owns line is valid', () => {
   const m = parse('teamTopology\nteam alpha "Alpha"');
   assert.deepEqual(m.orgTeams[0].owns, []);
-  assert.deepEqual(m.orgTeams[0].load, { streams: 0, nodes: 0 });
+  assert.deepEqual(m.orgTeams[0].load, { streams: 0, subsystems: 0, nodes: 0 });
 });
 
 test('owns is matched before the node keywords and only for non-keyword ids', () => {
@@ -760,7 +760,60 @@ test('one stream, or a stream plus a subsystem, does not warn', () => {
   assert.deepEqual(one.diagnostics, []);
   const mixed = parse('teamTopology\nstream x\nsubsystem y\nteam a "A"\na owns x, y');
   assert.deepEqual(mixed.diagnostics, []);
-  assert.deepEqual(mixed.orgTeams[0].load, { streams: 1, nodes: 2 });
+  assert.deepEqual(mixed.orgTeams[0].load, { streams: 1, subsystems: 1, nodes: 2 });
+});
+
+test('a team owning several complicated subsystems warns the same way', () => {
+  const m = parse(`teamTopology
+    subsystem pricing "Pricing"
+    subsystem billing "Billing"
+    stream web "Web"
+    team alpha "Alpha"
+    alpha owns pricing
+    alpha owns billing, web`);
+  assert.deepEqual(m.orgTeams[0].load, { streams: 1, subsystems: 2, nodes: 3 });
+  assert.deepEqual(m.diagnostics.map((d) => d.code), ['team-multi-subsystem']);
+  const d = m.diagnostics[0];
+  assert.equal(d.level, 'warning');
+  assert.equal(d.line, 7);
+  assert.equal(d.message,
+    'team alpha owns 2 complicated subsystems: pricing, billing; each carries its own deep specialism, so one team owning several carries extra cognitive load');
+});
+
+test('one subsystem does not warn, and both rules can fire for one team', () => {
+  assert.deepEqual(parse('teamTopology\nsubsystem y\nteam a "A"\na owns y').diagnostics, []);
+  const both = parse(`teamTopology
+    stream w "W"
+    stream x "X"
+    subsystem y "Y"
+    subsystem z "Z"
+    team a "A"
+    a owns w, x, y, z`);
+  assert.deepEqual(both.diagnostics.map((d) => d.code), ['team-multi-stream', 'team-multi-subsystem']);
+});
+
+test('the team document counts subsystems and adds their split-candidate note', () => {
+  const md = teamApi(`teamTopology
+    subsystem pricing "Pricing"
+    subsystem billing "Billing"
+    team a "A"
+    a owns pricing, billing`, 'a', { date: '2026-01-01' });
+  assert.match(md, /^\* Streams: 0$/m);
+  assert.match(md, /^\* Subsystems: 2$/m);
+  assert.match(md, /each one's deep specialism; the subsystems above are split candidates/);
+  // a team with no subsystem keeps the document it had
+  const plain = teamApi('teamTopology\nstream x "X"\nteam a "A"\na owns x', 'a', { date: '2026-01-01' });
+  assert.ok(!/Subsystems:/.test(plain));
+});
+
+test('the legend shows a subsystem load riding alongside the stream count', () => {
+  const svg = render(`teamTopology
+    stream w "W"
+    subsystem y "Y"
+    subsystem z "Z"
+    team a "A"
+    a owns w, y, z`);
+  assert.match(svg, />A \(1 stream, 2 subsystems\)</);
 });
 
 test('diagnostics is always an array and never throws', () => {

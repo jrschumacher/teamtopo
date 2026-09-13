@@ -101,9 +101,18 @@ endpoint owns desktop, mail
   and warns about nothing, because that is the orthodox shape.
 
 Its `api` block goes on the team, and an `api` block on an owned node is an error telling
-you where to move it. A team aligned to more than one stream is reported as a warning on
-stderr (and in `--json` under `diagnostics`), because that team carries the cognitive load
-of every stream it owns.
+you where to move it.
+
+Two non-fatal diagnostics report cognitive load, on stderr and in `--json` under
+`diagnostics` (they never stop a document rendering):
+
+| Code | Fires when | Why |
+|---|---|---|
+| `team-multi-stream` | a team is aligned to more than one stream | the team carries the load of every stream it owns |
+| `team-multi-subsystem` | a team owns more than one complicated subsystem | each subsystem is its own deep specialism to hold |
+
+Both name the nodes involved, so the message doubles as the list of split candidates, and
+both appear in the team's Team API document as a note under its `Owns` list.
 
 ### Interactions
 
