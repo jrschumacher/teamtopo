@@ -573,6 +573,67 @@ test('#23 reproducer: the frame-to-frame label plate does not collide with eithe
   assert.ok(!overlaps(plate, lay.boxes.consumer), 'plate does not overlap the consumer frame');
 });
 
+// Bounding box of a frame's own rendered label, mirroring frameSVG(): an opaque
+// patch on the bottom border, centred, wide enough for the text plus 8px each side.
+function frameLabelBBox(box) {
+  const tw = textWidth(box.node.label, 13) + 16;
+  return { x: box.x + box.w / 2 - tw / 2, y: box.y + box.h - 10, w: tw, h: 20 };
+}
+
+test('#23 reproducer: the label plate rides the wedge and leaves its point showing', () => {
+  const lay = layout(parse(ISSUE_23_REPRODUCER));
+  const { geo } = lay.edges.find((e) => e.geo.kind === 'wedge');
+  const plate = plateBox(geo.label);
+  const base = geo.points[0].x, tip = geo.points[2].x;
+  assert.ok(tip > base, 'the wedge points right, from provider to consumer');
+  // on the wedge, not floating beside it: the plate straddles the wedge's axis
+  assert.ok(plate.x > base && plate.x < tip, 'plate starts inside the wedge');
+  assert.ok(plate.y < geo.points[0].y && plate.y + plate.h > geo.points[1].y, 'plate sits on the wedge axis');
+  // and the point is still visible past it, so the wedge reads as directional
+  assert.ok(tip - (plate.x + plate.w) >= 20, `point is visible past the plate (got ${tip - (plate.x + plate.w)})`);
+  assert.ok(plate.x - base <= 12, 'plate rides the wide end rather than floating mid-gap');
+});
+
+test('#23 reproducer: the label plate clears every team label and every frame label', () => {
+  const lay = layout(parse(ISSUE_23_REPRODUCER));
+  const plate = plateBox(lay.edges.find((e) => e.geo.kind === 'wedge').geo.label);
+  for (const id of ['services', 'app']) {
+    assert.ok(!overlaps(plate, teamLabelBBox(lay.boxes[id])), `plate overlaps the ${id} team label`);
+  }
+  for (const id of ['cloud', 'provider', 'consumer']) {
+    assert.ok(!overlaps(plate, frameLabelBBox(lay.boxes[id])), `plate overlaps the ${id} frame label`);
+  }
+});
+
+test('#23 reproducer: a medium-length label stays on one line, and the gap grows to fit it', () => {
+  const lay = layout(parse(ISSUE_23_REPRODUCER));
+  const { geo } = lay.edges.find((e) => e.geo.kind === 'wedge');
+  assert.deepEqual(geo.label.lines, ['platform capabilities'], 'not broken across lines');
+  const gap = lay.boxes.consumer.x - (lay.boxes.provider.x + lay.boxes.provider.w);
+  assert.ok(gap >= geo.label.plateW, `the frame gap (${gap}) fits the plate (${geo.label.plateW})`);
+  assert.ok(gap <= 220, 'and stays within the cap on frame gap growth');
+});
+
+test('a label too long for the gap cap wraps tighter instead of eating the wedge point', () => {
+  const lay = layout(parse(`teamTopology
+    platform cloud {
+      group provider {
+        stream services
+      }
+      group consumer {
+        stream app
+      }
+      provider --> consumer : policy decisions, key access and audit events for every tenant
+    }`));
+  const { geo } = lay.edges.find((e) => e.geo.kind === 'wedge');
+  const plate = plateBox(geo.label);
+  const base = geo.points[0].x, tip = geo.points[2].x;
+  assert.ok(geo.label.lines.length > 1, 'a label this long wraps onto several lines');
+  assert.ok(tip - base <= 220, `frame gap growth stays capped (got ${tip - base})`);
+  assert.ok(tip - (plate.x + plate.w) >= 20, 'the point is still visible past the plate');
+  assert.ok(!overlaps(plate, lay.boxes.provider) && !overlaps(plate, lay.boxes.consumer), 'plate clears both frames');
+});
+
 test('three sibling frames with labels on both gaps: no plate/frame overlaps', () => {
   const lay = layout(parse(`teamTopology
     platform cloud {
@@ -649,6 +710,15 @@ test('rendering is deterministic across repeated runs', () => {
     const a = render(src);
     const b = render(src);
     assert.equal(a, b);
+  }
+});
+
+test('every example renders byte-identical to its committed svg (run `npm run examples` after a layout change)', () => {
+  const files = readdirSync(examplesDir).filter((f) => f.endsWith('.tt')).sort();
+  for (const f of files) {
+    const svg = render(readFileSync(join(examplesDir, f), 'utf8'));
+    const committed = readFileSync(join(examplesDir, f.replace(/\.tt$/, '.svg')), 'utf8');
+    assert.equal(`${svg}\n`, committed, f);
   }
 });
 
@@ -919,11 +989,45 @@ test('a rotated enabling label renders on an opaque plate in the enabling tint',
   assert.ok(dark.includes(`fill="${THEMES.dark.enabling.plate}"`), 'dark enabling plate colour present');
 });
 
+test('an upright enabling label gets the same plate as the rotated one', () => {
+  // "UX Research" wraps to two short lines and so is drawn upright inside the bar,
+  // over the dots of the facilitating patches crossing it (examples/org-groups.tt)
+  const src = 'teamTopology\nstream a\nstream b\nenabling ux "UX Research"\nux ~~> a, b';
+  const lay = layout(parse(src));
+  assert.equal(lay.boxes.ux.rotate, false, 'the label fits across the bar');
+  for (const theme of ['light', 'dark']) {
+    // the bar's shape and its label are drawn in separate passes; the label lands in
+    // the overlay group, above the facilitating dots
+    const svg = render(src, { theme });
+    const bar = svg.split('class="tt-overlay-labels"')[1].split('data-id="ux"')[1];
+    const plate = new RegExp(`<rect[^>]*fill="${THEMES[theme].enabling.plate}"`);
+    assert.match(bar, plate, `${theme}: upright bar label sits on an enabling-tinted plate`);
+    assert.ok(bar.search(plate) < bar.indexOf('<text'), `${theme}: the plate is drawn under the label text`);
+  }
+});
+
+test('a collaboration bridge to a sibling frame slides clear of the enabling bar label it grows over', () => {
+  const lay = layout(parse(readFileSync(join(examplesDir, 'org-groups.tt'), 'utf8')));
+  const bridges = lay.edges.filter((e) => e.geo.kind === 'bridge');
+  assert.ok(bridges.length >= 2, 'org-groups has bridges from enabling bars to sibling groups');
+  for (const { inter, geo } of bridges) {
+    const shape = geoBBox(geo);
+    for (const id of [inter.from, inter.to]) {
+      const box = lay.boxes[id];
+      if (box.kind !== 'en') continue;
+      assert.ok(!overlaps(shape, teamLabelBBox(box)), `bridge ${inter.from}<->${inter.to} covers the ${id} bar label`);
+      // and it still bridges: the shape stays within the bar it starts from
+      assert.ok(shape.y >= box.y && shape.y + shape.h <= box.y + box.h, 'the shape stays alongside the bar');
+    }
+  }
+});
+
 // Approximates the bounding box of a team's own rendered label text, from layout()
 // output fields only (kind, rotate, lines, fs, labelZone, note, x/y/w/h) — mirrors
 // teamSVG's textBlock/rotate placement closely enough to catch real overlaps.
 function teamLabelBBox(box) {
   if (!box.node) return null;
+  if (box.kind === 'frame') return frameLabelBBox(box);
   if (box.kind === 'en' && box.rotate) {
     const fs = box.fs + 1;
     const tw = textWidth(box.node.label, fs) + 12;
@@ -951,6 +1055,7 @@ function geoBBox(geo) {
 test('an interaction shape never covers a team label (examples/ecommerce.tt and a subsystem+collaboration fixture)', () => {
   const cases = [
     ['examples/ecommerce.tt', readFileSync(join(examplesDir, 'ecommerce.tt'), 'utf8')],
+    ['examples/group-interactions.tt', readFileSync(join(examplesDir, 'group-interactions.tt'), 'utf8')],
     ['subsystem fixture', `teamTopology
       stream search "Search & Discovery"
       subsystem ranking "Ranking Engine" [note="ML relevance model"]
@@ -959,11 +1064,12 @@ test('an interaction shape never covers a team label (examples/ecommerce.tt and 
   ];
   for (const [name, src] of cases) {
     const lay = layout(parse(src));
-    // A rotated enabling label sitting under a facilitating patch is a deliberate,
-    // separately-tested exception (#28 fix 1 gives it its own opaque plate drawn
-    // above the dots, rather than moving the patch away from it).
+    // An enabling bar's own label sitting under the facilitating patch that crosses
+    // the bar is a deliberate, separately-tested exception (#28 gives every bar
+    // label its own opaque plate drawn above the dots, rotated or upright, rather
+    // than moving the patch away from it).
     const labelBoxes = Object.values(lay.boxes)
-      .filter((b) => !(b.kind === 'en' && b.rotate))
+      .filter((b) => b.kind !== 'en')
       .map(teamLabelBBox).filter(Boolean);
     for (const { geo } of lay.edges) {
       const gbox = geoBBox(geo);

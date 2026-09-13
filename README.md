@@ -110,7 +110,7 @@ px). `labelPos` is accepted on every mode:
 
 | Mode | `labelPos=gap` (default) | `labelPos=above` |
 |---|---|---|
-| X-as-a-Service | plate centred on the wedge | plate above the shape, leader to the wedge |
+| X-as-a-Service | plate on the wedge, riding its wide end so the point still shows | plate above the shape, leader to the wedge |
 | Collaboration | plate centred on the parallelogram | plate above the parallelogram, leader down to it |
 | Facilitating | plate beside the patch (or centred on the band) | plate above the patch/band, leader down to it |
 
@@ -118,6 +118,8 @@ Only X-as-a-Service supports growing the gap between two sibling frames to fit a
 long label (`labelPos=gap` on a frame-to-frame edge) — Collaboration and
 Facilitating don't bridge sibling frames today, so a labelled edge between them
 never changes frame spacing; use `labelPos=above` there if the plate needs room.
+That growth is capped: past the cap the label wraps tighter instead of pushing
+the frames further apart, so the wedge always keeps its point visible.
 
 ### Directives
 
