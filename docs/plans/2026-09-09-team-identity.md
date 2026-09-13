@@ -878,7 +878,7 @@ EOF
   - `app/src/views/team.ts` exports `export function isOrgTeam(e: Entry): e is OrgTeam` and `export function ownerRedirectTarget(model: Model, teamId: string): string | null` — returns the owning team's id when `teamId` names an owned node, else `null`.
   - The route table is unchanged; `/d/:id/team/:streamId` still matches and the view redirects.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `app/src/router.test.ts`, inside the existing `describe('matchRoute', …)`:
 
@@ -934,12 +934,12 @@ describe('team identity', () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `cd app && npx vitest run src/views/team.test.ts src/router.test.ts 2>&1 | tail -n 20`
 Expected: FAIL — `isOrgTeam`/`ownerRedirectTarget` are not exported.
 
-- [ ] **Step 3: Update the type declarations**
+- [x] **Step 3: Update the type declarations**
 
 In `app/src/lib/teamtopo.d.ts`, add `owners: string[];` to `Node`, and add above `interface Model`:
 
@@ -991,7 +991,7 @@ and change `Model` to:
 
 Also add `export const TYPE_KEYWORDS: Record<TeamType, string>;` beside the other exported constants.
 
-- [ ] **Step 4: Add the guard and the redirect resolver, and drop the unsound cast**
+- [x] **Step 4: Add the guard and the redirect resolver, and drop the unsound cast**
 
 In `app/src/views/team.ts`, add near the top (below the imports), and add `Entry`, `OrgTeam` to the `@lib/teamtopo` import:
 
@@ -1034,12 +1034,12 @@ Replace the cast at `app/src/views/team.ts:361`:
 
 and fix the resulting type errors by widening the helpers that receive it — `heroHtml`, `sectionsHtml`, `unmappedFields` and `asideHtml` take `Entry` instead of `Node`. Inside them, reach for `node.type` only behind `isOrgTeam(node) ? … : node.type`; a team renders `TYPE_LABEL` as `'Team'` and `chipHtml('team', …)`.
 
-- [ ] **Step 5: Run the tests and the type check**
+- [x] **Step 5: Run the tests and the type check**
 
 Run: `cd app && npx vitest run src/views/team.test.ts src/router.test.ts 2>&1 | tail -n 20 && npm run typecheck && npm run lint`
 Expected: PASS, no `tsc` errors, lint clean.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add app/src/lib/teamtopo.d.ts app/src/views/team.ts app/src/views/team.test.ts app/src/router.test.ts

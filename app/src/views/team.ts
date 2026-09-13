@@ -12,9 +12,11 @@ import {
 	teamApi,
 	TEAM_API_FIELDS,
 	TEAM_TYPES,
+	type Entry,
 	type Interaction,
 	type Model,
 	type Node,
+	type OrgTeam,
 	type TeamType
 } from '@lib/teamtopo';
 import type { OpenedDoc } from '../lib/types';
@@ -22,6 +24,7 @@ import { escapeHtml } from '../lib/markdown';
 import { readApiBlock, writeApiBlock } from '../lib/apiblock';
 import { brandMarkHtml, pageTitle } from '../lib/brand';
 import { docPath, teamLink } from '../lib/links';
+import { navigate } from '../router';
 import './editor.css';
 import './team.css';
 
@@ -76,6 +79,23 @@ const TYPE_LABEL: Partial<Record<TeamType, string>> = Object.fromEntries(
 	Object.entries(TEAM_TYPES).map(([type, spec]) => [type, spec.name])
 );
 
+/** Distinguishes a real team from a topology node in `model.index`. */
+export function isOrgTeam(entry: Entry): entry is OrgTeam {
+	return 'isTeam' in entry;
+}
+
+/** The owning team's id when `teamId` names an owned node, else null. */
+export function ownerRedirectTarget(model: Model, teamId: string): string | null {
+	const entry = model.index[teamId];
+	if (!entry || isOrgTeam(entry)) return null;
+	return entry.owners.length ? entry.owners[0] : null;
+}
+
+/** The chip/pill key for an entry: a real team has no topology type of its own. */
+function entryType(entry: Entry): string {
+	return isOrgTeam(entry) ? 'team' : entry.type;
+}
+
 function otherTeams(model: Model, teamId: string): Node[] {
 	return model.teams.filter((t) => t.type !== 'group' && t.id !== teamId);
 }
@@ -118,7 +138,7 @@ function headerHtml(doc: OpenedDoc, docTitle: string, teamLabel: string): string
 }
 
 /** Every field a team can set, keyed by canonical name, whichever alias was used. */
-function unmappedFields(node: Node): { key: string; label: string; value: string }[] {
+function unmappedFields(node: Entry): { key: string; label: string; value: string }[] {
 	if (!node.api) return [];
 	const known = new Set(TEAM_API_FIELDS.flatMap((f) => f.aliases));
 	return Object.entries(node.api)
@@ -147,7 +167,7 @@ function otherRowHtml(label: string, value: string): string {
 	return `<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd>`;
 }
 
-function sectionsHtml(node: Node, fields: Record<string, string>, editing: boolean): string {
+function sectionsHtml(node: Entry, fields: Record<string, string>, editing: boolean): string {
 	const groups = GROUPS.map(
 		(g) => `
 		<section class="tm-card">
@@ -189,12 +209,13 @@ function emptyBannerHtml(teamId: string, canEdit: boolean): string {
 	`;
 }
 
-function heroHtml(node: Node, canEdit: boolean, editing: boolean): string {
+function heroHtml(node: Entry, canEdit: boolean, editing: boolean): string {
 	const size = node.attrs.size;
 	const sizeHtml = size ? `<span class="tm-size">${escapeHtml(size)} people</span>` : '';
 	const note = node.attrs.note;
 	const blurbHtml = note ? `<p class="tm-blurb">${escapeHtml(note)}</p>` : '';
-	const typeLabel = TYPE_LABEL[node.type] ?? node.type;
+	const type = entryType(node);
+	const typeLabel = isOrgTeam(node) ? 'Team' : (TYPE_LABEL[node.type] ?? node.type);
 	const editBtn =
 		canEdit && !editing
 			? `<button type="button" class="ed-btn ed-btn-primary" data-action="enter-edit">Edit Team API</button>`
@@ -202,10 +223,10 @@ function heroHtml(node: Node, canEdit: boolean, editing: boolean): string {
 	return `
 		<section class="tm-card tm-hero">
 			<div class="tm-hero-row">
-				${chipHtml(node.type, 'lg')}
+				${chipHtml(type, 'lg')}
 				<h1 class="tm-name">${escapeHtml(node.label)}</h1>
 				<span class="tm-id">${escapeHtml(node.id)}</span>
-				<span class="tm-type-pill ${escapeHtml(node.type)}">${escapeHtml(typeLabel)}</span>
+				<span class="tm-type-pill ${escapeHtml(type)}">${escapeHtml(typeLabel)}</span>
 				${sizeHtml}
 				<span class="ed-spacer"></span>
 				<div class="tm-hero-actions">
@@ -228,7 +249,7 @@ function interactionRowHtml(model: Model, doc: OpenedDoc, teamId: string, it: In
 	if (!other) return '';
 	return `
 		<div class="tm-inter-row${it.soon ? ' tm-inter-soon' : ''}">
-			${chipHtml(other.type, 'sm')}
+			${chipHtml(entryType(other), 'sm')}
 			<a href="${teamLink(doc.id, other.id, doc.fragment)}" class="tm-inter-name">${escapeHtml(other.label)}</a>
 			<span class="tm-mode-pill">${escapeHtml(modeLabel(it.mode))}</span>
 			<span class="tm-inter-desc">${escapeHtml(it.label)}</span>
@@ -335,9 +356,14 @@ function unknownTeamHtml(doc: OpenedDoc, model: Model, teamId: string): string {
 export function renderTeamView(root: HTMLElement, doc: OpenedDoc, teamId: string): void {
 	let source = doc.source;
 	let model = parse(source);
-	const node0 = model.index[teamId];
-
-	if (!node0 || node0.type === 'group') {
+	const entry0 = model.index[teamId];
+	const redirect = ownerRedirectTarget(model, teamId);
+	if (redirect) {
+		// an owned node is work, not a team: its Team API lives on the team that owns it
+		navigate(teamLink(doc.id, redirect, doc.fragment));
+		return;
+	}
+	if (!entry0 || (!isOrgTeam(entry0) && entry0.type === 'group')) {
 		root.innerHTML = unknownTeamHtml(doc, model, teamId);
 		return;
 	}
@@ -358,7 +384,7 @@ export function renderTeamView(root: HTMLElement, doc: OpenedDoc, teamId: string
 	}
 
 	function paint(): void {
-		const node = model.index[teamId] as Node;
+		const node = model.index[teamId];
 		const fields = readApiBlock(source, teamId);
 		const hasApiFields = Object.keys(fields).length > 0 || unmappedFields(node).length > 0;
 		const showEmptyBanner = !hasApiFields && !editing;

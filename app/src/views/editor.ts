@@ -567,7 +567,8 @@ export function renderEditor(
 		const id = g?.getAttribute('data-id');
 		if (!id || !model) return;
 		const node = model.index[id];
-		if (!node || node.type === 'group') return;
+		// a real team draws no element of its own, so anything clickable here is a node
+		if (!node || !('type' in node) || node.type === 'group') return;
 		if (!doc) return showToast('Save the diagram first to open team pages');
 		navigate(teamLink(doc.id, id, doc.fragment));
 	});

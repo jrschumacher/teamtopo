@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { OpenedDoc, Version } from '../lib/types';
 import { readApiBlock } from '../lib/apiblock';
-import { renderTeamView } from './team';
+import { isOrgTeam, ownerRedirectTarget, renderTeamView } from './team';
+import { parse } from '@lib/teamtopo';
 
 const SRC = [
 	'teamTopology',
@@ -215,5 +216,41 @@ describe('renderTeamView', () => {
 		expect(svg).not.toBeNull();
 		const highlighted = root.querySelector('[data-id="checkout"].tt-team-highlight');
 		expect(highlighted).not.toBeNull();
+	});
+});
+
+const OWNED_SRC = [
+	'teamTopology',
+	'  stream desktop "Desktop"',
+	'  stream sharepoint "SharePoint Proxy"',
+	'  stream gateway "Gateway"',
+	'  team alpha "Alpha"',
+	'  alpha owns desktop, sharepoint',
+	'  api alpha {',
+	'    focus: endpoint protection',
+	'  }',
+	''
+].join('\n');
+
+describe('team identity', () => {
+	it('narrows an index entry to a team or a node', () => {
+		const model = parse(OWNED_SRC);
+		expect(isOrgTeam(model.index.alpha)).toBe(true);
+		expect(isOrgTeam(model.index.desktop)).toBe(false);
+	});
+
+	it('redirects an owned node to its owning team and leaves others alone', () => {
+		const model = parse(OWNED_SRC);
+		expect(ownerRedirectTarget(model, 'desktop')).toBe('alpha');
+		expect(ownerRedirectTarget(model, 'gateway')).toBeNull();
+		expect(ownerRedirectTarget(model, 'alpha')).toBeNull();
+		expect(ownerRedirectTarget(model, 'nope')).toBeNull();
+	});
+
+	it('renders a team page for a real team', () => {
+		const root = document.createElement('div');
+		renderTeamView(root, makeDoc({ source: OWNED_SRC }), 'alpha');
+		expect(root.textContent).toContain('Alpha');
+		expect(root.textContent).toContain('endpoint protection');
 	});
 });
