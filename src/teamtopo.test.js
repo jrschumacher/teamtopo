@@ -730,3 +730,36 @@ test('apiFields is parsed into the model and otherwise unused', () => {
     { key: 'wiki', choices: [], group: 1 },
   ]);
 });
+
+// ── diagnostics ──
+
+test('a multi-stream team warns once, on its last owns line, with the final count', () => {
+  const m = parse(`teamTopology
+    stream desktop "Desktop"
+    stream sharepoint "SharePoint"
+    stream web "Web"
+    team alpha "Alpha"
+    alpha owns desktop
+    alpha owns sharepoint
+    alpha owns web`);
+  assert.equal(m.diagnostics.length, 1);
+  const d = m.diagnostics[0];
+  assert.equal(d.level, 'warning');
+  assert.equal(d.code, 'team-multi-stream');
+  assert.equal(d.line, 8);
+  assert.equal(d.message,
+    'team alpha is aligned to 3 streams: desktop, sharepoint, web; a team aligned to more than one stream carries extra cognitive load');
+});
+
+test('one stream, or a stream plus a subsystem, does not warn', () => {
+  const one = parse('teamTopology\nstream x\nteam a "A"\na owns x');
+  assert.deepEqual(one.diagnostics, []);
+  const mixed = parse('teamTopology\nstream x\nsubsystem y\nteam a "A"\na owns x, y');
+  assert.deepEqual(mixed.diagnostics, []);
+  assert.deepEqual(mixed.orgTeams[0].load, { streams: 1, nodes: 2 });
+});
+
+test('diagnostics is always an array and never throws', () => {
+  assert.deepEqual(parse('teamTopology\nstream x').diagnostics, []);
+  assert.deepEqual(parse('teamTopology').diagnostics, []);
+});

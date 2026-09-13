@@ -324,6 +324,19 @@ export function parse(source) {
       throw new ParseError(`"${it.from}" and "${it.to}" are nested; a team cannot interact with its own container`, it.line);
     }
   }
+
+  // Non-fatal diagnostics, computed after every owns line is resolved so each team warns once,
+  // on its last owns line, with the final count. ParseError stays the only fatal path.
+  for (const t of model.orgTeams) {
+    if (t.load.streams <= 1) continue;
+    const streams = t.owns.filter((id) => model.index[id].type === 'stream');
+    model.diagnostics.push({
+      level: 'warning',
+      code: 'team-multi-stream',
+      line: t.ownsLine,
+      message: `team ${t.id} is aligned to ${t.load.streams} streams: ${streams.join(', ')}; a team aligned to more than one stream carries extra cognitive load`,
+    });
+  }
   return model;
 }
 

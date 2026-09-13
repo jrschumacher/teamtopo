@@ -447,7 +447,7 @@ EOF
 - Consumes: `model.orgTeams[].load`, `.owns`, `.ownsLine` from Task 2.
 - Produces: `model.diagnostics: { level: 'warning', code: string, line: number, message: string }[]` — always an array, `[]` when clean. One entry per over-loaded team, code `team-multi-stream`, `line` = that team's **last** `owns` line, message final-count. Task 4 reads `load`, not this array; the CLI prints it to stderr and `--json` carries it.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `src/teamtopo.test.js`:
 
@@ -486,12 +486,12 @@ test('diagnostics is always an array and never throws', () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `node --test src/teamtopo.test.js 2>&1 | tail -n 20`
 Expected: FAIL — `m.diagnostics` is `[]` where a warning is expected.
 
-- [ ] **Step 3: Add the post-pass**
+- [x] **Step 3: Add the post-pass**
 
 In `src/teamtopo.js`, immediately before `return model;` at the end of `parse`:
 
@@ -510,12 +510,12 @@ In `src/teamtopo.js`, immediately before `return model;` at the end of `parse`:
   }
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `npm test 2>&1 | tail -n 20`
 Expected: PASS.
 
-- [ ] **Step 5: Print diagnostics from the CLI, on stderr only**
+- [x] **Step 5: Print diagnostics from the CLI, on stderr only**
 
 In `src/cli.js`, add above the final `try {` block (after the `source` read):
 
@@ -552,7 +552,7 @@ try {
 } catch (e) {
 ```
 
-- [ ] **Step 6: Verify the CLI split by hand**
+- [x] **Step 6: Verify the CLI split by hand**
 
 ```bash
 printf 'teamTopology\nstream a\nstream b\nteam t "T"\nt owns a, b\n' > /tmp/tt-diag.tt
@@ -562,7 +562,7 @@ node src/cli.js --json /tmp/tt-diag.tt 2>/dev/null | grep -c '"team-multi-stream
 ```
 Expected: an `<svg ...` prefix; one `warning:` line; `1`.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/teamtopo.js src/teamtopo.test.js src/cli.js
