@@ -32,6 +32,12 @@ is the reasoning; `syntax.md` is the spelling. Every ```tt snippet here parses.
 When a mapping is ambiguous, ask the resolving question rather than guessing. One
 question, then write the file.
 
+One team to one stream, platform or complicated subsystem is the standard model: write the
+node and stop. Only reach for `team` + `owns` when a real team spans several of them, and
+then leave the streams separate — the count and the warning are the finding you came for.
+Never use `team` to wrap each node individually, and never merge several streams into one
+node to silence the warning: that hides the cost instead of measuring it.
+
 ## Patterns by org shape
 
 ### 1. A shared backend two product teams depend on

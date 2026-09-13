@@ -140,6 +140,11 @@ teamTopology
   }
 ```
 
+**Use this only for the mismatch.** A node no team owns is itself a team — one team to one
+stream, platform or complicated subsystem is the standard model and needs no `team` line.
+`team`/`owns` exists for the org that does not match it: one real team spread across
+several streams. Never wrap every node in a team of its own.
+
 `team <id> ["Label"]` declares a real team; `<team> owns a, b` binds it to the streams or
 capabilities it owns, anywhere in the file, accumulating across lines. Owned nodes lose
 their own Team API to the team's. Leaf teams only — a team cannot own a `{ ... }` container.

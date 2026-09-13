@@ -75,8 +75,14 @@ Indentation is ignored.
 
 ### Real teams
 
-A `stream` or `platform` is a *stream of work*, not necessarily a team. When one real team
-owns several of them, declare the team and say what it owns:
+**Most diagrams need none of this.** A `stream`, `platform`, `subsystem` or `enabling`
+node that no team owns *is* a team — one team aligned to one stream is the shape Team
+Topologies recommends, and it stays the default the syntax assumes. Reach for `team` and
+`owns` only where the org does not match that shape: one real team spread across several
+streams or capabilities. Declaring a team per node adds ceremony and says nothing the node
+did not already say.
+
+Where the mismatch is real, name the team and say what it owns:
 
 ```
 team endpoint "Endpoint Team"
@@ -91,6 +97,8 @@ endpoint owns desktop, mail
   the diagram, and no longer has a Team API of its own — the team has one instead.
 - Several teams may own the same node; the node gets a chip for each.
 - A team with no `owns` line is a valid placeholder: it gets a Team API and draws nothing.
+- One team owning exactly one node is not an error, just redundant: it reports `Streams: 1`
+  and warns about nothing, because that is the orthodox shape.
 
 Its `api` block goes on the team, and an `api` block on an owned node is an error telling
 you where to move it. A team aligned to more than one stream is reported as a warning on
