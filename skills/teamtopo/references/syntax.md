@@ -203,10 +203,14 @@ provider_group --> consumer_group : platform capabilities [labelPos=above]
 Every interaction label — XaaS, Collaboration and Facilitating — renders on an
 opaque background plate tinted to that mode's shape colour, and wraps onto
 multiple lines when it doesn't fit (`clamp(90, ..., 220)` px). Only XaaS grows
-the gap between two sibling frames to fit a long `labelPos=gap` label;
-Collaboration and Facilitating don't bridge sibling frames, so they never
-change frame spacing — use `labelPos=above` for those when the plate needs
-more room.
+the gap between two sibling frames to fit a long `labelPos=gap` label; a
+labelled Collaboration or Facilitating edge never stretches the gap to fit its
+plate — use `labelPos=above` for those when the plate needs more room.
+
+Any interaction that crosses a sibling-group boundary (one end inside each of
+two adjacent frames, in any mode, with or without a label) opens that boundary
+to at least 64px so the shape crossing it is not squeezed; an uncrossed
+boundary keeps the flat 32px.
 
 Validation, applied after the whole file is parsed:
 

@@ -156,11 +156,18 @@ px). `labelPos` is accepted on every mode:
 | Facilitating | plate beside the patch (or centred on the band) | plate above the patch/band, leader down to it |
 
 Only X-as-a-Service supports growing the gap between two sibling frames to fit a
-long label (`labelPos=gap` on a frame-to-frame edge) — Collaboration and
-Facilitating don't bridge sibling frames today, so a labelled edge between them
-never changes frame spacing; use `labelPos=above` there if the plate needs room.
-That growth is capped: past the cap the label wraps tighter instead of pushing
-the frames further apart, so the wedge always keeps its point visible.
+long label (`labelPos=gap` on a frame-to-frame edge) — a labelled Collaboration
+or Facilitating edge never stretches the gap to fit its plate; use
+`labelPos=above` there if the plate needs room. That growth is capped: past the
+cap the label wraps tighter instead of pushing the frames further apart, so the
+wedge always keeps its point visible.
+
+Separately from labels, any interaction that *crosses* a sibling-group boundary —
+one end inside each of two adjacent frames, in any mode, labelled or not — opens
+that boundary to at least 64px, so the shape drawn across it has room to read as
+crossing rather than as the two frames touching. Boundaries nothing crosses stay
+at the flat 32px, and a boundary a shape merely passes over on its way to a
+farther frame is not widened.
 
 ### Directives
 
