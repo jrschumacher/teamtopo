@@ -616,3 +616,26 @@ test('interactions expected soon render dashed and faded', () => {
   const svg = render('teamTopology\nstream a\nplatform p\np --> a [soon]');
   assert.ok(/<polygon[^>]*stroke-dasharray="5 4"[^>]*opacity="0.55"|<polygon[^>]*opacity="0.55"[^>]*stroke-dasharray="5 4"/.test(svg));
 });
+
+// ── backward-compatibility corpus ──
+
+test('every example renders byte-identically to its committed svg', () => {
+  const files = readdirSync(examplesDir).filter((f) => f.endsWith('.tt')).sort();
+  assert.ok(files.length >= 3);
+  for (const f of files) {
+    const source = readFileSync(join(examplesDir, f), 'utf8');
+    const expected = readFileSync(join(examplesDir, f.replace(/\.tt$/, '.svg')), 'utf8');
+    assert.equal(render(source) + '\n', expected, f);
+  }
+});
+
+test('teamApis markdown is stable for every example', () => {
+  const golden = JSON.parse(readFileSync(join(here, 'teamtopo.api.golden.json'), 'utf8'));
+  const files = readdirSync(examplesDir).filter((f) => f.endsWith('.tt')).sort();
+  assert.deepEqual(files, Object.keys(golden));
+  for (const f of files) {
+    const actual = teamApis(readFileSync(join(examplesDir, f), 'utf8'), { date: '2026-01-01' })
+      .map((t) => `${t.id}\n${t.markdown}`).join('\n---\n');
+    assert.equal(actual, golden[f], f);
+  }
+});

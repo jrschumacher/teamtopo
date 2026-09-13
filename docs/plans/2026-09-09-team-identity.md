@@ -56,7 +56,7 @@ Freezes today's output so every later task proves it did not change a team-free 
 - Consumes: nothing.
 - Produces: two tests other tasks must keep green — `every example renders byte-identically to its committed svg` and `teamApis markdown is stable for every example`. The second writes `src/teamtopo.api.golden.json`, a committed map of `{ "<example>.tt": "<concatenated markdown>" }` generated once by the step below.
 
-- [ ] **Step 1: Write the failing SVG corpus test**
+- [x] **Step 1: Write the failing SVG corpus test**
 
 Append to `src/teamtopo.test.js`:
 
@@ -74,12 +74,12 @@ test('every example renders byte-identically to its committed svg', () => {
 });
 ```
 
-- [ ] **Step 2: Run it and confirm it passes today**
+- [x] **Step 2: Run it and confirm it passes today**
 
 Run: `npm test 2>&1 | tail -n 20`
 Expected: PASS. If it fails, the committed SVGs are stale — run `npm run examples`, inspect `git diff examples/`, and commit the regeneration as a separate `chore:` commit *before* continuing. Do not weaken the assertion.
 
-- [ ] **Step 3: Generate the Team API golden file**
+- [x] **Step 3: Generate the Team API golden file**
 
 Run this once, from the repo root:
 
@@ -96,7 +96,7 @@ writeFileSync('src/teamtopo.api.golden.json', JSON.stringify(out, null, 2) + '\n
 "
 ```
 
-- [ ] **Step 4: Write the Team API corpus test**
+- [x] **Step 4: Write the Team API corpus test**
 
 Append to `src/teamtopo.test.js` (the `teamApis` import already exists further down the file; move this test below that import, or add `teamApis` to the top import — either is fine, keep one import per symbol):
 
@@ -115,12 +115,12 @@ test('teamApis markdown is stable for every example', () => {
 
 Note the pinned `opts.date` — without it the golden rots at midnight.
 
-- [ ] **Step 5: Run both tests**
+- [x] **Step 5: Run both tests**
 
 Run: `npm test 2>&1 | tail -n 20`
 Expected: PASS, both.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/teamtopo.test.js src/teamtopo.api.golden.json
