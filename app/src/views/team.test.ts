@@ -254,6 +254,27 @@ describe('team identity', () => {
 		expect(root.textContent).toContain('endpoint protection');
 	});
 
+	it('aggregates the interactions of every node a team owns, with an Internal section', () => {
+		const src = [
+			OWNED_SRC.trimEnd(),
+			'  platform infra "Infra"',
+			'  infra --> desktop : CI',
+			'  infra --> sharepoint : CI',
+			'  desktop <--> sharepoint : shared installer',
+			''
+		].join('\n');
+		const root = document.createElement('div');
+		renderTeamView(root, makeDoc({ source: src }), 'alpha');
+		const text = root.textContent ?? '';
+		expect(text).not.toContain('No interactions recorded yet.');
+		// the same service consumed by two owned nodes collapses to one row
+		const rows = [...root.querySelectorAll('.tm-inter-row')].map((el) => el.textContent ?? '');
+		expect(rows.filter((r) => r.includes('CI'))).toHaveLength(1);
+		// an edge between two nodes the team owns is internal, not an external interaction
+		expect(text).toContain('Internal');
+		expect(rows.filter((r) => r.includes('shared installer'))).toHaveLength(1);
+	});
+
 	it('lists teams first with owned nodes indented, then unowned nodes', () => {
 		const root = document.createElement('div');
 		renderTeamView(root, makeDoc({ source: OWNED_SRC }), 'alpha');

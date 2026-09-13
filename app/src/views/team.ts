@@ -243,9 +243,26 @@ function modeLabel(mode: Interaction['mode']): string {
 	return MODES[mode]?.name ?? mode;
 }
 
-function interactionRowHtml(model: Model, doc: OpenedDoc, teamId: string, it: Interaction): string {
-	const otherId = it.from === teamId ? it.to : it.from;
-	const other = model.index[otherId];
+/** The ids a page's interactions are about: a real team's owned nodes, or the node itself. */
+function ownedIds(model: Model, teamId: string): Set<string> {
+	const entry = model.index[teamId];
+	return new Set(entry && isOrgTeam(entry) ? entry.owns : [teamId]);
+}
+
+/** The entity a row should name: an owned counterpart is reported as its owning team. */
+function counterpart(model: Model, id: string): Entry | undefined {
+	const entry = model.index[id];
+	if (!entry || isOrgTeam(entry)) return entry;
+	return entry.owners.length ? model.index[entry.owners[0]] : entry;
+}
+
+function interactionRowHtml(
+	model: Model,
+	doc: OpenedDoc,
+	ours: Set<string>,
+	it: Interaction
+): string {
+	const other = counterpart(model, ours.has(it.from) ? it.to : it.from);
 	if (!other) return '';
 	return `
 		<div class="tm-inter-row${it.soon ? ' tm-inter-soon' : ''}">
@@ -260,20 +277,35 @@ function interactionRowHtml(model: Model, doc: OpenedDoc, teamId: string, it: In
 }
 
 function interactionsHtml(model: Model, doc: OpenedDoc, teamId: string): string {
-	const mine = model.interactions.filter((it) => it.from === teamId || it.to === teamId);
-	const now = mine.filter((it) => !it.soon);
-	const soon = mine.filter((it) => it.soon);
+	// a real team's page aggregates the interactions of every node it owns, the way its
+	// Team API document does: an edge between two of its own nodes is internal, and two
+	// owned nodes facing the same outside team collapse to one row
+	const ours = ownedIds(model, teamId);
+	const mine = model.interactions.filter((it) => ours.has(it.from) || ours.has(it.to));
+	const rows = (its: Interaction[]): string =>
+		[...new Set(its.map((it) => interactionRowHtml(model, doc, ours, it)))].join('');
+
+	const internal = mine.filter((it) => ours.has(it.from) && ours.has(it.to));
+	const external = mine.filter((it) => !(ours.has(it.from) && ours.has(it.to)));
+	const now = external.filter((it) => !it.soon);
+	const soon = external.filter((it) => it.soon);
 
 	const nowHtml =
-		now.length > 0
-			? now.map((it) => interactionRowHtml(model, doc, teamId, it)).join('')
-			: '<p class="tm-empty-value">No interactions recorded yet.</p>';
+		now.length > 0 ? rows(now) : '<p class="tm-empty-value">No interactions recorded yet.</p>';
+
+	const internalHtml =
+		internal.length > 0
+			? `
+			<h2 class="tm-section-title tm-section-title-spaced">Internal</h2>
+			<div class="tm-inter-list">${rows(internal)}</div>
+		`
+			: '';
 
 	const soonHtml =
 		soon.length > 0
 			? `
 			<h2 class="tm-section-title tm-section-title-spaced">Expected to interact with soon</h2>
-			<div class="tm-inter-list">${soon.map((it) => interactionRowHtml(model, doc, teamId, it)).join('')}</div>
+			<div class="tm-inter-list">${rows(soon)}</div>
 		`
 			: '';
 
@@ -284,6 +316,7 @@ function interactionsHtml(model: Model, doc: OpenedDoc, teamId: string): string 
 				<span class="tm-section-sub">from the diagram</span>
 			</div>
 			<div class="tm-inter-list">${nowHtml}</div>
+			${internalHtml}
 			${soonHtml}
 		</section>
 	`;
