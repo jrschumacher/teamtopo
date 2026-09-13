@@ -25,13 +25,12 @@ import {
 	fitZoom,
 	formatZoom,
 	MAX_ZOOM,
-	MIN_PANE_PX,
-	MIN_PANE_STACKED_PX,
 	MIN_ZOOM,
 	naturalSize,
 	nextZoom,
 	prevZoom,
 	readWorkspace,
+	visibleMode,
 	writeWorkspace,
 	type PaneMode,
 	type Size
@@ -46,7 +45,7 @@ const RENDER_DELAY_MS = 120;
 const LINE_HEIGHT_PX = 20;
 /** Matches `.ed-canvas` padding in editor.css — the diagram's usable viewport inset. */
 const CANVAS_PAD_PX = 24;
-/** Matches the `max-width` of the stacked-workspace media query in editor.css. */
+/** Matches the narrow-workspace media query in editor.css: below it, one pane at a time. */
 const NARROW_QUERY = '(max-width: 56rem)';
 /** Pointer travel before a press on the canvas becomes a pan instead of a click. */
 const PAN_THRESHOLD_PX = 4;
@@ -62,6 +61,13 @@ const PANE_LABELS: Record<PaneMode, string> = {
 	editor: 'Editor only',
 	split: 'Split view',
 	renderer: 'Diagram only'
+};
+/** Shown beside the glyph where the switch is the primary control (narrow widths). Each
+ *  is a prefix of its `PANE_LABELS` entry, so the visible text is in the accessible name. */
+const PANE_NAMES: Record<PaneMode, string> = {
+	editor: 'Editor',
+	split: 'Split',
+	renderer: 'Diagram'
 };
 /** 16×12 glyphs: the workspace outline with the visible pane(s) filled. */
 const PANE_ICONS: Record<PaneMode, string> = {
@@ -160,7 +166,7 @@ function paneSwitchHtml(): string {
 	const buttons = PANE_MODES.map(
 		(mode) => `<button class="ed-pane-btn" id="pane-${mode}" type="button"
 				aria-pressed="${mode === 'split'}" title="${PANE_LABELS[mode]}" aria-label="${PANE_LABELS[mode]}"
-				><svg viewBox="0 0 16 12" aria-hidden="true" focusable="false"><rect x="1.5" y="1.5" width="13" height="9" rx="1.5"/>${PANE_ICONS[mode]}</svg></button>`
+				><svg viewBox="0 0 16 12" aria-hidden="true" focusable="false"><rect x="1.5" y="1.5" width="13" height="9" rx="1.5"/>${PANE_ICONS[mode]}</svg><span class="ed-pane-name" aria-hidden="true">${PANE_NAMES[mode]}</span></button>`
 	).join('');
 	return `<div class="ed-panes" role="group" aria-label="Workspace layout">${buttons}</div>`;
 }
@@ -175,7 +181,7 @@ function headerHtml(doc: OpenedDoc | null): string {
 		<span class="ed-state" id="state-pill"><span class="ed-state-dot" id="state-dot"></span><span id="state-text"></span></span>
 		<span class="ed-spacer"></span>
 		${paneSwitchHtml()}
-		<span class="ed-divider"></span>
+		<span class="ed-divider ed-divider-panes"></span>
 		${
 			showExamples
 				? `<div class="ed-pop-wrap">
@@ -401,10 +407,9 @@ export function renderEditor(
 	let syncing = false;
 
 	const persist = () => writeWorkspace(ws);
-	/** The workspace stacks its panes below `NARROW_QUERY`; the divider follows. */
-	const stacked = () => narrow?.matches === true;
-	const workExtent = () => (stacked() ? work.clientHeight : work.clientWidth);
-	const minPane = () => (stacked() ? MIN_PANE_STACKED_PX : MIN_PANE_PX);
+	/** Below `NARROW_QUERY` there is no room for a usable split: one pane at a time. */
+	const isNarrow = () => narrow?.matches === true;
+	const workExtent = () => work.clientWidth;
 	const currentSvg = () => canvas.querySelector('svg');
 
 	/** Usable viewport inside the canvas' padding, or `null` while it has no layout. */
@@ -485,37 +490,42 @@ export function renderEditor(
 	}
 
 	function setRatio(ratio: number) {
-		ws.ratio = clampRatio(ratio, workExtent(), minPane());
+		ws.ratio = clampRatio(ratio, workExtent());
 		work.style.setProperty('--ed-split', `${(ws.ratio * 100).toFixed(2)}%`);
 		splitter.setAttribute('aria-valuenow', String(Math.round(ws.ratio * 100)));
 		syncViewport();
 	}
 
 	function applyLayout() {
-		work.dataset.paneMode = ws.mode;
+		const visible = visibleMode(ws, isNarrow());
+		work.dataset.paneMode = visible;
 		for (const mode of PANE_MODES)
-			paneButtons[mode].setAttribute('aria-pressed', String(ws.mode === mode));
+			paneButtons[mode].setAttribute('aria-pressed', String(visible === mode));
+		// A narrow workspace has no split to go back to, so it offers text or picture only.
+		paneButtons.split.hidden = isNarrow();
 		const extent = workExtent();
-		splitter.setAttribute('aria-orientation', stacked() ? 'horizontal' : 'vertical');
-		splitter.setAttribute(
-			'aria-valuemin',
-			String(Math.round(clampRatio(0, extent, minPane()) * 100))
-		);
-		splitter.setAttribute(
-			'aria-valuemax',
-			String(Math.round(clampRatio(1, extent, minPane()) * 100))
-		);
+		splitter.setAttribute('aria-valuemin', String(Math.round(clampRatio(0, extent) * 100)));
+		splitter.setAttribute('aria-valuemax', String(Math.round(clampRatio(1, extent) * 100)));
 		setRatio(ws.ratio);
 	}
 
 	/** Switch panes, never leaving focus stranded inside the pane that just went away. */
 	function setPaneMode(mode: PaneMode, from?: HTMLElement) {
-		const hiding = mode === 'editor' ? mainPane : mode === 'renderer' ? sourcePane : null;
+		if (isNarrow()) {
+			// Narrow: the choice is which single pane to show, and the wide split is left alone.
+			if (mode === 'split') return;
+			ws.narrowMode = mode;
+		} else {
+			ws.mode = mode;
+			// Picking one pane on a wide screen is also the pane a narrow one should open on.
+			if (mode !== 'split') ws.narrowMode = mode;
+		}
+		const visible = visibleMode(ws, isNarrow());
+		const hiding = visible === 'editor' ? mainPane : visible === 'renderer' ? sourcePane : null;
 		const strands =
 			hiding !== null &&
 			document.activeElement instanceof HTMLElement &&
 			hiding.contains(document.activeElement);
-		ws.mode = mode;
 		applyLayout();
 		persist();
 		if (strands) (from ?? paneButtons[mode]).focus();
@@ -718,9 +728,7 @@ export function renderEditor(
 		if (!drag) return;
 		const extent = workExtent();
 		if (extent <= 0) return;
-		const rect = work.getBoundingClientRect();
-		const pos = stacked() ? e.clientY - rect.top : e.clientX - rect.left;
-		setRatio(pos / extent);
+		setRatio((e.clientX - work.getBoundingClientRect().left) / extent);
 	}
 
 	function endDrag() {
@@ -744,11 +752,10 @@ export function renderEditor(
 	});
 
 	splitter.addEventListener('keydown', (e) => {
-		const [less, more] = stacked() ? ['ArrowUp', 'ArrowDown'] : ['ArrowLeft', 'ArrowRight'];
 		const step = e.shiftKey ? RATIO_STEP_COARSE : RATIO_STEP;
 		let next: number | null = null;
-		if (e.key === less) next = ws.ratio - step;
-		else if (e.key === more) next = ws.ratio + step;
+		if (e.key === 'ArrowLeft') next = ws.ratio - step;
+		else if (e.key === 'ArrowRight') next = ws.ratio + step;
 		else if (e.key === 'Home') next = 0;
 		else if (e.key === 'End') next = 1;
 		else if (e.key === 'Enter' || e.key === ' ') next = DEFAULT_RATIO;

@@ -9,10 +9,14 @@
  */
 
 export type PaneMode = 'split' | 'editor' | 'renderer';
+/** The modes a narrow viewport can show: one pane, never a split. */
+export type SinglePaneMode = Exclude<PaneMode, 'split'>;
 
 export interface WorkspaceState {
-	/** Which panes are visible. */
+	/** Which panes are visible when there is room for both side by side. */
 	mode: PaneMode;
+	/** Which single pane a narrow viewport shows — text or picture, never both. */
+	narrowMode: SinglePaneMode;
 	/** Fraction of the workspace given to the source pane, 0–1. */
 	ratio: number;
 	/** Renderer scale, 1 = 100%. */
@@ -28,9 +32,8 @@ export const DEFAULT_RATIO = 0.4;
 /** Ratio bounds used when a pixel extent is unknown or too small for the pixel minimums. */
 export const MIN_RATIO = 0.15;
 export const MAX_RATIO = 0.85;
-/** Minimum pane size along the split axis: side-by-side, then stacked (narrow widths). */
+/** Minimum width of either pane in a split. Below two of these the split is not offered. */
 export const MIN_PANE_PX = 260;
-export const MIN_PANE_STACKED_PX = 120;
 
 export const MIN_ZOOM = 0.25;
 export const MAX_ZOOM = 4;
@@ -41,13 +44,27 @@ const EPSILON = 1e-4;
 
 export const DEFAULT_WORKSPACE: WorkspaceState = {
 	mode: 'split',
+	narrowMode: 'editor',
 	ratio: DEFAULT_RATIO,
 	zoom: 1,
 	fit: true
 };
 
 function isPaneMode(v: unknown): v is PaneMode {
-	return v === 'split' || v === 'editor' || v === 'renderer';
+	return v === 'split' || isSinglePaneMode(v);
+}
+
+function isSinglePaneMode(v: unknown): v is SinglePaneMode {
+	return v === 'editor' || v === 'renderer';
+}
+
+/**
+ * The mode actually on screen. A narrow viewport has no room for a usable split, so it
+ * shows one pane and the layout switch becomes a text/picture toggle; the wide `mode`
+ * (a split, say) is kept untouched and comes back with the width.
+ */
+export function visibleMode(state: WorkspaceState, narrow: boolean): PaneMode {
+	return narrow ? state.narrowMode : state.mode;
 }
 
 function finite(v: unknown): number | null {
@@ -56,17 +73,18 @@ function finite(v: unknown): number | null {
 
 /**
  * Clamp a split ratio into range. With a known pixel `extent` for the whole workspace both
- * panes also keep `minPx`; when the workspace is too small to honour that for both panes
- * (very narrow windows) only the percentage bounds apply, so the divider never jumps.
+ * panes also keep `MIN_PANE_PX`; when the workspace is too small to honour that for both
+ * (a width that no longer offers the split at all) only the percentage bounds apply, so
+ * the stored ratio survives the trip through a narrow window unchanged.
  */
-export function clampRatio(ratio: number, extent?: number, minPx = MIN_PANE_PX): number {
+export function clampRatio(ratio: number, extent?: number): number {
 	const r = finite(ratio) ?? DEFAULT_RATIO;
 	let lo = MIN_RATIO;
 	let hi = MAX_RATIO;
 	const px = finite(extent);
-	if (px !== null && px > 0 && px > 2 * minPx) {
-		lo = Math.max(lo, minPx / px);
-		hi = Math.min(hi, 1 - minPx / px);
+	if (px !== null && px > 2 * MIN_PANE_PX) {
+		lo = Math.max(lo, MIN_PANE_PX / px);
+		hi = Math.min(hi, 1 - MIN_PANE_PX / px);
 	}
 	return Math.min(hi, Math.max(lo, r));
 }
@@ -156,6 +174,7 @@ export function readWorkspace(): WorkspaceState {
 	const v = parsed as Partial<Record<keyof WorkspaceState, unknown>>;
 	return {
 		mode: isPaneMode(v.mode) ? v.mode : DEFAULT_WORKSPACE.mode,
+		narrowMode: isSinglePaneMode(v.narrowMode) ? v.narrowMode : DEFAULT_WORKSPACE.narrowMode,
 		ratio: clampRatio(finite(v.ratio) ?? DEFAULT_WORKSPACE.ratio),
 		zoom: clampZoom(finite(v.zoom) ?? DEFAULT_WORKSPACE.zoom),
 		fit: typeof v.fit === 'boolean' ? v.fit : DEFAULT_WORKSPACE.fit

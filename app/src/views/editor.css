@@ -211,6 +211,10 @@
 	cursor: pointer;
 }
 
+.ed-pane-btn[hidden] {
+	display: none;
+}
+
 .ed-pane-btn:hover {
 	color: var(--fg);
 	background: var(--accent-soft);
@@ -233,6 +237,14 @@
 	fill: currentColor;
 	stroke: none;
 	opacity: 0.45;
+}
+
+/* The glyph carries the meaning where the switch is one control among many; the name
+   joins it at narrow widths, where the switch is how you get to the other half. */
+.ed-pane-name {
+	display: none;
+	font-size: 12.5px;
+	font-weight: 500;
 }
 
 /* ── renderer zoom group (tab bar) ── */
@@ -992,24 +1004,48 @@ a.ed-api-card:hover {
 }
 
 /* ── responsive ── */
-/* Keep this breakpoint in sync with `NARROW_QUERY` in editor.ts — the divider drags along
-   the workspace's main axis, which flips to vertical here. */
+/* Keep this breakpoint in sync with `NARROW_QUERY` in editor.ts. Below it the workspace
+   never splits: editor.ts shows one pane and withdraws the split button, so the layout
+   switch becomes a source/diagram toggle. */
 @media (max-width: 56rem) {
-	.ed-work {
-		flex-direction: column;
+	/* The source/diagram toggle is the primary control here — everything else is one tap
+	   away, but this is how you see the other half of your work. The header scrolls
+	   sideways at this width, which would leave the toggle off-screen on load, so lift it
+	   out into a bar pinned above the thumb. `.ed-shell` is border-box, so the padding
+	   reserves the band rather than pushing the workspace past the viewport. */
+	.ed-shell {
+		padding-bottom: 52px;
 	}
 
-	.ed-split {
+	.ed-panes {
+		position: fixed;
+		left: 50%;
+		bottom: 10px;
+		transform: translateX(-50%);
+		z-index: 26;
+		background: var(--surface);
+		border-color: var(--border-strong);
+		box-shadow: var(--shadow);
+	}
+
+	.ed-pane-btn {
 		width: auto;
-		height: 1px;
-		cursor: row-resize;
+		height: 34px;
+		gap: 7px;
+		padding: 0 14px;
 	}
 
-	.ed-split::after {
-		top: -3px;
-		bottom: -3px;
-		left: 0;
-		right: 0;
+	.ed-pane-name {
+		display: inline;
+	}
+
+	/* The rule that separated the toggle from the header's popovers goes with it. */
+	.ed-divider-panes {
+		display: none;
+	}
+
+	.toast {
+		bottom: 62px;
 	}
 
 	.ed-tabbar {

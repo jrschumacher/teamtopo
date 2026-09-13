@@ -531,6 +531,29 @@ describe('renderEditor', () => {
 				}) as DOMRect;
 		}
 
+		/**
+		 * happy-dom answers every media query the same way, so stand in for the narrow
+		 * breakpoint with a controllable one that also fires its change listeners.
+		 */
+		function stubViewport(narrow: boolean) {
+			const listeners = new Set<() => void>();
+			const state = { narrow };
+			vi.stubGlobal('matchMedia', (query: string) => ({
+				media: query,
+				get matches() {
+					return query.includes('56rem') ? state.narrow : false;
+				},
+				addEventListener: (_type: string, fn: () => void) => void listeners.add(fn),
+				removeEventListener: (_type: string, fn: () => void) => void listeners.delete(fn)
+			}));
+			return {
+				resizeTo(next: boolean) {
+					state.narrow = next;
+					for (const fn of listeners) fn();
+				}
+			};
+		}
+
 		const $ = <T extends HTMLElement>(sel: string) => root.querySelector<T>(sel)!;
 		const mode = () => $('#work').dataset.paneMode;
 		const split = () => $('#work').style.getPropertyValue('--ed-split');
@@ -885,6 +908,76 @@ describe('renderEditor', () => {
 			pointer(canvas, 'pointerup', { clientX: 200, clientY: 150 });
 			team.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 			expect(location.pathname).toBe('/d/doc1/team/checkout');
+		});
+
+		it('shows one pane at a time on a narrow viewport, with no split offered', () => {
+			stubViewport(true);
+			renderEditor(root, makeDoc());
+			// The stored mode is the default split; a narrow workspace cannot honour it.
+			expect(mode()).toBe('editor');
+			expect($('#pane-editor').getAttribute('aria-pressed')).toBe('true');
+			expect($<HTMLButtonElement>('#pane-split').hidden).toBe(true);
+
+			$('#pane-renderer').click();
+			expect(mode()).toBe('renderer');
+			expect($('#pane-renderer').getAttribute('aria-pressed')).toBe('true');
+			expect($('#pane-editor').getAttribute('aria-pressed')).toBe('false');
+
+			$('#pane-editor').click();
+			expect(mode()).toBe('editor');
+		});
+
+		it('restores the split when the viewport grows, and drops it again when it shrinks', () => {
+			const viewport = stubViewport(false);
+			renderEditor(root, makeDoc());
+			stubBox($('#work'), { w: 1000, h: 600 });
+			key($('#split'), { key: 'ArrowRight' });
+			expect(mode()).toBe('split');
+			expect(split()).toBe('42.00%');
+
+			viewport.resizeTo(true);
+			expect(mode()).toBe('editor');
+			expect($<HTMLButtonElement>('#pane-split').hidden).toBe(true);
+			// Choosing the diagram while narrow must not disturb the desktop split.
+			$('#pane-renderer').click();
+			expect(mode()).toBe('renderer');
+
+			viewport.resizeTo(false);
+			expect(mode()).toBe('split');
+			expect($<HTMLButtonElement>('#pane-split').hidden).toBe(false);
+			expect(split()).toBe('42.00%');
+		});
+
+		it('opens a narrow viewport on the pane the wide one was last showing', () => {
+			const viewport = stubViewport(false);
+			renderEditor(root, makeDoc());
+			$('#pane-renderer').click();
+			viewport.resizeTo(true);
+			expect(mode()).toBe('renderer');
+		});
+
+		it('remembers the narrow pane choice across a reload, separately from the split', () => {
+			const viewport = stubViewport(true);
+			renderEditor(root, makeDoc());
+			$('#pane-renderer').click();
+
+			const next = document.createElement('div');
+			document.body.appendChild(next);
+			renderEditor(next, makeDoc());
+			expect(next.querySelector<HTMLElement>('#work')!.dataset.paneMode).toBe('renderer');
+			viewport.resizeTo(false);
+			expect(next.querySelector<HTMLElement>('#work')!.dataset.paneMode).toBe('split');
+			next.remove();
+		});
+
+		it('fits the diagram to a narrow viewport when it is the visible pane', () => {
+			stubViewport(true);
+			renderEditor(root, makeDoc());
+			const nat = natural();
+			$('#pane-renderer').click();
+			stubBox($('#canvas'), { w: 400, h: 600 });
+			resize();
+			expect(zoomText()).toBe(`${Math.round(Math.min(352 / nat.w, 552 / nat.h) * 100)}%`);
 		});
 
 		it('reports the unscaled diagram size while zoomed', () => {

@@ -14,6 +14,7 @@ import {
 	nextZoom,
 	prevZoom,
 	readWorkspace,
+	visibleMode,
 	WORKSPACE_KEY,
 	writeWorkspace
 } from './workspace';
@@ -54,14 +55,29 @@ describe('clampRatio', () => {
 		expect(clampRatio(0.99, 1000)).toBeCloseTo(0.74, 5);
 	});
 
-	it('honours a smaller minimum for the stacked (narrow) workspace', () => {
-		expect(clampRatio(0.05, 1000, 120)).toBeCloseTo(0.15, 5);
-		expect(clampRatio(0.05, 400, 120)).toBeCloseTo(0.3, 5);
-	});
-
 	it('falls back to the percentage bounds when both minimums cannot fit', () => {
 		expect(clampRatio(0.05, 400)).toBe(MIN_RATIO);
 		expect(clampRatio(0.99, 400)).toBe(MAX_RATIO);
+	});
+});
+
+describe('visibleMode', () => {
+	const split = { ...DEFAULT_WORKSPACE, mode: 'split', narrowMode: 'editor' } as const;
+
+	it('shows the wide mode when there is room for it', () => {
+		expect(visibleMode(split, false)).toBe('split');
+		expect(visibleMode({ ...split, mode: 'renderer' }, false)).toBe('renderer');
+	});
+
+	it('never shows a split on a narrow viewport', () => {
+		expect(visibleMode(split, true)).toBe('editor');
+		expect(visibleMode({ ...split, narrowMode: 'renderer' }, true)).toBe('renderer');
+	});
+
+	it('leaves the wide mode untouched, so it comes back with the width', () => {
+		const state = { ...split, narrowMode: 'renderer' } as const;
+		expect(visibleMode(state, true)).toBe('renderer');
+		expect(visibleMode(state, false)).toBe('split');
 	});
 });
 
@@ -133,7 +149,13 @@ describe('workspace persistence', () => {
 	afterEach(() => vi.unstubAllGlobals());
 
 	it('round-trips a workspace', () => {
-		const state = { mode: 'renderer', ratio: 0.62, zoom: 1.5, fit: false } as const;
+		const state = {
+			mode: 'renderer',
+			narrowMode: 'renderer',
+			ratio: 0.62,
+			zoom: 1.5,
+			fit: false
+		} as const;
 		writeWorkspace({ ...state });
 		expect(readWorkspace()).toEqual(state);
 	});
@@ -151,9 +173,16 @@ describe('workspace persistence', () => {
 
 		localStorage.setItem(
 			WORKSPACE_KEY,
-			JSON.stringify({ mode: 'sideways', ratio: 'wide', zoom: 999, fit: 'yes' })
+			JSON.stringify({ mode: 'sideways', narrowMode: 'split', ratio: 'wide', zoom: 999 })
 		);
 		expect(readWorkspace()).toEqual({ ...DEFAULT_WORKSPACE, zoom: MAX_ZOOM });
+	});
+
+	it('keeps the narrow single-pane choice separate from the wide mode', () => {
+		writeWorkspace({ ...DEFAULT_WORKSPACE, mode: 'split', narrowMode: 'renderer' });
+		const stored = readWorkspace();
+		expect(stored.mode).toBe('split');
+		expect(stored.narrowMode).toBe('renderer');
 	});
 
 	it('survives storage that throws on read and on write', () => {

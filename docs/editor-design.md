@@ -48,9 +48,11 @@ with none of the editor's controls (no state pill, no Examples, no tab bar, no S
   - Copy buttons show "Copied" for 1.4 s (`COPY_FEEDBACK_MS` in `editor.ts`) before reverting.
 - Editor only: the workspace layout switch `.ed-panes` (`role=group`, label "Workspace
   layout") of `#pane-editor` / `#pane-split` / `#pane-renderer` (`.ed-pane-btn
-  [aria-pressed]`, 16×12 glyph, labelled "Editor only" / "Split view" / "Diagram only" —
-  the same pressed-toggle pattern as `#fit`). It lives in the header rather than in either
-  pane, so the restore control is reachable in every mode.
+  [aria-pressed]`, 16×12 glyph plus an `.ed-pane-name` shown only at narrow widths,
+  labelled "Editor only" / "Split view" / "Diagram only" — the same pressed-toggle pattern
+  as `#fit`). It lives in the header rather than in either pane, so the restore control is
+  reachable in every mode; below `56rem` it leaves the header's horizontal scroll for a
+  fixed bar at the bottom of the viewport, where it is the primary control.
 - Editor only: `#save` (`.ed-btn.ed-btn-primary`), disabled while saving or unchanged.
 - Viewer only: `#open-editor` when `doc.canEdit && doc.links.edit`.
 - `#banner` (stale-409 reload/save-anyway flow) sits under the header; `button.link` for its
@@ -80,12 +82,18 @@ with none of the editor's controls (no state pill, no Examples, no tab bar, no S
   resize, double-click or Enter to reset to 40%, arrows to nudge (Shift for a bigger step),
   Home/End for the extremes. `aria-valuenow` is the source pane's percentage and
   `aria-valuemin`/`aria-valuemax` are the bounds actually reachable at the current width —
-  both panes keep 260px (120px stacked). Below `56rem` the workspace stacks and the
-  separator turns horizontal; keep that breakpoint in sync with `NARROW_QUERY` in
-  `editor.ts`.
-- Pane mode, split ratio, zoom and fit are stored under `teamtopo.workspace`
-  (`lib/workspace.ts`); every read and write is guarded, and the workspace falls back to
-  split view at 40% / 100% / fit when storage is missing, blocked or corrupt.
+  both panes keep 260px.
+- **Narrow viewports show one pane at a time.** Below `56rem` (`NARROW_QUERY` in
+  `editor.ts`, kept in sync with the media query) there is no room for two usable panes, so
+  the workspace never splits: it shows the source or the diagram and the switch becomes a
+  two-way toggle with `#pane-split` `hidden`. `visibleMode()` keeps the two apart —
+  `mode` is the wide layout, `narrowMode` the single pane — so a split survives a trip
+  through a phone-width window and comes back with the width, and choosing one pane on a
+  wide screen is the pane a narrow one then opens on.
+- Pane mode, the narrow pane, split ratio, zoom and fit are stored under
+  `teamtopo.workspace` (`lib/workspace.ts`); every read and write is guarded, and the
+  workspace falls back to split view at 40% / 100% / fit when storage is missing, blocked
+  or corrupt.
 
 ### Right pane (editor only)
 
