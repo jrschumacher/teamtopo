@@ -165,10 +165,14 @@ export function parse(source) {
       const label = m[4] ? stripQuotes(m[4]) : '';
       const attrs = m[5] ? parseAttrs(m[5]) : {};
       const soon = 'soon' in attrs || 'expected' in attrs;
+      if (attrs.labelPos !== undefined && attrs.labelPos !== 'gap' && attrs.labelPos !== 'above') {
+        throw new ParseError(`invalid labelPos "${attrs.labelPos}" (expected "gap" or "above")`, lineNo);
+      }
+      const labelPos = attrs.labelPos || 'gap';
       for (const l of left) {
         for (const r of right) {
           const [from, to] = op.leftIsFrom ? [l, r] : [r, l];
-          model.interactions.push({ mode: op.mode, from, to, label, attrs, soon, duration: attrs.duration || '', line: lineNo });
+          model.interactions.push({ mode: op.mode, from, to, label, attrs, soon, duration: attrs.duration || '', labelPos, line: lineNo });
         }
       }
       continue;
@@ -326,11 +330,121 @@ const L = {
   subW: 112, subH: 56, enW: 68, wedgeW: 64, slotGap: 22, labelMin: 170,
   pad: 24, frameTop: 26, frameBottom: 36, bandGap: 44, sideGap: 32, minW: 240,
   margin: 32, lineH: 1.25, noteFs: 11, titleH: 40, flowH: 46, legendH: 64, labelFs: 11,
-  railH: 26, railGap: 10,
+  leaderGap: 6, topClear: 8, railH: 26, railGap: 10, tipClear: 26, wedgeInset: 8,
   fs: { stream: 14, platform: 14, subsystem: 12, enabling: 12, group: 13 },
 };
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+/**
+ * Wrap a wedge/edge label to maxWidth and measure the block it forms, so the
+ * plate that gets drawn behind it (see plateLabelSVG) matches the geometry
+ * used to size gaps, headroom and canvas growth.
+ */
+function wrapBlock(text, maxWidth) {
+  const lines = wrapText(text, maxWidth, L.labelFs);
+  const blockW = Math.max(...lines.map((ln) => textWidth(ln, L.labelFs)));
+  const blockH = lines.length * L.labelFs * L.lineH;
+  return { lines, blockW, blockH };
+}
+
+/** Max wrap width for a labelled edge parked above a pair of sibling frames. */
+function aboveLabelMaxWidth(wA, wB) {
+  return clamp(Math.max(wA, wB) * 0.6, 90, 220);
+}
+
+// #23: the label plate on a wedge between two sibling frames rides the wide end,
+// keeping L.tipClear of bare taper ahead of it, so the wedge still reads as
+// pointing at the consumer. Centring the plate in the gap (as this first did) left
+// only a sliver of the point showing. The three functions below keep the gap the
+// frames leave, the width the label wraps to, and the plate's position consistent:
+// gapMax caps how far apart two frames get pushed, and the wrap width is derived
+// from the gap actually granted, so the plate never eats into the point.
+const WEDGE = { gapMax: 220, platePad: 16 };
+
+/** Widest text block a wedge of length `len` can carry with its point still showing. */
+function wedgeLabelTextMax(len) {
+  return clamp(len - L.wedgeInset - L.tipClear - WEDGE.platePad, 90, WEDGE.gapMax - L.wedgeInset - L.tipClear - WEDGE.platePad);
+}
+
+/** Gap between two sibling frames that fits a wedge label plate plus a visible point. */
+function wedgeLabelSpan(plateW) {
+  return clamp(plateW + L.wedgeInset + L.tipClear, L.sideGap, WEDGE.gapMax);
+}
+
+/**
+ * Where a plate of width `plateW` sits along a wedge of length `len`, measured from
+ * the wide end: on the shoulder when the point still gets its clearance, centred
+ * when the wedge is too short for that (a single word wider than the gap cap).
+ */
+function wedgeLabelAlong(len, plateW) {
+  const shoulder = L.wedgeInset + plateW / 2;
+  return len - L.tipClear - plateW / 2 >= shoulder ? shoulder : len / 2;
+}
+
+/**
+ * #28: build a wrapped label plate parked above a shape, with a leader line
+ * down to it — the labelPos="above" positioning shared by every interaction
+ * mode (xaas wedges build their own variant inline, reaching past `topY`
+ * into the wedge itself; every other mode anchors the leader at `topY`).
+ */
+function aboveLabel(text, midX, topY, maxWidth, anchorY = topY) {
+  const { lines, blockW, blockH } = wrapBlock(text, maxWidth);
+  const plateW = blockW + 16, plateH = blockH + 8;
+  const bottomY = topY - L.leaderGap;
+  const label = { x: midX, y: bottomY - plateH / 2, text, lines, plateW, plateH };
+  const leader = { x: midX, y1: bottomY, y2: anchorY };
+  return { label, leader };
+}
+
+/**
+ * #28: approximate the bounding box of a team's own rendered label text, from
+ * boxes[] fields only (kind, rotate, lines, fs, labelZone, note, x/y/w/h) —
+ * mirrors teamSVG's textBlock/rotate placement. Used so an interaction shape
+ * (bridge, wedge, patch, band) never gets placed on top of a team's label.
+ */
+function teamLabelBBox(box) {
+  if (!box || !box.node) return null;
+  if (box.kind === 'frame') {
+    // a frame's label is an opaque patch centred on its bottom border (frameSVG)
+    const tw = textWidth(box.node.label, L.fs.group) + 16;
+    return { x: box.x + box.w / 2 - tw / 2, y: box.y + box.h - 10, w: tw, h: 20 };
+  }
+  if (box.kind === 'en' && box.rotate) {
+    const fs = box.fs + 1;
+    const tw = textWidth(box.node.label, fs) + 12, th = fs + 6;
+    return { x: box.x + box.w / 2 - th / 2, y: box.y + box.h / 2 - tw / 2, w: th, h: tw };
+  }
+  const lines = box.lines && box.lines.length ? box.lines : [box.node.label];
+  const lh = box.fs * L.lineH;
+  const textH = lines.length * lh;
+  const textW = Math.max(...lines.map((ln) => textWidth(ln, box.fs)));
+  const cx = box.labelZone ? (box.labelZone[0] + box.labelZone[1]) / 2 : box.x + box.w / 2;
+  const noteH = box.note && box.note.length ? L.noteFs * L.lineH + 2 : 0;
+  const cy = box.y + box.h / 2 - noteH / 2;
+  const pad = 4;
+  return { x: cx - textW / 2 - pad, y: cy - textH / 2 - pad, w: textW + pad * 2, h: textH + pad * 2 };
+}
+
+/**
+ * Slide a shape of height `h` (centred at `cy`, spanning `shapeW` across `cx`)
+ * up or down until it clears the rendered team labels of `P` and `Q`, staying
+ * inside the vertical band both boxes share so it still bridges them. Returns the
+ * original centre when nothing collides, or when no clear offset exists.
+ */
+function slideClear(cy, h, shapeW, cx, P, Q) {
+  const boxes = [P, Q];
+  const labels = boxes.map(teamLabelBBox)
+    .filter((b) => b && overlap1d(b.x, b.x + b.w, cx - shapeW / 2, cx + shapeW / 2) > 0);
+  const hit = (c) => labels.some((b) => c - h / 2 < b.y + b.h && c + h / 2 > b.y);
+  if (!hit(cy)) return cy;
+  const lo = Math.max(...boxes.map((b) => b.y)) + h / 2;
+  const hi = Math.min(...boxes.map((b) => b.y + b.h)) - h / 2;
+  const candidates = labels.flatMap((b) => [b.y + b.h + h / 2 + 4, b.y - h / 2 - 4]);
+  return candidates
+    .filter((c) => c >= lo && c <= hi && !hit(c))
+    .sort((a, b) => Math.abs(a - cy) - Math.abs(b - cy))[0] ?? cy;
+}
 
 function walk(node, fn) {
   fn(node);
@@ -401,7 +515,22 @@ function structure(children, model, forcedW = 0) {
     ...plats.map((n) => textWidth(n.label, L.fs.platform) + 48));
 
   const topLays = topFrames.map((c) => frame(c, model));
-  const topBandW = topLays.reduce((a, l) => a + l.w, 0) + Math.max(0, topLays.length - 1) * L.sideGap;
+  // #23 treatment A (default): a labelled xaas edge directly between two sibling
+  // top-level frames widens just its own gap to fit the wrapped label plate,
+  // instead of the flat sideGap. A labelPos="above" edge keeps the gap narrow —
+  // its label is parked above the frames instead (see frame() and layout()).
+  const xaasLabelGap = (idA, idB) => {
+    const it = model.interactions.find((i) => i.mode === 'xaas' && i.label && (i.labelPos || 'gap') === 'gap' &&
+      ((i.from === idA && i.to === idB) || (i.from === idB && i.to === idA)));
+    if (!it) return L.sideGap;
+    // wrap to the widest block the capped gap could ever carry; the wedge then
+    // re-wraps to the gap actually granted, which yields the same lines unless the
+    // cap bound, in which case it wraps tighter and still fits (see wedgeLabelTextMax)
+    const { blockW } = wrapBlock(it.label, wedgeLabelTextMax(WEDGE.gapMax));
+    return wedgeLabelSpan(blockW + WEDGE.platePad);
+  };
+  const topGaps = topLays.slice(0, -1).map((l, i) => xaasLabelGap(l.node.id, topLays[i + 1].node.id));
+  const topBandW = topLays.reduce((a, l) => a + l.w, 0) + topGaps.reduce((a, g) => a + g, 0);
   let botLays = botFrames.map((c) => frame(c, model));
   // slot columns always get their own room beside a band of child frames
   const innerW = Math.max(forcedW, hasStack ? leftW + labelW + rightW : 0, topBandW + (topLays.length ? leftW + rightW : 0),
@@ -421,11 +550,11 @@ function structure(children, model, forcedW = 0) {
     let bx = bandX0;
     const bandH = Math.max(...topLays.map((l) => l.h));
     const frameSpan = new Map();   // frame id -> [x0, x1], to size a rail that spans a subset of frames
-    for (const l of topLays) {
+    topLays.forEach((l, i) => {
       items.push({ kind: 'frame', node: l.node, x: bx, y, w: l.w, h: l.h, inner: l.inner });
       frameSpan.set(l.node.id, [bx, bx + l.w]);
-      bx += l.w + L.sideGap;
-    }
+      bx += l.w + (topGaps[i] ?? L.sideGap);
+    });
     y += bandH;
     // one shared rail row per facilitating enabling team, below the frame band; width
     // spans from the leftmost to the rightmost frame it targets (untargeted frames in
@@ -484,9 +613,23 @@ function structure(children, model, forcedW = 0) {
 function frame(node, model, forcedW = 0) {
   const inner = structure(node.children, model, forcedW);
   const w = Math.max(inner.w + 2 * L.pad, textWidth(node.label, L.fs.group) + 80);
+  // #23 treatment B: a labelled xaas edge directly between two of this frame's own
+  // child frames, with labelPos="above", parks its label above them (see layout()) —
+  // grow this frame's own top margin so the plate clears its dashed border.
+  const kids = inner.items.filter((it) => it.kind === 'frame');
+  let headroom = 0;
+  for (const it of model.interactions) {
+    if (it.mode !== 'xaas' || !it.label || (it.labelPos || 'gap') !== 'above') continue;
+    const A = kids.find((k) => k.node.id === it.from);
+    const B = kids.find((k) => k.node.id === it.to);
+    if (!A || !B) continue;
+    const { blockH } = wrapBlock(it.label, aboveLabelMaxWidth(A.w, B.w));
+    headroom = Math.max(headroom, blockH + 8 + L.leaderGap + L.topClear);
+  }
+  const frameTop = headroom ? L.frameTop + headroom : L.frameTop;
   inner.ox = (w - inner.w) / 2;
-  inner.oy = L.frameTop;
-  return { node, w, h: L.frameTop + inner.h + L.frameBottom, inner };
+  inner.oy = frameTop;
+  return { node, w, h: frameTop + inner.h + L.frameBottom, inner };
 }
 
 // ── geometry helpers ──
@@ -691,7 +834,15 @@ export function layout(model, opts = {}) {
         continue;
       }
       const slot = slots.find((s) => s.kind === 'wedge' && s.its.includes(inter));
-      const group = slot ? slot.its.filter((i) => boxes[i.to]) : [inter];
+      // #23: a fan-out from one provider to several targets with the same label text
+      // renders once, even when the targets aren't stack-siblings sharing a wedge slot
+      // (e.g. a nested provider fanning out to top-level consumers).
+      let group;
+      if (slot) group = slot.its.filter((i) => boxes[i.to]);
+      else if (inter.label) {
+        group = model.interactions.filter((i) => !handled.has(i) && i.mode === 'xaas' &&
+          i.from === inter.from && i.label === inter.label && boxes[i.to]);
+      } else group = [inter];
       for (const i of group) handled.add(i);
       // the wedge reaches the consumer farthest from the provider and covers the ones between
       const pc = center(P);
@@ -703,12 +854,15 @@ export function layout(model, opts = {}) {
         const y0 = Math.min(P.y + P.h, Q.y + Q.h), y1 = Math.max(P.y, Q.y);
         if (x1 - x0 >= 40 && y1 > y0) {
           const mid = (x0 + x1) / 2;
-          const step = L.wedgeW * 0.75;
-          const clash = (x) => corridors.some((c) => Math.abs(c.x - x) < step && c.y1 > y0 && c.y0 < y1);
+          // #23: when the wedge carries a real label, size the corridor to the
+          // label's plate (not just the bare wedge) so two free wedges from the
+          // same crowded stretch don't get labels that collide.
+          const step = inter.label ? Math.max(L.wedgeW * 0.75, textWidth(inter.label, L.labelFs) + 28) : L.wedgeW * 0.75;
+          const clash = (x) => corridors.some((c) => Math.abs(c.x - x) < Math.max(c.step, step) && c.y1 > y0 && c.y0 < y1);
           const candidates = [mid];
           for (let d = step; mid + d <= x1 - 20 || mid - d >= x0 + 20; d += step) { candidates.push(mid + d, mid - d); }
           xOverride = candidates.find((x) => x >= x0 + 20 && x <= x1 - 20 && !clash(x)) ?? mid;
-          corridors.push({ x: xOverride, y0, y1 });
+          corridors.push({ x: xOverride, y0, y1, step });
         }
       }
       const f = facing(P, Q, xOverride);
@@ -727,42 +881,149 @@ export function layout(model, opts = {}) {
         f.to,
       ];
       let label = null;
+      let leader = null;
       if (len >= 30) {
-        let along = Math.min(48, len * 0.3);
-        for (let a = along; a < len - 16; a += 16) {
-          if (!insideAny({ x: f.from.x + ux * a, y: f.from.y + uy * a }, [P, ...group.map((i) => boxes[i.to])])) { along = a; break; }
+        const text = inter.label || 'XaaS';
+        const labelPos = inter.labelPos || 'gap';
+        if (inter.label && labelPos === 'above' && P.kind === 'frame' && Q.kind === 'frame' && f.axis === 'h') {
+          // #23 treatment B: park the label above both frames, joined to the wedge
+          // by a short leader, instead of crowding the gap between them.
+          const { lines, blockW, blockH } = wrapBlock(text, aboveLabelMaxWidth(P.w, Q.w));
+          const plateW = blockW + 16, plateH = blockH + 8;
+          const midX = (f.from.x + f.to.x) / 2;
+          const bottomY = Math.min(P.y, Q.y) - L.leaderGap;
+          label = { x: midX, y: bottomY - plateH / 2, text, lines, plateW, plateH };
+          leader = { x: midX, y1: bottomY, y2: f.from.y };
+        } else {
+          // wrap to the room available along the wedge, on an opaque plate, so a
+          // long label breaks onto lines instead of overflowing.
+          const between = P.kind === 'frame' && Q.kind === 'frame';
+          const { lines, blockW, blockH } = wrapBlock(text, between ? wedgeLabelTextMax(len) : clamp(len - 20, 90, 220));
+          const plateW = blockW + WEDGE.platePad, plateH = blockH + 8;
+          let along;
+          if (between) {
+            // #23 treatment A: the gap between two sibling frames is sized to fit
+            // the plate plus a visible point (see xaasLabelGap in structure()), so
+            // the plate rides the wide end rather than hunting for a clear spot.
+            along = wedgeLabelAlong(len, plateW);
+          } else {
+            along = Math.min(48, len * 0.3);
+            for (let a = along; a < len - 16; a += 16) {
+              if (!insideAny({ x: f.from.x + ux * a, y: f.from.y + uy * a }, [P, ...group.map((i) => boxes[i.to])])) { along = a; break; }
+            }
+          }
+          label = { x: f.from.x + ux * along, y: f.from.y + uy * along, text, lines, plateW, plateH };
         }
-        label = { x: f.from.x + ux * along, y: f.from.y + uy * along, text: inter.label || 'XaaS' };
       }
-      edges.push({ inter, inters: group, geo: { kind: 'wedge', points, label, axis: f.axis } });
+      edges.push({ inter, inters: group, geo: { kind: 'wedge', points, label, leader, axis: f.axis } });
     } else if (inter.mode === 'collaboration' && intersect(P, Q)) {
       const small = P.w * P.h <= Q.w * Q.h ? P : Q;
       const text = inter.label || 'Collaboration';
-      const w = Math.max(small.w - 12, textWidth(text, L.labelFs) + 30), h = 30, k = 10;
-      const cx = small.x + small.w / 2, cy = small.y + small.h;
+      const above = inter.label && (inter.labelPos || 'gap') === 'above';
+      const k = 10;
+      let w, h;
+      if (above) { w = Math.max(small.w - 12, 60); h = 30; } else {
+        const { blockW, blockH } = wrapBlock(text, clamp(small.w - 32, 90, 220));
+        w = Math.max(small.w - 12, blockW + 30);
+        h = Math.max(30, blockH + 16);
+      }
+      let cx = small.x + small.w / 2, cy = small.y + small.h;
+      // #28: an embedded subsystem's octagon carries its own label — the bridge
+      // must never cover it (or the lane's label it also touches). Try clear of
+      // the octagon: below it inside the lane, then beside it, before falling
+      // back to the original position.
+      const sub = P.kind === 'sub' ? P : Q.kind === 'sub' ? Q : null;
+      if (sub) {
+        const other = sub === P ? Q : P;
+        const subLabel = teamLabelBBox(sub), otherLabel = teamLabelBBox(other);
+        const gap = 6;
+        const candidates = [
+          { x: sub.x + sub.w / 2, y: sub.y + sub.h + h / 2 + gap },
+          { x: sub.x + sub.w + w / 2 + gap, y: sub.y + sub.h / 2 },
+          { x: sub.x - w / 2 - gap, y: sub.y + sub.h / 2 },
+        ];
+        const clear = (c) => {
+          const bbox = { x: c.x - w / 2, y: c.y - h / 2, w, h };
+          return (!subLabel || !intersect(bbox, subLabel)) && (!otherLabel || !intersect(bbox, otherLabel));
+        };
+        const pick = candidates.find(clear) ?? candidates[0];
+        cx = pick.x; cy = pick.y;
+      }
+      let label, leader;
+      if (above) {
+        ({ label, leader } = aboveLabel(text, cx, cy - h / 2, aboveLabelMaxWidth(w, 0)));
+      } else {
+        const { lines } = wrapBlock(text, clamp(small.w - 32, 90, 220));
+        label = { x: cx, y: cy, text, lines, onShape: true };
+      }
       const points = [
         { x: cx - w / 2 + k, y: cy - h / 2 }, { x: cx + w / 2 + k, y: cy - h / 2 },
         { x: cx + w / 2 - k, y: cy + h / 2 }, { x: cx - w / 2 - k, y: cy + h / 2 },
       ];
-      edges.push({ inter, geo: { kind: 'bridge', points, label: { x: cx, y: cy, text } } });
+      edges.push({ inter, geo: { kind: 'bridge', points, label, leader } });
     } else if (inter.mode === 'collaboration') {
       const f = facing(P, Q);
       const cx = (f.from.x + f.to.x) / 2, cy = (f.from.y + f.to.y) / 2;
       const gap = Math.hypot(f.to.x - f.from.x, f.to.y - f.from.y);
       const text = inter.label || 'Collaboration';
-      const tw = textWidth(text, L.labelFs) + 24;
-      let w, h;
-      if (f.axis === 'h') { w = Math.max(gap + 12, tw); h = 40; } else { w = Math.max(120, tw); h = Math.max(gap + 24, 40); }
+      const above = inter.label && (inter.labelPos || 'gap') === 'above';
+      const minW = f.axis === 'h' ? gap + 12 : 120;
+      const minH = f.axis === 'h' ? 40 : Math.max(gap + 24, 40);
       const k = 14;
+      let w = minW, h = minH, cyShape = cy, label, leader;
+      if (above) {
+        ({ label, leader } = aboveLabel(text, cx, cy - h / 2, aboveLabelMaxWidth(w, 0)));
+      } else {
+        const { lines, blockW, blockH } = wrapBlock(text, clamp(minW - 24, 90, 220));
+        w = Math.max(minW, blockW + 30);
+        h = Math.max(minH, blockH + 16);
+        // #28: the shape straddles both P and Q — never let it grow into either
+        // one's own label. Shrink toward the available strip between their label
+        // bboxes (only meaningful for the common vertical-stack case).
+        if (f.axis === 'v') {
+          const aBox = teamLabelBBox(P), bBox = teamLabelBBox(Q);
+          if (aBox && bBox) {
+            const top = P.y < Q.y ? aBox : bBox, bottom = P.y < Q.y ? bBox : aBox;
+            const avail = bottom.y - (top.y + top.h) - 4;
+            if (avail > 20 && h > avail) h = avail;
+          }
+        } else {
+          // side by side, the shape cannot be narrower than its text, and a tall
+          // neighbour (an enabling bar reaching a sibling group, as in
+          // examples/org-groups.tt) carries its label right where the shape grows
+          // into it. Slide the shape along the overlap instead, minimum distance
+          // first, and keep it inside both boxes so it still reads as bridging them.
+          cyShape = slideClear(cyShape, h, w + 2 * k, cx, P, Q);
+        }
+        label = { x: cx, y: cyShape, text, lines, onShape: true };
+      }
       const points = [
-        { x: cx - w / 2 + k, y: cy - h / 2 }, { x: cx + w / 2 + k, y: cy - h / 2 },
-        { x: cx + w / 2 - k, y: cy + h / 2 }, { x: cx - w / 2 - k, y: cy + h / 2 },
+        { x: cx - w / 2 + k, y: cyShape - h / 2 }, { x: cx + w / 2 + k, y: cyShape - h / 2 },
+        { x: cx + w / 2 - k, y: cyShape + h / 2 }, { x: cx - w / 2 - k, y: cyShape + h / 2 },
       ];
-      edges.push({ inter, geo: { kind: 'bridge', points, label: { x: cx, y: cy, text } } });
+      edges.push({ inter, geo: { kind: 'bridge', points, label, leader } });
     } else {
       const r = intersect(P, Q);
       if (r) {
-        edges.push({ inter, geo: { kind: 'patch', rect: r, label: inter.label ? { x: r.x + r.w + 10, y: r.y + r.h / 2, text: inter.label, anchor: 'start' } : null } });
+        let label = null, leader = null;
+        if (inter.label) {
+          const above = (inter.labelPos || 'gap') === 'above';
+          if (above) {
+            // #28: anchor above the whole lane stack the enabling bar crosses, not
+            // just its own box or the narrow patch rect — an enabling bar can start
+            // partway down a stack (it only spans the lanes it facilitates), so a
+            // lane sitting above the bar's own top edge could still collide.
+            const enSlot = slots.find((s) => s.kind === 'en' && s.node.id === inter.from);
+            const topY = Math.min(enSlot?.lanesRange ? enSlot.lanesRange[0] : P.y, r.y);
+            ({ label, leader } = aboveLabel(inter.label, r.x + r.w / 2, topY, aboveLabelMaxWidth(r.w, 0), r.y + r.h / 2));
+          } else {
+            // #28: same wrap rule as xaas; the patch has no natural width constraint
+            // of its own (the label floats beside it), so wrap at the outer cap.
+            const { lines, blockW, blockH } = wrapBlock(inter.label, clamp(220, 90, 220));
+            label = { x: r.x + r.w + 10 + blockW / 2, y: r.y + r.h / 2, text: inter.label, lines, plateW: blockW + 16, plateH: blockH + 8 };
+          }
+        }
+        edges.push({ inter, geo: { kind: 'patch', rect: r, label, leader } });
       } else {
         const f = facing(P, Q);
         const dx = f.to.x - f.from.x, dy = f.to.y - f.from.y, len = Math.hypot(dx, dy);
@@ -772,8 +1033,21 @@ export function layout(model, opts = {}) {
           { x: f.from.x + nx * t, y: f.from.y + ny * t }, { x: f.to.x + nx * t, y: f.to.y + ny * t },
           { x: f.to.x - nx * t, y: f.to.y - ny * t }, { x: f.from.x - nx * t, y: f.from.y - ny * t },
         ];
-        const label = inter.label ? { x: (f.from.x + f.to.x) / 2 + nx * 24, y: (f.from.y + f.to.y) / 2 + ny * 24, text: inter.label } : null;
-        edges.push({ inter, geo: { kind: 'band', points, label } });
+        let label = null, leader = null;
+        if (inter.label) {
+          const above = (inter.labelPos || 'gap') === 'above';
+          if (above) {
+            const topY = Math.min(...points.map((p) => p.y));
+            ({ label, leader } = aboveLabel(inter.label, (f.from.x + f.to.x) / 2, topY, aboveLabelMaxWidth(len, 0)));
+          } else {
+            const { lines, blockW, blockH } = wrapBlock(inter.label, clamp(len - 20, 90, 220));
+            label = {
+              x: (f.from.x + f.to.x) / 2 + nx * 24, y: (f.from.y + f.to.y) / 2 + ny * 24,
+              text: inter.label, lines, plateW: blockW + 16, plateH: blockH + 8,
+            };
+          }
+        }
+        edges.push({ inter, geo: { kind: 'band', points, label, leader } });
       }
     }
   }
@@ -784,7 +1058,21 @@ export function layout(model, opts = {}) {
   for (const b of Object.values(boxes)) { grow(b.x, b.y); grow(b.x + b.w, b.y + b.h); }
   for (const { geo } of edges) {
     for (const p of geo.points || []) grow(p.x, p.y);
-    if (geo.label) { const hw = textWidth(geo.label.text, L.labelFs) / 2 + 6; grow(geo.label.x - hw, geo.label.y - 10); grow(geo.label.x + hw, geo.label.y + 10); }
+    if (geo.label) {
+      if (geo.label.plateW != null) {
+        const w = geo.label.plateW, h = geo.label.plateH;
+        grow(geo.label.x - w / 2, geo.label.y - h / 2); grow(geo.label.x + w / 2, geo.label.y + h / 2);
+      } else {
+        // #28: on-shape labels (e.g. collaboration labelPos=gap) have no plate —
+        // measure the wrapped lines directly. The shape itself is already sized
+        // to contain them, so this mostly just keeps growth calc accurate.
+        const lines = geo.label.lines || [geo.label.text];
+        const hw = Math.max(...lines.map((ln) => textWidth(ln, L.labelFs))) / 2 + 6;
+        const hh = (lines.length * L.labelFs * L.lineH) / 2 + 6;
+        grow(geo.label.x - hw, geo.label.y - hh); grow(geo.label.x + hw, geo.label.y + hh);
+      }
+    }
+    if (geo.leader) { grow(geo.leader.x, geo.leader.y1); grow(geo.leader.x, geo.leader.y2); }
   }
   const padL = Math.max(0, ox - minX), padT = Math.max(0, top - minY);
   if (padL || padT) {
@@ -794,6 +1082,7 @@ export function layout(model, opts = {}) {
       for (const p of geo.points || []) shift(p);
       if (geo.rect) shift(geo.rect);
       if (geo.label) shift(geo.label);
+      if (geo.leader) { geo.leader.x += padL; geo.leader.y1 += padT; geo.leader.y2 += padT; }
     }
     maxX += padL; maxY += padT;
   }
@@ -817,25 +1106,25 @@ export const THEMES = {
     bg: '#ffffff', text: '#1f2430', muted: '#6b7280', title: '#111827',
     flow: '#e5e7eb', flowText: '#4b5563', halo: '#ffffff',
     stream:    { fill: '#FFE9A8', stroke: '#E8C453', text: '#3b2f00' },
-    enabling:  { fill: '#C4B1E0', stroke: '#8E6BBF', text: '#2a1a55' },
+    enabling:  { fill: '#C4B1E0', stroke: '#8E6BBF', text: '#2a1a55', plate: '#C4B1E0' },
     subsystem: { fill: '#F6C79B', stroke: '#DE9A5C', text: '#4a2200' },
     platform:  { fill: '#BBD9F3', stroke: '#6FA6DD', text: '#0f2f55' },
     frame:     { fill: 'none', stroke: '#5B8FD6', text: '#3b76c4', platformFill: 'rgba(187,217,243,0.18)' },
-    collab:    { fill: 'rgba(196,177,224,0.85)', stroke: '#A58DCB', text: '#2a1a55' },
-    xaas:      { fill: 'rgba(120,124,132,0.32)', stroke: 'rgba(90,94,102,0.35)', text: '#3f4652' },
-    facil:     { dot: '#6B4FA8', fill: 'rgba(107,79,168,0.25)', text: '#4c3a85' },
+    collab:    { fill: 'rgba(196,177,224,0.85)', stroke: '#A58DCB', text: '#2a1a55', plate: '#cdbde5' },
+    xaas:      { fill: 'rgba(120,124,132,0.32)', stroke: 'rgba(90,94,102,0.35)', text: '#3f4652', plate: '#c6c8cb' },
+    facil:     { dot: '#6B4FA8', fill: 'rgba(107,79,168,0.25)', text: '#4c3a85', plate: '#cdc3e1' },
   },
   dark: {
     bg: '#0f172a', text: '#e5e7eb', muted: '#94a3b8', title: '#f8fafc',
     flow: '#1e293b', flowText: '#94a3b8', halo: '#0f172a',
     stream:    { fill: '#B8912A', stroke: '#FFD166', text: '#1a1400' },
-    enabling:  { fill: '#7C5CBF', stroke: '#C9BAEA', text: '#f3eefc' },
+    enabling:  { fill: '#7C5CBF', stroke: '#C9BAEA', text: '#f3eefc', plate: '#6647a8' },
     subsystem: { fill: '#C2661E', stroke: '#F8B98A', text: '#1f0e00' },
     platform:  { fill: '#2F6DB5', stroke: '#A9CCEF', text: '#eef5fc' },
     frame:     { fill: 'none', stroke: '#6FA3DC', text: '#9cc4ef', platformFill: 'rgba(47,109,181,0.18)' },
-    collab:    { fill: 'rgba(124,92,191,0.8)', stroke: '#C9BAEA', text: '#f3eefc' },
-    xaas:      { fill: 'rgba(203,213,225,0.28)', stroke: 'rgba(203,213,225,0.35)', text: '#e2e8f0' },
-    facil:     { dot: '#E0D4F5', fill: 'rgba(224,212,245,0.28)', text: '#d9ccf5' },
+    collab:    { fill: 'rgba(124,92,191,0.98)', stroke: '#C9BAEA', text: '#f6f2ff', plate: '#7a5bbc' },
+    xaas:      { fill: 'rgba(203,213,225,0.28)', stroke: 'rgba(203,213,225,0.35)', text: '#e2e8f0', plate: '#444c5d' },
+    facil:     { dot: '#E0D4F5', fill: 'rgba(224,212,245,0.28)', text: '#d9ccf5', plate: '#4a4c63' },
   },
 };
 
@@ -904,33 +1193,73 @@ function teamSVG(box, T, part = 'all', prefix = 'tt') {
   if (part === 'shape') {
     // label drawn separately
   } else if (box.rotate) {
-    parts.push(el('text', {
-      x: 0, y: 0, 'text-anchor': 'middle', 'font-size': L.fs.enabling + 1, 'font-weight': 600, fill: c.text,
-      transform: `translate(${num(x + w / 2 + 5)} ${num(y + h / 2)}) rotate(90)`,
-    }, esc(node.label)));
+    // #28: an enabling bar's rotated label can sit over the dotted facilitating
+    // pattern crossing it — give it an opaque plate in the enabling tint (rotated
+    // along with the text) so it stays legible over the dots.
+    const fs = L.fs.enabling + 1;
+    const tw = textWidth(node.label, fs) + 12, th = fs + 6;
+    parts.push(el('g', { transform: `translate(${num(x + w / 2 + 5)} ${num(y + h / 2)}) rotate(90)` }, [
+      el('rect', { x: -tw / 2, y: -th * 0.65, width: tw, height: th, rx: 3, fill: c.plate }),
+      el('text', { x: 0, y: 0, 'text-anchor': 'middle', 'font-size': fs, 'font-weight': 600, fill: c.text }, esc(node.label)),
+    ]));
   } else if (box.kind === 'rail') {
-    // the label sits directly on the facilitating dot pattern, so give it an opaque
-    // plate to stay legible (same treatment as wedge labels use for frame fills)
+    // a shared rail's label sits directly on the facilitating dot pattern, so it gets
+    // the same opaque enabling-tinted plate as the rotated bar label above
     const cy = y + h / 2;
-    const text = box.lines[0];
-    const plateW = textWidth(text, box.fs) + 16;
+    const plateW = textWidth(box.lines[0], box.fs) + 16;
     const plateH = box.fs * L.lineH + 8;
-    parts.push(el('rect', { x: cx - plateW / 2, y: cy - plateH / 2, width: plateW, height: plateH, rx: 4, fill: T.bg }));
+    parts.push(el('rect', { x: cx - plateW / 2, y: cy - plateH / 2, width: plateW, height: plateH, rx: 4, fill: c.plate }));
     parts.push(textBlock(box.lines, cx, cy, box.fs, c.text, { 'font-weight': 600 }));
   } else {
     const noteH = box.note.length ? L.noteFs * L.lineH + 2 : 0;
+    if (box.kind === 'en') {
+      // #28: a bar label that fits across the bar is drawn upright rather than
+      // rotated, but sits over the same facilitating dots — so it gets the same
+      // opaque enabling-tinted plate the rotated label and the rail label get.
+      const plateW = Math.max(...box.lines.map((ln) => textWidth(ln, box.fs))) + 10;
+      const plateH = box.lines.length * box.fs * L.lineH + 6;
+      parts.push(el('rect', { x: cx - plateW / 2, y: y + h / 2 - noteH / 2 - plateH / 2, width: plateW, height: plateH, rx: 3, fill: c.plate }));
+    }
     parts.push(textBlock(box.lines, cx, y + h / 2 - noteH / 2, box.fs, c.text, { 'font-weight': 600 }));
     if (box.note.length) parts.push(el('text', { x: cx, y: y + h / 2 + (box.lines.length * box.fs * L.lineH) / 2 + 8, 'text-anchor': 'middle', 'font-size': L.noteFs, fill: c.text, opacity: 0.8 }, esc(box.note[0])));
   }
   return el('g', { class: `tt-node tt-${node.type}`, 'data-id': node.id }, parts);
 }
 
-function labelSVG(label, color, T, extra = {}) {
+/**
+ * An edge label, possibly wrapped onto several lines, drawn on an opaque background
+ * plate coloured to match its interaction mode (#28), rather than a text-stroke
+ * halo — stays legible over frame fills, dashed borders and adjacent team labels.
+ * Every interaction mode's label gets this treatment.
+ */
+function plateLabelSVG(label, textColor, plateColor) {
   if (!label) return '';
-  return el('text', {
-    x: label.x, y: label.y + 4, 'text-anchor': label.anchor || 'middle', 'font-size': L.labelFs, 'font-weight': 500, fill: color,
-    stroke: T.halo, 'stroke-width': 3, 'paint-order': 'stroke', 'stroke-linejoin': 'round', ...extra,
-  }, esc(label.text));
+  const lines = label.lines && label.lines.length ? label.lines : [label.text];
+  const lh = L.labelFs * L.lineH;
+  const blockH = lines.length * lh;
+  const w = label.plateW ?? (Math.max(...lines.map((ln) => textWidth(ln, L.labelFs))) + 16);
+  const h = label.plateH ?? (blockH + 8);
+  const y0 = label.y - blockH / 2 + lh * 0.78;
+  return el('g', { class: 'tt-edge-label' }, [
+    el('rect', { x: label.x - w / 2, y: label.y - h / 2, width: w, height: h, rx: 4, fill: plateColor }),
+    el('text', { x: label.x, y: y0, 'text-anchor': 'middle', 'font-size': L.labelFs, 'font-weight': 500, fill: textColor },
+      lines.map((ln, i) => el('tspan', { x: label.x, dy: i === 0 ? 0 : lh }, esc(ln)))),
+  ]);
+}
+
+/**
+ * #28: a wrapped label drawn directly on its shape's own fill — no background
+ * plate — for the labelPos="gap" collaboration case, where a plate over the
+ * parallelogram reads as a sticker. The shape itself is sized to fit the text.
+ */
+function shapeLabelSVG(label, textColor) {
+  if (!label) return '';
+  const lines = label.lines && label.lines.length ? label.lines : [label.text];
+  const lh = L.labelFs * L.lineH;
+  const blockH = lines.length * lh;
+  const y0 = label.y - blockH / 2 + lh * 0.78;
+  return el('text', { x: label.x, y: y0, 'text-anchor': 'middle', 'font-size': L.labelFs, 'font-weight': 500, fill: textColor },
+    lines.map((ln, i) => el('tspan', { x: label.x, dy: i === 0 ? 0 : lh }, esc(ln))));
 }
 
 function edgeSVG({ inter, inters, geo }, lay, T, prefix) {
@@ -942,19 +1271,23 @@ function edgeSVG({ inter, inters, geo }, lay, T, prefix) {
   switch (geo.kind) {
     case 'wedge':
       parts.push(el('polygon', { points: pts(geo.points), fill: T.xaas.fill, stroke: inter.soon ? T.xaas.text : T.xaas.stroke, 'stroke-width': 1, 'stroke-linejoin': 'round', ...soon }));
-      parts.push(labelSVG(geo.label, T.xaas.text, T, { stroke: 'none' }));
+      if (geo.leader) parts.push(el('line', { x1: geo.leader.x, y1: geo.leader.y1, x2: geo.leader.x, y2: geo.leader.y2, stroke: T.xaas.stroke, 'stroke-width': 1.5, 'stroke-dasharray': '3 3' }));
+      parts.push(plateLabelSVG(geo.label, T.xaas.text, T.xaas.plate));
       break;
     case 'bridge':
       parts.push(el('polygon', { points: pts(geo.points), fill: T.collab.fill, stroke: T.collab.stroke, 'stroke-width': 1.5, 'stroke-linejoin': 'round', ...soon }));
-      parts.push(labelSVG(geo.label, T.collab.text, T, { stroke: 'none' }));
+      if (geo.leader) parts.push(el('line', { x1: geo.leader.x, y1: geo.leader.y1, x2: geo.leader.x, y2: geo.leader.y2, stroke: T.collab.stroke, 'stroke-width': 1.5, 'stroke-dasharray': '3 3' }));
+      parts.push(geo.label && geo.label.onShape ? shapeLabelSVG(geo.label, T.collab.text) : plateLabelSVG(geo.label, T.collab.text, T.collab.plate));
       break;
     case 'patch':
       parts.push(el('rect', { x: geo.rect.x, y: geo.rect.y, width: geo.rect.w, height: geo.rect.h, fill: `url(#${prefix}-dots)`, stroke: inter.soon ? T.facil.dot : null, ...soon }));
-      parts.push(labelSVG(geo.label, T.facil.text, T));
+      if (geo.leader) parts.push(el('line', { x1: geo.leader.x, y1: geo.leader.y1, x2: geo.leader.x, y2: geo.leader.y2, stroke: T.facil.dot, 'stroke-width': 1.5, 'stroke-dasharray': '3 3' }));
+      parts.push(plateLabelSVG(geo.label, T.facil.text, T.facil.plate));
       break;
     case 'band':
       parts.push(el('polygon', { points: pts(geo.points), fill: `url(#${prefix}-dots)`, stroke: T.facil.dot, 'stroke-width': 1, 'stroke-dasharray': '2 3', opacity: inter.soon ? 0.55 : null }));
-      parts.push(labelSVG(geo.label, T.facil.text, T));
+      if (geo.leader) parts.push(el('line', { x1: geo.leader.x, y1: geo.leader.y1, x2: geo.leader.x, y2: geo.leader.y2, stroke: T.facil.dot, 'stroke-width': 1.5, 'stroke-dasharray': '3 3' }));
+      parts.push(plateLabelSVG(geo.label, T.facil.text, T.facil.plate));
       break;
     case 'boundary':
       parts.push(el('polygon', { points: pts(geo.marker), fill: T.xaas.fill, stroke: inter.soon ? T.xaas.text : T.xaas.stroke, 'stroke-width': 1, 'stroke-linejoin': 'round', ...soon }));

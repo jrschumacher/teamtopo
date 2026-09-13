@@ -1,0 +1,21 @@
+teamTopology
+  title Interactions between sibling groups
+
+  %% A platform group providing a capability to a product group, and the same
+  %% relationship with the label parked above the wedge instead of on it.
+  platform cloud "Cloud Platform" {
+    group provider "Provider Group" {
+      stream services "Platform Services"
+    }
+
+    group consumer "Product Group" {
+      stream app "App"
+    }
+
+    group audit "Audit Group" {
+      stream trail "Audit Trail"
+    }
+
+    provider --> consumer : platform capabilities
+    consumer --> audit    : tenant policy decisions [labelPos=above]
+  }
