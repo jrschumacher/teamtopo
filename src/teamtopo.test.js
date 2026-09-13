@@ -639,3 +639,94 @@ test('teamApis markdown is stable for every example', () => {
     assert.equal(actual, golden[f], f);
   }
 });
+
+// ── team identity ──
+
+const TEAM_SRC = `teamTopology
+  stream desktop "Desktop"
+  stream sharepoint "SharePoint Proxy"
+  subsystem crypto "Crypto"
+  team alpha "Alpha"
+  alpha owns desktop, sharepoint
+  api alpha {
+    focus: endpoint protection
+  }`;
+
+test('declares teams and resolves ownership', () => {
+  const m = parse(TEAM_SRC);
+  assert.equal(m.orgTeams.length, 1);
+  const alpha = m.orgTeams[0];
+  assert.equal(alpha.isTeam, true);
+  assert.equal(alpha.label, 'Alpha');
+  assert.deepEqual(alpha.owns, ['desktop', 'sharepoint']);
+  assert.deepEqual(alpha.load, { streams: 2, nodes: 2 });
+  assert.deepEqual(m.index.desktop.owners, ['alpha']);
+  assert.deepEqual(m.index.crypto.owners, []);
+  assert.equal(m.index.alpha.api.focus, 'endpoint protection');
+  assert.deepEqual(m.diagnostics.length >= 0, true);
+});
+
+test('owns accumulates across lines, deduped, and counts only streams', () => {
+  const m = parse(`teamTopology
+    stream desktop "Desktop"
+    subsystem crypto "Crypto"
+    team alpha "Alpha"
+    alpha owns desktop
+    alpha owns crypto, desktop`);
+  assert.deepEqual(m.orgTeams[0].owns, ['desktop', 'crypto']);
+  assert.deepEqual(m.orgTeams[0].load, { streams: 1, nodes: 2 });
+  assert.equal(m.orgTeams[0].ownsLine, 6);
+});
+
+test('a placeholder team with no owns line is valid', () => {
+  const m = parse('teamTopology\nteam alpha "Alpha"');
+  assert.deepEqual(m.orgTeams[0].owns, []);
+  assert.deepEqual(m.orgTeams[0].load, { streams: 0, nodes: 0 });
+});
+
+test('owns is matched before the node keywords and only for non-keyword ids', () => {
+  for (const id of ['sales', 'engineering', 'platform_core']) {
+    const m = parse(`teamTopology\nstream x "X"\nteam ${id} "T"\n${id} owns x`);
+    assert.deepEqual(m.orgTeams[0].owns, ['x'], id);
+  }
+  const m = parse('teamTopology\nstream owns "Owns"');
+  assert.equal(m.index.owns.type, 'stream');
+  assert.equal(m.orgTeams.length, 0);
+});
+
+test('team and owns keywords are case-insensitive', () => {
+  const m = parse('teamTopology\nstream x "X"\nTEAM alpha "Alpha"\nalpha OWNS x');
+  assert.deepEqual(m.orgTeams[0].owns, ['x']);
+});
+
+test('team identity errors', () => {
+  const cases = [
+    ['teamTopology\nstream x\nteam x "X"', /duplicate identifier "x"/, 3],
+    ['teamTopology\nteam a "A"\nteam a "A2"', /duplicate identifier "a"/, 3],
+    ['teamTopology\nstream x\na owns x', /"a" is not a team/, 3],
+    ['teamTopology\nteam a "A"\na owns nope', /owns names an unknown team "nope"/, 3],
+    ['teamTopology\ngroup g {\nstream x\n}\nteam a "A"\na owns g', /"g" is a container/, 6],
+    ['teamTopology\nstream x\nteam a "A"\na owns x\napi x {\n  focus: f\n}',
+      /api x belongs to team a, which owns x; move these fields into "api a"/, 5],
+    ['teamTopology\nstream x\nteam a "A"\na owns x\na --> x', /"a" is a team, not a node; use one of the nodes it owns \(x\)/, 5],
+  ];
+  for (const [src, re, line] of cases) {
+    assert.throws(() => parse(src), (e) => e instanceof ParseError && re.test(e.message) && e.line === line, src);
+  }
+});
+
+test('apiFields is parsed into the model and otherwise unused', () => {
+  const m = parse(`teamTopology
+  apiFields {
+    focus
+    tier: gold | silver | bronze
+
+    wiki
+  }
+  stream x "X"`);
+  assert.deepEqual(m.apiFields, [
+    { key: 'focus', choices: [], group: 0 },
+    { key: 'tier', choices: ['gold', 'silver', 'bronze'], group: 0 },
+    { key: 'wiki', choices: [], group: 1 },
+  ]);
+});

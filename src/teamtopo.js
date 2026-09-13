@@ -72,6 +72,10 @@ const RE_INTERACTION = new RegExp(
   `^(${ID}(?:\\s*,\\s*${ID})*)\\s*(<-->|<->|-->|<--|~~>|<~~)\\s*(${ID}(?:\\s*,\\s*${ID})*)\\s*(?::\\s*("(?:[^"\\\\]|\\\\.)*"|[^\\[]*?))?\\s*(?:\\[([^\\]]*)\\])?\\s*$`);
 const RE_API_OPEN = new RegExp(`^api\\s+(${ID})\\s*\\{$`, 'i');
 const RE_API_FIELD = /^([^:]+?)\s*:\s*(.*)$/;
+const RE_TEAM = new RegExp(`^team\\s+(${ID})(.*)$`, 'i');
+const RE_OWNS = new RegExp(`^(${ID})\\s+owns\\s+(${ID}(?:\\s*,\\s*${ID})*)\\s*$`, 'i');
+const RE_APIFIELDS_OPEN = /^apifields\s*\{$/i;
+const RE_APIFIELD_LINE = /^([A-Za-z_][\w-]*)\s*(?::\s*(.*))?$/;
 
 function stripComment(line, slashes = true) {
   let inQuote = false;
@@ -101,20 +105,30 @@ function parseAttrs(src) {
  * Parse diagram source into a model:
  * {
  *   title, flow, legend,
- *   nodes:        top-level node tree (each node: id, type, label, attrs, api, children, parent, line)
+ *   nodes:        top-level node tree (each node: id, type, label, attrs, api, owners, children, parent, line)
  *   teams:        flat list of every node (containers included), declaration order
+ *   orgTeams:     real teams, declaration order: { isTeam, id, label, attrs, api, owns, load, ownsLine, line }
  *   interactions: [{ mode, from, to, label, attrs, soon, duration, line }]
- *   index:        id → node
+ *   apiFields:    document-level Team API schema: [{ key, choices, group }]
+ *   diagnostics:  non-fatal findings: [{ level, code, line, message }] — always an array
+ *   index:        id → node | team (a team has isTeam === true)
  * }
+ * A node whose `owners` list is non-empty is not a team: it is work owned by the teams
+ * named there, and its Team API lives on the owning team.
  * For `xaas`, `from` is the provider and `to` the consumer.
  * For `facilitating`, `from` is the facilitator.
  */
 export function parse(source) {
   if (typeof source !== 'string') throw new TypeError('parse() expects a string');
-  const model = { title: '', flow: null, legend: false, nodes: [], teams: [], interactions: [], index: {} };
-  const stack = [];   // open containers
-  const apis = [];    // { id, fields, line }
-  let api = null;     // open api block
+  const model = {
+    title: '', flow: null, legend: false, nodes: [], teams: [], orgTeams: [],
+    interactions: [], apiFields: [], diagnostics: [], index: {},
+  };
+  const stack = [];     // open containers
+  const apis = [];      // { id, fields, line }
+  const ownsLines = []; // { team, ids, line }
+  let api = null;       // open api block
+  let fieldsBlock = false, fieldsGroup = 0;
   let sawHeader = false;
 
   const lines = source.split(/\r?\n/);
@@ -122,6 +136,19 @@ export function parse(source) {
     const lineNo = i + 1;
     // inside an api block only %% starts a comment, so URLs survive
     const line = stripComment(lines[i], !api).trim();
+
+    // a document-level apiFields schema: field names in render order, blank lines separating
+    // groups, an optional "key: a | b | c" choice list. Parsed here, rendered by nothing yet.
+    if (fieldsBlock) {
+      if (!line) { fieldsGroup++; continue; }
+      if (line === '}') { fieldsBlock = false; continue; }
+      const fm = RE_APIFIELD_LINE.exec(line);
+      if (!fm) throw new ParseError(`expected a field name inside the apiFields block`, lineNo);
+      const choices = fm[2] ? fm[2].split('|').map((s) => s.trim()).filter(Boolean) : [];
+      model.apiFields.push({ key: fm[1], choices, group: fieldsGroup });
+      continue;
+    }
+
     if (!line) continue;
 
     if (api) {
@@ -143,6 +170,7 @@ export function parse(source) {
     if ((m = /^title\s+(.+)$/i.exec(line))) { model.title = stripQuotes(m[1]); continue; }
     if ((m = /^flow(?:\s+(.+))?$/i.exec(line))) { model.flow = m[1] ? stripQuotes(m[1]) : 'Flow of change'; continue; }
     if (/^legend$/i.test(line)) { model.legend = true; continue; }
+    if (RE_APIFIELDS_OPEN.test(line)) { fieldsBlock = true; fieldsGroup = 0; continue; }
 
     if (line === '}') {
       if (!stack.length) throw new ParseError('unexpected "}" — no open block', lineNo);
@@ -171,6 +199,35 @@ export function parse(source) {
           model.interactions.push({ mode: op.mode, from, to, label, attrs, soon, duration: attrs.duration || '', line: lineNo });
         }
       }
+      continue;
+    }
+
+    // ownership, tried BEFORE RE_NODE: that regex has no word boundary after the keyword, so
+    // "sales owns x" would match the "sa" alias and die as "sa needs an identifier". The guard
+    // that keeps "stream owns \"Owns\"" a node declaration is the left-hand side instead —
+    // ownership only matches when the LHS is not an exact type keyword or alias.
+    if ((m = RE_OWNS.exec(line)) && !(m[1].toLowerCase() in TYPE_ALIASES)) {
+      ownsLines.push({ team: m[1], ids: m[2].split(',').map((s) => s.trim()), line: lineNo });
+      continue;
+    }
+
+    // team declaration: a real team, which owns streams and capabilities rather than being one
+    if ((m = RE_TEAM.exec(line))) {
+      const id = m[1];
+      if (model.index[id]) throw new ParseError(`duplicate identifier "${id}" (first declared on line ${model.index[id].line})`, lineNo);
+      let rest = m[2], label = id, attrs = {}, q;
+      if ((q = RE_QUOTED.exec(rest))) { label = unescape(q[1]); rest = rest.slice(q[0].length); }
+      else {
+        const cut = rest.search(/\[/);
+        const raw = (cut === -1 ? rest : rest.slice(0, cut)).trim();
+        if (raw) label = raw;
+        rest = cut === -1 ? '' : rest.slice(cut);
+      }
+      if ((q = RE_ATTRS.exec(rest))) { attrs = parseAttrs(q[1]); rest = rest.slice(q[0].length); }
+      if (rest.trim()) throw new ParseError(`unexpected "${rest.trim()}" after team declaration`, lineNo);
+      const team = { isTeam: true, id, label, attrs, api: null, owns: [], load: { streams: 0, nodes: 0 }, ownsLine: lineNo, line: lineNo };
+      model.orgTeams.push(team);
+      model.index[id] = team;
       continue;
     }
 
@@ -205,7 +262,7 @@ export function parse(source) {
       }
 
       const parent = stack.length ? stack[stack.length - 1] : null;
-      const node = { id, type, label, attrs, api: null, children: [], parent: parent ? parent.id : null, line: lineNo };
+      const node = { id, type, label, attrs, api: null, owners: [], children: [], parent: parent ? parent.id : null, line: lineNo };
       (parent ? parent.children : model.nodes).push(node);
       model.teams.push(node);
       model.index[id] = node;
@@ -222,16 +279,45 @@ export function parse(source) {
     const open = stack[stack.length - 1];
     throw new ParseError(`block for "${open.id}" opened on line ${open.line} is never closed with "}"`, lines.length);
   }
+  // resolve ownership once the whole file is read, so an owns line may name streams declared
+  // after it, or nested inside a group or platform block
+  for (const o of ownsLines) {
+    const team = model.index[o.team];
+    if (!team || !team.isTeam) throw new ParseError(`"${o.team}" is not a team; declare it with "team ${o.team} \\"...\\"" before an owns line`, o.line);
+    for (const id of o.ids) {
+      const node = model.index[id];
+      if (!node || node.isTeam) throw new ParseError(`owns names an unknown team "${id}"`, o.line);
+      if (node.children.length) throw new ParseError(`"${id}" is a container; a team can only own leaf teams, not a "{ ... }" block`, o.line);
+      if (!team.owns.includes(id)) team.owns.push(id);
+      if (!node.owners.includes(team.id)) node.owners.push(team.id);
+    }
+    team.ownsLine = o.line;
+  }
+  // the single source for the cognitive-load numbers: the diagnostic, the legend and the
+  // Team API all read this, none of them recomputes it
+  for (const t of model.orgTeams) {
+    t.load = {
+      streams: t.owns.filter((id) => model.index[id].type === 'stream').length,
+      nodes: t.owns.length,
+    };
+  }
+
   for (const a of apis) {
-    const node = model.index[a.id];
-    if (!node) throw new ParseError(`api block for unknown team "${a.id}"`, a.line);
-    node.api = { ...(node.api || {}), ...a.fields };
+    const target = model.index[a.id];
+    if (!target) throw new ParseError(`api block for unknown team "${a.id}"`, a.line);
+    if (!target.isTeam && target.owners.length) {
+      const owner = target.owners[0];
+      throw new ParseError(`api ${a.id} belongs to team ${owner}, which owns ${a.id}; move these fields into "api ${owner}"`, a.line);
+    }
+    target.api = { ...(target.api || {}), ...a.fields };
   }
 
   // validate interactions
   for (const it of model.interactions) {
     for (const end of ['from', 'to']) {
-      if (!model.index[it[end]]) throw new ParseError(`unknown team "${it[end]}"`, it.line);
+      const entry = model.index[it[end]];
+      if (!entry) throw new ParseError(`unknown team "${it[end]}"`, it.line);
+      if (entry.isTeam) throw new ParseError(`"${it[end]}" is a team, not a node; use one of the nodes it owns (${entry.owns.join(', ') || 'none yet'})`, it.line);
     }
     if (it.from === it.to) throw new ParseError(`"${it.from}" cannot interact with itself`, it.line);
     if (isAncestor(model, it.from, it.to) || isAncestor(model, it.to, it.from)) {

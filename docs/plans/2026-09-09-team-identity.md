@@ -162,7 +162,7 @@ EOF
     - `"alpha" is not a team; declare it with "team alpha \"...\"" before an owns line`
     - `owns names an unknown team "foo"`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `src/teamtopo.test.js`:
 
@@ -259,12 +259,12 @@ test('apiFields is parsed into the model and otherwise unused', () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `node --test src/teamtopo.test.js 2>&1 | tail -n 20`
 Expected: FAIL — `m.orgTeams` is undefined, and the `team`/`owns` sources throw `cannot understand`.
 
-- [ ] **Step 3: Add the regexes**
+- [x] **Step 3: Add the regexes**
 
 In `src/teamtopo.js`, after `const RE_API_FIELD = ...` (line 74):
 
@@ -275,7 +275,7 @@ const RE_APIFIELDS_OPEN = /^apifields\s*\{$/i;
 const RE_APIFIELD_LINE = /^([A-Za-z_][\w-]*)\s*(?::\s*(.*))?$/;
 ```
 
-- [ ] **Step 4: Initialise the new model keys and the new collectors**
+- [x] **Step 4: Initialise the new model keys and the new collectors**
 
 Replace `src/teamtopo.js:114-117` with:
 
@@ -292,7 +292,7 @@ Replace `src/teamtopo.js:114-117` with:
   let sawHeader = false;
 ```
 
-- [ ] **Step 5: Parse the `apiFields` block**
+- [x] **Step 5: Parse the `apiFields` block**
 
 In the loop, between `const line = stripComment(...)` and `if (!line) continue;` (currently `src/teamtopo.js:124-125`), insert:
 
@@ -314,7 +314,7 @@ And in the directives section, beside the `legend` directive (`src/teamtopo.js:1
     if (RE_APIFIELDS_OPEN.test(line)) { fieldsBlock = true; fieldsGroup = 0; continue; }
 ```
 
-- [ ] **Step 6: Parse `owns` and `team`, before the node branch**
+- [x] **Step 6: Parse `owns` and `team`, before the node branch**
 
 Insert immediately **before** `// node declaration` / `if ((m = RE_NODE.exec(line)))` (`src/teamtopo.js:177-178`):
 
@@ -349,7 +349,7 @@ Insert immediately **before** `// node declaration` / `if ((m = RE_NODE.exec(lin
     }
 ```
 
-- [ ] **Step 7: Resolve ownership and compute `load`, before the api pass**
+- [x] **Step 7: Resolve ownership and compute `load`, before the api pass**
 
 Insert immediately **before** `for (const a of apis) {` (`src/teamtopo.js:225`):
 
@@ -374,7 +374,7 @@ Insert immediately **before** `for (const a of apis) {` (`src/teamtopo.js:225`):
   }
 ```
 
-- [ ] **Step 8: Give every node an `owners` array**
+- [x] **Step 8: Give every node an `owners` array**
 
 At `src/teamtopo.js:208`, add `owners: []` to the node literal:
 
@@ -382,7 +382,7 @@ At `src/teamtopo.js:208`, add `owners: []` to the node literal:
       const node = { id, type, label, attrs, api: null, owners: [], children: [], parent: parent ? parent.id : null, line: lineNo };
 ```
 
-- [ ] **Step 9: Reject an `api` block on an owned node**
+- [x] **Step 9: Reject an `api` block on an owned node**
 
 Replace the api-resolution loop body (`src/teamtopo.js:225-229`) with:
 
@@ -398,7 +398,7 @@ Replace the api-resolution loop body (`src/teamtopo.js:225-229`) with:
   }
 ```
 
-- [ ] **Step 10: Reject a team id as an interaction endpoint**
+- [x] **Step 10: Reject a team id as an interaction endpoint**
 
 Replace the endpoint check in the interaction validation loop (`src/teamtopo.js:233-235`) with:
 
@@ -410,12 +410,12 @@ Replace the endpoint check in the interaction validation loop (`src/teamtopo.js:
     }
 ```
 
-- [ ] **Step 11: Run the tests**
+- [x] **Step 11: Run the tests**
 
 Run: `npm test 2>&1 | tail -n 20`
 Expected: PASS — the new tests and Task 1's two corpus tests.
 
-- [ ] **Step 12: Commit**
+- [x] **Step 12: Commit**
 
 ```bash
 git add src/teamtopo.js src/teamtopo.test.js
