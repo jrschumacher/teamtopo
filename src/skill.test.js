@@ -25,7 +25,11 @@ test('every ```tt snippet in skills/teamtopo parses', () => {
     ttBlocks(readFileSync(join(skillDir, file), 'utf8')).forEach((source, i) => {
       count++;
       try {
-        parse(source);
+        const model = parse(source);
+        if (!/^\s*team\s+/m.test(source)) {
+          assert.deepEqual(model.orgTeams, [], 'no team declared, so orgTeams must be empty');
+        }
+        assert.deepEqual(Array.isArray(model.diagnostics), true);
       } catch (e) {
         assert.fail(`${file} block #${i + 1}: ${e.message}\n${source}`);
       }

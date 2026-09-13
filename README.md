@@ -73,6 +73,30 @@ Indentation is ignored.
   Teams declared inside are laid out inside the container. A platform block is the
   book's *platform grouping*: a platform that is itself a topology of teams.
 
+### Real teams
+
+A `stream` or `platform` is a *stream of work*, not necessarily a team. When one real team
+owns several of them, declare the team and say what it owns:
+
+```
+team endpoint "Endpoint Team"
+endpoint owns desktop, mail
+```
+
+- `team <id> ["Label"] [attrs]` declares a real team. Team ids share the identifier
+  namespace with teams-in-the-diagram, so an id can only be used once.
+- `<team> owns a, b` may appear anywhere in the file, before or after the nodes it names,
+  and repeats accumulate. A team may own leaf teams only, not a `{ ... }` container.
+- A node a team owns is **work, not a team**: it carries an `owners` list, gets a chip in
+  the diagram, and no longer has a Team API of its own — the team has one instead.
+- Several teams may own the same node; the node gets a chip for each.
+- A team with no `owns` line is a valid placeholder: it gets a Team API and draws nothing.
+
+Its `api` block goes on the team, and an `api` block on an owned node is an error telling
+you where to move it. A team aligned to more than one stream is reported as a warning on
+stderr (and in `--json` under `diagnostics`), because that team carries the cognitive load
+of every stream it owns.
+
 ### Interactions
 
 | Syntax | Mode | Meaning |
@@ -198,7 +222,9 @@ node src/cli.js --api --team checkout examples/ecommerce.tt  # one team
 | Template field | Where it comes from |
 |---|---|
 | Team name and focus | the team's label, plus `focus` from its `api` block |
-| Team type | the team keyword |
+| Team type | the team keyword, or the union of the keywords a real team owns |
+| Owns / Streams | the team's `owns` list and its stream count; more than one stream adds a cognitive-load note |
+| Internal | interactions between two nodes the same team owns |
 | Part of a Platform? | whether the team is declared inside a `platform { }` block, plus `platform` from the `api` block |
 | Do we provide a service to other teams? | outgoing `-->` interactions and their labels, plus `service` |
 | Service Level Expectations, software, versioning, wiki, chat, sync | the `api` block (`sle`, `software`, `versioning`, `wiki`, `chat`, `sync`) |
@@ -217,11 +243,13 @@ The document layout follows the Team API template by Team Topologies, licensed
 ```js
 import { parse, layout, render, teamApi, teamApis } from './src/teamtopo.js';
 
-const model = parse(source);              // { title, flow, legend, nodes, teams, interactions, index }
+const model = parse(source);              // { title, flow, legend, nodes, teams, orgTeams,
+                                          //   interactions, apiFields, diagnostics, index }
 const lay = layout(model);                // { width, height, boxes, edges, ... }
 const svg = render(source, { theme: 'dark' });   // or render(model, opts)
 const md = teamApi(model, 'checkout', { date: '2026-01-02' });   // one Team API document
-const all = teamApis(model);              // [{ id, label, markdown }] for every team
+const all = teamApis(model);              // [{ id, label, markdown }]: one per real team,
+                                          //   then one per node no team owns
 ```
 
 `render` options: `theme` (`'light'`, `'dark'`, or a theme object), `legend` (override the

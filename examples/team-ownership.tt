@@ -1,0 +1,27 @@
+teamTopology
+  title One team, several streams
+  legend
+
+  stream desktop    "Desktop client"
+  stream mail       "Mail add-in"
+  stream gateway    "Gateway"
+  platform infra    "Shared platform"
+
+  team endpoint "Endpoint Team"
+  team edge     "Edge Team"
+
+  endpoint owns desktop, mail
+  edge owns gateway
+
+  infra --> desktop, mail, gateway : build & release
+  desktop <--> mail : shared installer
+  gateway <--> desktop : token exchange
+
+  api endpoint {
+    focus: everything that runs on a user's machine
+    chat: #endpoint
+  }
+
+  api edge {
+    focus: north-south traffic
+  }

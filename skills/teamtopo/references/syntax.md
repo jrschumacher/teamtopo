@@ -127,6 +127,35 @@ teamTopology
   boundaries (`saas --> content` from a platform grouping to a group).
 - A group with no children is drawn as a lane.
 
+## Real teams
+
+```tt
+teamTopology
+  stream desktop "Desktop client"
+  stream mail "Mail add-in"
+  team endpoint "Endpoint Team"
+  endpoint owns desktop, mail
+  api endpoint {
+    focus: everything that runs on a user's machine
+  }
+```
+
+`team <id> ["Label"]` declares a real team; `<team> owns a, b` binds it to the streams or
+capabilities it owns, anywhere in the file, accumulating across lines. Owned nodes lose
+their own Team API to the team's. Leaf teams only — a team cannot own a `{ ... }` container.
+An `api` block on an owned node is a parse error naming the owning team.
+
+- An owned node is **work, not a team**: `node.owners` names the teams that own it, and
+  `model.orgTeams[].load` carries `{ streams, nodes }` for each team.
+- Both keywords are case-insensitive, and a team id shares the identifier namespace with
+  the teams in the diagram, so it must be unique.
+- A team id cannot be an interaction endpoint — interactions stay between nodes, and the
+  team's Team API aggregates them, with same-team edges under an `### Internal` heading.
+- A team with no `owns` line is a placeholder: it gets a Team API and draws nothing.
+- A team aligned to more than one stream produces a non-fatal warning in
+  `model.diagnostics` (CLI: stderr; `--json`: a `diagnostics` key). That is the point of
+  the feature, not a failure — the cost is meant to be visible.
+
 ## Interactions
 
 ```
@@ -238,5 +267,10 @@ Every error carries a line number; the CLI prints `file:line: message` and exits
 | `expected "field: value" inside the api block for "x"` | an `api` line without `:` |
 | `api block for unknown team "x"` | `api` id not declared |
 | `unknown team "x"` | interaction end not declared; typical after a rename or split |
+| `"a" is not a team; declare it with "team a \"...\"" before an owns line` | the left side of an `owns` line is not a declared `team` |
+| `owns names an unknown team "x"` | an `owns` line names an id that is not a declared node |
+| `"g" is a container; a team can only own leaf teams, not a "{ ... }" block` | a team may own leaf teams only; list the ids inside the container instead |
+| `api x belongs to team a, which owns x; move these fields into "api a"` | Team API fields live on the owning team, never on an owned node |
+| `"a" is a team, not a node; use one of the nodes it owns (x)` | a team id used as an interaction endpoint |
 | `"x" cannot interact with itself` | same id on both sides |
 | `"a" and "b" are nested; a team cannot interact with its own container` | interaction between a block and one of its descendants |

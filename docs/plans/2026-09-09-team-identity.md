@@ -1482,7 +1482,7 @@ EOF
 - Consumes: the full syntax from Tasks 2-7.
 - Produces: no code interface. The new example flows into Task 1's two corpus tests automatically, so the Team API golden must be regenerated in this task (the only sanctioned regeneration in this plan, because a genuinely new file is being added).
 
-- [ ] **Step 1: Extend the skill fence test**
+- [x] **Step 1: Extend the skill fence test**
 
 In `src/skill.test.js`, replace the body of the first test's `forEach` callback with:
 
@@ -1501,12 +1501,12 @@ In `src/skill.test.js`, replace the body of the first test's `forEach` callback 
     });
 ```
 
-- [ ] **Step 2: Run it**
+- [x] **Step 2: Run it**
 
 Run: `node --test src/skill.test.js 2>&1 | tail -n 10`
 Expected: PASS — all 18 existing fences declare no team.
 
-- [ ] **Step 3: Write the new example**
+- [x] **Step 3: Write the new example**
 
 Create `examples/team-ownership.tt`:
 
@@ -1540,7 +1540,7 @@ teamTopology
   }
 ```
 
-- [ ] **Step 4: Render it and regenerate the Team API golden**
+- [x] **Step 4: Render it and regenerate the Team API golden**
 
 ```bash
 npm run examples
@@ -1559,7 +1559,7 @@ git diff --stat examples/
 
 Expected in `git diff --stat`: **only** `examples/team-ownership.svg` as a new file. If any pre-existing `.svg` changed, a layout term is being applied to team-free documents — stop and fix Task 7, do not commit the diff.
 
-- [ ] **Step 5: Document the syntax in the README**
+- [x] **Step 5: Document the syntax in the README**
 
 In `README.md`, after the Teams table and its bullet list (around line 75), add:
 
@@ -1596,7 +1596,7 @@ In the Team API section (around line 190), add to the "Where it comes from" tabl
 | Internal | interactions between two nodes the same team owns |
 ```
 
-- [ ] **Step 6: Document it in the Skill**
+- [x] **Step 6: Document it in the Skill**
 
 In `skills/teamtopo/references/syntax.md`, after the "Team declarations" section, add a `## Real teams` section with the same rules and this fence (the fence test will parse it):
 
@@ -1626,12 +1626,12 @@ In `skills/teamtopo/references/modeling.md`, add one row to the mapping table:
 | One team staffing several streams | `team` + `owns` | Model the streams as they are and declare the team over them — the warning is the point, not a problem to model away. |
 ```
 
-- [ ] **Step 7: Run everything**
+- [x] **Step 7: Run everything**
 
 Run: `npm test 2>&1 | tail -n 25 && cd app && npm test 2>&1 | tail -n 10 && npm run typecheck && npm run lint`
 Expected: PASS everywhere.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add README.md skills/teamtopo/references/syntax.md skills/teamtopo/references/modeling.md examples/team-ownership.tt examples/team-ownership.svg src/skill.test.js src/teamtopo.api.golden.json
