@@ -596,7 +596,7 @@ EOF
   - New exported constant `TYPE_KEYWORDS: Record<TeamType, string>` = `{ stream: 'stream-aligned', enabling: 'enabling', subsystem: 'complicated-subsystem', platform: 'platform', group: 'group' }`, used for the `Owns N:` list.
   - Team document shape, in order: `# Team API: <label>`, date, `* Team name and focus`, `* Team type: <deduped union of API_TYPE_NAMES in owns order, or "Team">`, `* Owns <nodes>: <id> (<keyword>), …`, `* Streams: <streams>`, the load note when `streams > 1`, then the existing template lines, then `### Teams we currently interact with`, `### Internal`, `### Teams we expect to interact with soon`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `src/teamtopo.test.js`:
 
@@ -697,12 +697,12 @@ test('the platform line appears only when every owned node is in the same platfo
 });
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `node --test src/teamtopo.test.js 2>&1 | tail -n 25`
 Expected: FAIL — `teamApis` still lists `desktop`/`sharepoint`/`gateway`, and `teamApi(model, 'alpha')` throws `unknown team "alpha"`… it does not throw (alpha is in the index) but produces `API_TYPE_NAMES[undefined]`.
 
-- [ ] **Step 3: Add the type-keyword map and the counterpart helper**
+- [x] **Step 3: Add the type-keyword map and the counterpart helper**
 
 In `src/teamtopo.js`, below `const API_TYPE_NAMES = ...` (line 922):
 
@@ -729,7 +729,7 @@ function apiRowSet(model, ours, inter) {
 }
 ```
 
-- [ ] **Step 4: Add the team document generator**
+- [x] **Step 4: Add the team document generator**
 
 In `src/teamtopo.js`, immediately above `export function teamApi(...)` (line 966):
 
@@ -807,7 +807,7 @@ function orgTeamApi(model, team, opts) {
 }
 ```
 
-- [ ] **Step 5: Route `teamApi` and rebuild `teamApis`**
+- [x] **Step 5: Route `teamApi` and rebuild `teamApis`**
 
 Rename the existing `export function teamApi(input, id, opts = {})` to `function nodeApi(model, node, opts)` — take the two lines that resolve `model` and `node` out of its body (it now receives them) and leave the rest untouched. Then add, in its place:
 
@@ -838,12 +838,12 @@ export function teamApis(input, opts = {}) {
 
 Add `TYPE_KEYWORDS` to the default export at `src/teamtopo.js:1034`.
 
-- [ ] **Step 6: Run the tests**
+- [x] **Step 6: Run the tests**
 
 Run: `npm test 2>&1 | tail -n 25`
 Expected: PASS — including Task 1's `teamApis markdown is stable for every example` golden, because no example declares a team.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/teamtopo.js src/teamtopo.test.js

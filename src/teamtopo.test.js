@@ -763,3 +763,104 @@ test('diagnostics is always an array and never throws', () => {
   assert.deepEqual(parse('teamTopology\nstream x').diagnostics, []);
   assert.deepEqual(parse('teamTopology').diagnostics, []);
 });
+
+// ── team api bound to a team ──
+
+const OWNED_SRC = `teamTopology
+  stream desktop "Desktop"
+  stream sharepoint "SharePoint Proxy"
+  platform infra "Infra"
+  stream gateway "Gateway"
+  team alpha "Alpha"
+  team bravo "Bravo"
+  alpha owns desktop, sharepoint
+  bravo owns gateway
+  desktop <--> sharepoint : shared installer
+  infra --> desktop : CI
+  infra --> sharepoint : CI
+  gateway <--> desktop : token exchange
+  api alpha {
+    focus: endpoint protection
+  }
+  api bravo {
+    focus: north-south traffic
+  }`;
+
+test('teamApis emits one document per team plus one per unowned node', () => {
+  const ids = teamApis(OWNED_SRC, { date: '2026-01-01' }).map((t) => t.id);
+  assert.deepEqual(ids, ['alpha', 'bravo', 'infra']);
+});
+
+test('teamApi resolves an owned node id to its owning team', () => {
+  const model = parse(OWNED_SRC);
+  assert.equal(teamApi(model, 'desktop', { date: '2026-01-01' }), teamApi(model, 'alpha', { date: '2026-01-01' }));
+});
+
+test('the team document lists ownership, the stream count and the load note', () => {
+  const md = teamApi(OWNED_SRC, 'alpha', { date: '2026-01-01' });
+  assert.match(md, /^# Team API: Alpha$/m);
+  assert.match(md, /^\* Team type: Stream-Aligned$/m);
+  assert.match(md, /^\* Owns 2: desktop \(stream-aligned\), sharepoint \(stream-aligned\)$/m);
+  assert.match(md, /^\* Streams: 2$/m);
+  assert.match(md, /cognitive load of all of them; the streams above are split candidates/);
+});
+
+test('a single-node team pluralises Owns and omits the load note', () => {
+  const md = teamApi(OWNED_SRC, 'bravo', { date: '2026-01-01' });
+  assert.match(md, /^\* Owns 1: gateway \(stream-aligned\)$/m);
+  assert.match(md, /^\* Streams: 1$/m);
+  assert.ok(!/split candidates/.test(md));
+});
+
+test('an interaction inside one team is Internal, and rows resolve to the owning team', () => {
+  const md = teamApi(OWNED_SRC, 'alpha', { date: '2026-01-01' });
+  const internal = md.slice(md.indexOf('### Internal'));
+  assert.match(internal, /shared installer/);
+  const current = md.slice(md.indexOf('### Teams we currently interact with'), md.indexOf('### Internal'));
+  assert.ok(!/shared installer/.test(current));
+  // gateway is owned by Bravo, so the row names Bravo and Bravo's focus
+  assert.match(current, /\| Bravo \/ north-south traffic \|/);
+  // two owned nodes consuming the same service from Infra collapse to one row
+  assert.equal(current.split('\n').filter((l) => l.includes('| Infra |')).length, 1);
+});
+
+test('an unowned node reports an owned counterpart as its owning team', () => {
+  const md = teamApi(OWNED_SRC, 'infra', { date: '2026-01-01' });
+  assert.match(md, /\| Alpha \/ endpoint protection \|/);
+  assert.ok(!/\| Desktop \|/.test(md));
+});
+
+test('a team owning a stream and a subsystem unions both type names', () => {
+  const md = teamApi(`teamTopology
+    stream x "X"
+    subsystem y "Y"
+    team a "A"
+    a owns x, y`, 'a', { date: '2026-01-01' });
+  assert.match(md, /^\* Team type: Stream-Aligned, Complicated Subsystem$/m);
+});
+
+test('a placeholder team gets a document with no platform line', () => {
+  const md = teamApi('teamTopology\nteam a "A"', 'a', { date: '2026-01-01' });
+  assert.match(md, /^\* Team type: Team$/m);
+  assert.match(md, /^\* Owns 0: $/m);
+  assert.ok(!/Part of a Platform/.test(md));
+});
+
+test('the platform line appears only when every owned node is in the same platform', () => {
+  const same = teamApi(`teamTopology
+    platform p "P" {
+      stream a "A"
+      stream b "B"
+    }
+    team t "T"
+    t owns a, b`, 't', { date: '2026-01-01' });
+  assert.match(same, /Part of a Platform\? \(y\/n\) Details: y — part of P/);
+  const split = teamApi(`teamTopology
+    platform p "P" {
+      stream a "A"
+    }
+    stream b "B"
+    team t "T"
+    t owns a, b`, 't', { date: '2026-01-01' });
+  assert.ok(!/Part of a Platform/.test(split));
+});

@@ -1160,6 +1160,27 @@ export function render(input, opts = {}) {
 
 const API_TYPE_NAMES = { stream: 'Stream-Aligned', enabling: 'Enabling', subsystem: 'Complicated Subsystem', platform: 'Platform', group: 'Group' };
 
+/** The syntax keyword for each node type, used in a team's "Owns N:" list. */
+export const TYPE_KEYWORDS = { stream: 'stream-aligned', enabling: 'enabling', subsystem: 'complicated-subsystem', platform: 'platform', group: 'group' };
+
+/** The entity a row should name: an owned node is reported as its owning team. */
+function counterpart(model, id) {
+  const node = model.index[id];
+  return node.owners && node.owners.length ? model.index[node.owners[0]] : node;
+}
+
+/** A Team API table row for a team whose own ids are `ours`. */
+function apiRowSet(model, ours, inter) {
+  const other = counterpart(model, ours.has(inter.from) ? inter.to : inter.from);
+  const focus = apiField(other, 'focus');
+  const weProvide = ours.has(inter.from);
+  let mode = MODES[inter.mode].name;
+  if (inter.mode === 'xaas') mode += weProvide ? ' (we provide)' : ' (we consume)';
+  if (inter.mode === 'facilitating') mode += weProvide ? ' (we facilitate)' : ' (they facilitate us)';
+  const cell = (v) => String(v || '').replace(/\|/g, '\\|');
+  return `| ${cell(other.label)}${focus ? ` / ${cell(focus)}` : ''} | ${mode} | ${cell(inter.label)} | ${cell(inter.duration)} |`;
+}
+
 /** Fields a team can set in its api block, with the spellings accepted for each. */
 export const TEAM_API_FIELDS = [
   { key: 'focus',         aliases: ['focus', 'teamnameandfocus'] },
@@ -1184,7 +1205,7 @@ function apiField(node, key) {
 
 function apiRow(model, self, inter) {
   const otherId = inter.from === self.id ? inter.to : inter.from;
-  const other = model.index[otherId];
+  const other = counterpart(model, otherId);   // an owned counterpart is reported as its team (d11)
   const focus = apiField(other, 'focus');
   let mode = MODES[inter.mode].name;
   if (inter.mode === 'xaas') mode += inter.from === self.id ? ' (we provide)' : ' (we consume)';
@@ -1198,14 +1219,96 @@ function apiTable(rows) {
   return rows.length ? `${head}\n${rows.join('\n')}` : `${head}\n| . |  |  |  |`;
 }
 
+/** The Team API document for a real team, aggregating every node it owns. */
+function orgTeamApi(model, team, opts) {
+  const date = opts.date ?? new Date().toISOString().slice(0, 10);
+  const owned = team.owns.map((id) => model.index[id]);
+  const ours = new Set(team.owns);
+  const typeLine = [...new Set(owned.map((n) => API_TYPE_NAMES[n.type]))].join(', ') || 'Team';
+
+  const platformOf = (node) => {
+    let cur = node;
+    while (cur.parent) { cur = model.index[cur.parent]; if (cur.type === 'platform') return cur; }
+    return null;
+  };
+  const platforms = owned.map(platformOf);
+  const samePlatform = owned.length && platforms.every((p) => p && p === platforms[0]) ? platforms[0] : null;
+
+  const provided = model.interactions.filter((it) => it.mode === 'xaas' && ours.has(it.from) && !ours.has(it.to) && !it.soon);
+  const consumers = [...new Set(provided.map((it) => `${counterpart(model, it.to).label}${it.label ? ` (${it.label})` : ''}`))];
+  const serviceDetails = [consumers.length ? `to ${consumers.join(', ')}` : '', apiField(team, 'service')].filter(Boolean).join('; ');
+
+  const mine = model.interactions.filter((it) => ours.has(it.from) || ours.has(it.to));
+  const dedupe = (its) => [...new Set(its.map((it) => apiRowSet(model, ours, it)))];
+  const internal = dedupe(mine.filter((it) => ours.has(it.from) && ours.has(it.to)));
+  const external = mine.filter((it) => !(ours.has(it.from) && ours.has(it.to)));
+  const now = dedupe(external.filter((it) => !it.soon));
+  const soon = dedupe(external.filter((it) => it.soon));
+  const focus = apiField(team, 'focus');
+
+  const lines = [
+    `# Team API: ${team.label}`,
+    '',
+    `Date: ${date}`,
+    '',
+    `* Team name and focus: ${team.label}${focus ? ` — ${focus}` : ''}`,
+    `* Team type: ${typeLine}`,
+    `* Owns ${team.load.nodes}: ${owned.map((n) => `${n.id} (${TYPE_KEYWORDS[n.type]})`).join(', ')}`,
+    `* Streams: ${team.load.streams}`,
+  ];
+  if (team.load.streams > 1) {
+    lines.push('* A team aligned to more than one stream carries the cognitive load of all of them; the streams above are split candidates.');
+  }
+  if (samePlatform) lines.push(`* Part of a Platform? (y/n) Details: y — part of ${samePlatform.label}`);
+  lines.push(
+    `* Do we provide a service to other teams? (y/n) Details: ${provided.length || apiField(team, 'service') ? 'y' : 'n'}${serviceDetails ? ` — ${serviceDetails}` : ''}`,
+    `* What kind of Service Level Expectations do other teams have of us? ${apiField(team, 'sle')}`.trimEnd(),
+    `* Software owned and evolved by this team: ${apiField(team, 'software')}`.trimEnd(),
+    `* Versioning approaches: ${apiField(team, 'versioning')}`.trimEnd(),
+    `* Wiki search terms: ${apiField(team, 'wiki')}`.trimEnd(),
+    `* Chat tool channels: ${apiField(team, 'chat')}`.trimEnd(),
+    `* Time of daily sync meeting: ${apiField(team, 'sync')}`.trimEnd(),
+    '',
+    '### What we\'re currently working on',
+    '',
+    `* Our services and systems: ${apiField(team, 'workingon')}`.trimEnd(),
+    `* Ways of working: ${apiField(team, 'waysofworking')}`.trimEnd(),
+    `* Wider cross-team or organisational improvements: ${apiField(team, 'improvements')}`.trimEnd(),
+    '',
+    '### Teams we currently interact with',
+    '',
+    apiTable(now),
+    '',
+    '### Internal',
+    '',
+    apiTable(internal),
+    '',
+    '### Teams we expect to interact with soon',
+    '',
+    apiTable(soon),
+    '',
+  );
+  return lines.join('\n');
+}
+
 /**
- * The Team API document for one team, as Markdown following the Team API template.
+ * The Team API document for one team. An owned node's id resolves to its owning team,
+ * so a CLI or a deep link that names a stream still gets a document.
  * opts: { date: string }
  */
 export function teamApi(input, id, opts = {}) {
   const model = typeof input === 'string' ? parse(input) : input;
-  const node = model.index[id];
-  if (!node) throw new Error(`unknown team "${id}"`);
+  let entry = model.index[id];
+  if (!entry) throw new Error(`unknown team "${id}"`);
+  if (!entry.isTeam && entry.owners.length) entry = model.index[entry.owners[0]];
+  return entry.isTeam ? orgTeamApi(model, entry, opts) : nodeApi(model, entry, opts);
+}
+
+/**
+ * The Team API document for one topology node no team owns, as Markdown following the
+ * Team API template.
+ */
+function nodeApi(model, node, opts) {
   const date = opts.date ?? new Date().toISOString().slice(0, 10);
   const yn = (cond) => (cond ? 'y' : 'n');
 
@@ -1258,10 +1361,17 @@ export function teamApi(input, id, opts = {}) {
   ].join('\n');
 }
 
-/** Team API documents for every team in the diagram (groups excluded): [{ id, label, markdown }]. */
+/**
+ * Team API documents for every real team, then every unowned node (groups excluded):
+ * [{ id, label, markdown }]. An owned node has no document of its own — its team has one.
+ */
 export function teamApis(input, opts = {}) {
   const model = typeof input === 'string' ? parse(input) : input;
-  return model.teams.filter((t) => t.type !== 'group').map((t) => ({ id: t.id, label: t.label, markdown: teamApi(model, t.id, opts) }));
+  const doc = (e) => ({ id: e.id, label: e.label, markdown: teamApi(model, e.id, opts) });
+  return [
+    ...model.orgTeams.map(doc),
+    ...model.teams.filter((t) => t.type !== 'group' && !t.owners.length).map(doc),
+  ];
 }
 
 function depth(model, node) {
@@ -1270,4 +1380,4 @@ function depth(model, node) {
   return d;
 }
 
-export default { parse, layout, render, teamApi, teamApis, textWidth, wrapText, textVerticalExtent, VERSION, THEMES, TEAM_TYPES, MODES, TEAM_API_FIELDS, ParseError };
+export default { parse, layout, render, teamApi, teamApis, textWidth, wrapText, textVerticalExtent, VERSION, THEMES, TEAM_TYPES, TYPE_KEYWORDS, MODES, TEAM_API_FIELDS, ParseError };
