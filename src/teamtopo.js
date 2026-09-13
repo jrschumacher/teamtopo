@@ -426,8 +426,64 @@ const L = {
   pad: 24, frameTop: 26, frameBottom: 36, bandGap: 44, sideGap: 32, minW: 240,
   margin: 32, lineH: 1.25, noteFs: 11, titleH: 40, flowH: 46, legendH: 64, labelFs: 11,
   railH: 26, railGap: 10,
+  chipW: 26, chipH: 14, chipGap: 4, teamLegendH: 30,
   fs: { stream: 14, platform: 14, subsystem: 12, enabling: 12, group: 13 },
 };
+
+// ── team ownership chips ──
+// A document that declares no team reserves no width and draws nothing, so its geometry
+// is byte-identical to the pre-feature renderer; one that declares a team re-flows.
+
+const CHIP_CAP = 20;      // more teams than this and the chip layer is noise
+const CHIP_MAX_PER_NODE = 3;
+
+function chipsEnabled(model) {
+  return model.orgTeams.length > 0 && model.orgTeams.length <= CHIP_CAP;
+}
+
+/** Deterministic 8-hue rotation by declaration index — no theme variant needed. */
+function chipColor(i) {
+  return `hsl(${(i * 45) % 360} 62% 45%)`;
+}
+
+/** Two-character code per team, disambiguated with a digit on collision. */
+function chipCodes(model) {
+  const codes = new Map(), used = new Map();
+  for (const t of model.orgTeams) {
+    const base = t.id.slice(0, 2).toUpperCase();
+    const n = (used.get(base) || 0) + 1;
+    used.set(base, n);
+    codes.set(t.id, n === 1 ? base : `${base}${n}`);
+  }
+  return codes;
+}
+
+/** Width a node's chip strip reserves in the layout. Zero when unowned or suppressed. */
+function chipStripW(node, model) {
+  if (!node.owners || !node.owners.length || !chipsEnabled(model)) return 0;
+  const n = Math.min(node.owners.length, CHIP_MAX_PER_NODE + 1);
+  return n * (L.chipW + L.chipGap) + 8;
+}
+
+/** "3 streams", or the node count and type when a team owns no stream. */
+function loadLabel(team, model) {
+  if (team.load.streams > 0) return `${team.load.streams} stream${team.load.streams === 1 ? '' : 's'}`;
+  if (team.load.nodes === 0) return '';
+  const first = model.index[team.owns[0]];
+  return `${team.load.nodes} ${first.type}${team.load.nodes === 1 ? '' : 's'}`;
+}
+
+/** Width the team legend band needs, so the canvas grows around it like the type legend. */
+function teamLegendWidth(model) {
+  if (!model.orgTeams.length) return 0;
+  if (!chipsEnabled(model)) {
+    return textWidth(`${model.orgTeams.length} teams — ownership shown in the Team APIs`, 11);
+  }
+  return model.orgTeams.reduce((w, t) => {
+    const load = loadLabel(t, model);
+    return w + L.chipW + 8 + textWidth(load ? `${t.label} (${load})` : t.label, 11) + 22;
+  }, 0) - 22;
+}
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
@@ -496,8 +552,8 @@ function structure(children, model, forcedW = 0) {
   const leftW = slotsWidth(wedgeSlots), rightW = slotsWidth(rightSlots) + (rightSlots.length ? 24 : 0);
   const hasStack = lanes.length || plats.length;
   const labelW = Math.max(L.labelMin,
-    ...lanes.map((n) => textWidth(n.label, L.fs.stream) + 48),
-    ...plats.map((n) => textWidth(n.label, L.fs.platform) + 48));
+    ...lanes.map((n) => textWidth(n.label, L.fs.stream) + 48 + chipStripW(n, model)),
+    ...plats.map((n) => textWidth(n.label, L.fs.platform) + 48 + chipStripW(n, model)));
 
   const topLays = topFrames.map((c) => frame(c, model));
   const topBandW = topLays.reduce((a, l) => a + l.w, 0) + Math.max(0, topLays.length - 1) * L.sideGap;
@@ -696,8 +752,10 @@ function facing(P, Q, xOverride) {
 export function layout(model, opts = {}) {
   const root = structure(model.nodes, model);
   const showLegend = opts.legend ?? model.legend;
+  // the team legend is gated on the document declaring a team, never on `legend`
+  const showTeams = model.orgTeams.length > 0;
   const top = L.margin + (model.title ? L.titleH : 0) + (model.flow ? L.flowH : 0);
-  const contentW = Math.max(root.w, showLegend ? legendWidth() : 0, model.title ? textWidth(model.title, 18) : 0, 120);
+  const contentW = Math.max(root.w, showLegend ? legendWidth() : 0, showTeams ? teamLegendWidth(model) : 0, model.title ? textWidth(model.title, 18) : 0, 120);
   const ox = L.margin + (contentW - root.w) / 2;
 
   // pass 1: structural boxes
@@ -899,13 +957,14 @@ export function layout(model, opts = {}) {
   const finalContentW = Math.max(contentW, maxX - L.margin);
   const contentH = maxY - top;
   const width = finalContentW + 2 * L.margin;
-  const height = top + contentH + L.margin + (showLegend ? L.legendH : 0);
+  const height = top + contentH + L.margin + (showLegend ? L.legendH : 0) + (showTeams ? L.teamLegendH : 0);
   return {
     width, height, boxes, edges,
     content: { x: L.margin, y: top, w: finalContentW, h: contentH },
     title: model.title ? { x: L.margin, y: L.margin + 18 } : null,
     flow: model.flow ? { x: L.margin, y: L.margin + (model.title ? L.titleH : 0), w: finalContentW, label: model.flow } : null,
-    legend: showLegend ? { x: L.margin, y: height - L.legendH + 8, w: finalContentW } : null,
+    legend: showLegend ? { x: L.margin, y: height - (showTeams ? L.teamLegendH : 0) - L.legendH + 8, w: finalContentW } : null,
+    teamLegend: showTeams ? { x: L.margin, y: height - L.teamLegendH + 8, w: finalContentW } : null,
   };
 }
 
@@ -981,7 +1040,7 @@ function frameSVG(box, T) {
   ]);
 }
 
-function teamSVG(box, T, part = 'all', prefix = 'tt') {
+function teamSVG(box, T, model, part = 'all', prefix = 'tt') {
   const { x, y, w, h, node } = box;
   const c = T[node.type === 'group' ? 'stream' : node.type];
   // a rail's label is often ellipsised, so its tooltip carries the full name too
@@ -1021,7 +1080,40 @@ function teamSVG(box, T, part = 'all', prefix = 'tt') {
     parts.push(textBlock(box.lines, cx, y + h / 2 - noteH / 2, box.fs, c.text, { 'font-weight': 600 }));
     if (box.note.length) parts.push(el('text', { x: cx, y: y + h / 2 + (box.lines.length * box.fs * L.lineH) / 2 + 8, 'text-anchor': 'middle', 'font-size': L.noteFs, fill: c.text, opacity: 0.8 }, esc(box.note[0])));
   }
+  // chips ride with the shape, never with the separately drawn label pass, so an
+  // overlay node that is drawn twice still carries one set of chips
+  if (part !== 'label') parts.push(teamChipsSVG(box, model, T));
   return el('g', { class: `tt-node tt-${node.type}`, 'data-id': node.id }, parts);
+}
+
+/** The owner chips for one node, drawn in the box's top-right corner. */
+function teamChipsSVG(box, model, T) {
+  const { x, y, w, node } = box;
+  if (!node.owners || !node.owners.length || !chipsEnabled(model)) return '';
+  const codes = chipCodes(model);
+  const shown = node.owners.slice(0, CHIP_MAX_PER_NODE);
+  const extra = node.owners.length - shown.length;
+  const parts = [];
+  let cx = x + w - 8 - (shown.length + (extra ? 1 : 0)) * (L.chipW + L.chipGap) + L.chipGap;
+  for (const id of shown) {
+    const team = model.index[id];
+    const i = model.orgTeams.indexOf(team);
+    parts.push(el('g', { class: 'tt-chip' }, [
+      el('title', {}, esc(`${team.label} — ${loadLabel(team, model)}`)),
+      el('rect', { x: cx, y: y + 6, width: L.chipW, height: L.chipH, rx: 4, fill: chipColor(i) }),
+      el('text', { x: cx + L.chipW / 2, y: y + 6 + L.chipH - 4, 'text-anchor': 'middle', 'font-size': 9, 'font-weight': 700, fill: '#ffffff' }, esc(codes.get(id))),
+    ]));
+    cx += L.chipW + L.chipGap;
+  }
+  if (extra) {
+    const rest = node.owners.slice(CHIP_MAX_PER_NODE).map((id) => model.index[id].label).join(', ');
+    parts.push(el('g', { class: 'tt-chip-more' }, [
+      el('title', {}, esc(rest)),
+      el('rect', { x: cx, y: y + 6, width: L.chipW, height: L.chipH, rx: 4, fill: T.muted }),
+      el('text', { x: cx + L.chipW / 2, y: y + 6 + L.chipH - 4, 'text-anchor': 'middle', 'font-size': 9, 'font-weight': 700, fill: '#ffffff' }, `+${extra}`),
+    ]));
+  }
+  return el('g', { class: 'tt-chips' }, parts);
 }
 
 function labelSVG(label, color, T, extra = {}) {
@@ -1107,6 +1199,28 @@ function legendSVG(lg, T, prefix) {
   return el('g', { class: 'tt-legend' }, parts);
 }
 
+/** Colour + code → team name and load, one row per team, below the type legend. */
+function teamLegendSVG(tl, model, T) {
+  const y = tl.y + 10;
+  if (!chipsEnabled(model)) {
+    return el('g', { class: 'tt-team-legend' }, [
+      el('text', { x: tl.x, y: y + 4, 'font-size': 11, fill: T.muted }, esc(`${model.orgTeams.length} teams — ownership shown in the Team APIs`)),
+    ]);
+  }
+  const codes = chipCodes(model);
+  const parts = [];
+  let x = tl.x;
+  model.orgTeams.forEach((t, i) => {
+    const load = loadLabel(t, model);
+    const label = load ? `${t.label} (${load})` : t.label;
+    parts.push(el('rect', { x, y: y - 7, width: L.chipW, height: L.chipH, rx: 4, fill: chipColor(i) }));
+    parts.push(el('text', { x: x + L.chipW / 2, y: y + 3, 'text-anchor': 'middle', 'font-size': 9, 'font-weight': 700, fill: '#ffffff' }, esc(codes.get(t.id))));
+    parts.push(el('text', { x: x + L.chipW + 8, y: y + 4, 'font-size': 11, fill: T.muted }, esc(label)));
+    x += L.chipW + 8 + textWidth(label, 11) + 22;
+  });
+  return el('g', { class: 'tt-team-legend' }, parts);
+}
+
 /**
  * Render diagram source (or a parsed model) to an SVG string.
  * opts: { theme: 'light'|'dark'|themeObject, legend: bool, idPrefix: string, fontFamily: string }
@@ -1135,13 +1249,14 @@ export function render(input, opts = {}) {
     lay.title ? el('text', { x: lay.title.x, y: lay.title.y, 'font-size': 18, 'font-weight': 700, fill: T.title }, esc(model.title)) : '',
     lay.flow ? flowSVG(lay.flow, T) : '',
     el('g', { class: 'tt-frames' }, frames.map((b) => frameSVG(b, T))),
-    el('g', { class: 'tt-lanes' }, [...byKind('plat'), ...byKind('lane')].map((b) => teamSVG(b, T))),
+    el('g', { class: 'tt-lanes' }, [...byKind('plat'), ...byKind('lane')].map((b) => teamSVG(b, T, model))),
     el('g', { class: 'tt-xaas' }, edgesOf('xaas')),
-    el('g', { class: 'tt-overlays' }, [...byKind('sub').map((b) => teamSVG(b, T)), ...byKind('en').map((b) => teamSVG(b, T, 'shape')), ...byKind('rail').map((b) => teamSVG(b, T, 'shape', prefix))]),
+    el('g', { class: 'tt-overlays' }, [...byKind('sub').map((b) => teamSVG(b, T, model)), ...byKind('en').map((b) => teamSVG(b, T, model, 'shape')), ...byKind('rail').map((b) => teamSVG(b, T, model, 'shape', prefix))]),
     el('g', { class: 'tt-facilitating' }, edgesOf('facilitating')),
-    el('g', { class: 'tt-overlay-labels' }, [...byKind('en').map((b) => teamSVG(b, T, 'label')), ...byKind('rail').map((b) => teamSVG(b, T, 'label'))]),
+    el('g', { class: 'tt-overlay-labels' }, [...byKind('en').map((b) => teamSVG(b, T, model, 'label')), ...byKind('rail').map((b) => teamSVG(b, T, model, 'label'))]),
     el('g', { class: 'tt-collaboration' }, edgesOf('collaboration')),
     lay.legend ? legendSVG(lay.legend, T, prefix) : '',
+    lay.teamLegend ? teamLegendSVG(lay.teamLegend, model, T) : '',
   ];
 
   return el('svg', {

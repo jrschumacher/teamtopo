@@ -1209,7 +1209,7 @@ EOF
   - `chipCode(team)` — first two characters of the id, uppercased, with a `2`/`3`… suffix on collision.
   - Cap: `chipsEnabled(model)` is `model.orgTeams.length > 0 && model.orgTeams.length <= 20`; past 20 no chips are drawn and the band shows one note.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `src/teamtopo.test.js`:
 
@@ -1282,12 +1282,12 @@ test('a team owning no stream shows its node count in the legend', () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `node --test src/teamtopo.test.js 2>&1 | tail -n 25`
 Expected: FAIL on every assertion that looks for `tt-chips` or `tt-team-legend`; the first test (`a team-free diagram gets no chips`) passes already and must keep passing.
 
-- [ ] **Step 3: Add the constants**
+- [x] **Step 3: Add the constants**
 
 In `src/teamtopo.js`, add to the `L` object (line 315-321): `chipW: 26, chipH: 14, chipGap: 4, teamLegendH: 30,` and below it:
 
@@ -1332,7 +1332,7 @@ function loadLabel(team, model) {
 }
 ```
 
-- [ ] **Step 4: Reserve chip width in `structure()`**
+- [x] **Step 4: Reserve chip width in `structure()`**
 
 Replace the `labelW` computation at `src/teamtopo.js:378-380` with:
 
@@ -1342,7 +1342,7 @@ Replace the `labelW` computation at `src/teamtopo.js:378-380` with:
     ...plats.map((n) => textWidth(n.label, L.fs.platform) + 48 + chipStripW(n, model)));
 ```
 
-- [ ] **Step 5: Draw the chips from `teamSVG`**
+- [x] **Step 5: Draw the chips from `teamSVG`**
 
 Add below `teamSVG` in `src/teamtopo.js`:
 
@@ -1385,7 +1385,7 @@ Call it from `teamSVG` — give `teamSVG` a `model` parameter (`function teamSVG
   return el('g', { class: `tt-node tt-${node.type}`, 'data-id': node.id }, parts);
 ```
 
-- [ ] **Step 6: Add the legend band to `layout()` and `render()`**
+- [x] **Step 6: Add the legend band to `layout()` and `render()`**
 
 In `layout()`, after `const showLegend = ...` (`src/teamtopo.js:501`) add:
 
@@ -1443,12 +1443,12 @@ In `render`, add to the `body` array after the `lay.legend` entry (`src/teamtopo
     lay.teamLegend ? teamLegendSVG(lay.teamLegend, model, T) : '',
 ```
 
-- [ ] **Step 7: Run the tests**
+- [x] **Step 7: Run the tests**
 
 Run: `npm test 2>&1 | tail -n 25`
 Expected: PASS, **including Task 1's byte-equality corpus test** — no example declares a team, so `chipStripW` returns 0, `showTeams` is false, and every committed SVG is unchanged. If the corpus test fails, a width or height term is being added unconditionally: fix that, do not regenerate the goldens.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add src/teamtopo.js src/teamtopo.test.js

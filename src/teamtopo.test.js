@@ -864,3 +864,71 @@ test('the platform line appears only when every owned node is in the same platfo
     t owns a, b`, 't', { date: '2026-01-01' });
   assert.ok(!/Part of a Platform/.test(split));
 });
+
+// ── team chips and legend ──
+
+const CHIP_SRC = `teamTopology
+  stream desktop "Desktop"
+  stream sharepoint "SharePoint"
+  stream gateway "Gateway"
+  team alpha "Alpha"
+  team bravo "Bravo"
+  alpha owns desktop, sharepoint
+  bravo owns gateway, desktop`;
+
+test('a team-free diagram gets no chips and no team legend', () => {
+  const svg = render('teamTopology\nstream a "A"');
+  assert.ok(!svg.includes('tt-chips'));
+  assert.ok(!svg.includes('tt-team-legend'));
+});
+
+test('each owned node gets a chip and the legend names every team once', () => {
+  const svg = render(CHIP_SRC);
+  assert.equal((svg.match(/class="tt-chips"/g) || []).length, 3);
+  assert.equal((svg.match(/class="tt-team-legend"/g) || []).length, 1);
+  assert.equal((svg.match(/>Alpha \(2 streams\)</g) || []).length, 1);
+  assert.equal((svg.match(/>Bravo \(2 streams\)</g) || []).length, 1);
+});
+
+test('chip colours are deterministic across renders', () => {
+  assert.equal(render(CHIP_SRC), render(CHIP_SRC));
+});
+
+test('a node owned by two teams carries two chips', () => {
+  const svg = render(CHIP_SRC);
+  const from = svg.indexOf('data-id="desktop"');
+  const next = svg.indexOf('data-id=', from + 10);
+  const desktop = svg.slice(from, next === -1 ? undefined : next);
+  assert.equal((desktop.match(/class="tt-chip"/g) || []).length, 2);
+});
+
+test('more than three owners collapse to three chips and a +N', () => {
+  const src = ['teamTopology', 'stream x "X"',
+    ...['a', 'b', 'c', 'd'].map((t) => `team ${t} "T${t}"`),
+    ...['a', 'b', 'c', 'd'].map((t) => `${t} owns x`)].join('\n');
+  const svg = render(src);
+  assert.equal((svg.match(/class="tt-chip"/g) || []).length, 3);
+  assert.match(svg, />\+1</);
+});
+
+test('past twenty teams the chip layer is suppressed with a note', () => {
+  const ids = Array.from({ length: 21 }, (_, i) => `t${i}`);
+  const src = ['teamTopology', ...ids.map((t) => `stream s${t} "S"`),
+    ...ids.map((t) => `team ${t} "T"`), ...ids.map((t) => `${t} owns s${t}`)].join('\n');
+  const svg = render(src);
+  assert.ok(!svg.includes('class="tt-chip"'));
+  assert.match(svg, /21 teams — ownership shown in the Team APIs/);
+});
+
+test('the team legend is independent of the type legend', () => {
+  const withTeams = render(CHIP_SRC, { legend: false });
+  assert.ok(withTeams.includes('tt-team-legend'));
+  assert.ok(!withTeams.includes('class="tt-legend"'));
+  const both = render(`${CHIP_SRC}\n  legend`);
+  assert.ok(both.includes('tt-team-legend') && both.includes('class="tt-legend"'));
+});
+
+test('a team owning no stream shows its node count in the legend', () => {
+  const svg = render('teamTopology\nsubsystem y "Y"\nteam a "A"\na owns y');
+  assert.match(svg, />A \(1 subsystem\)</);
+});
