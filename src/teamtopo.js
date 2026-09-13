@@ -229,6 +229,10 @@ export function parse(source) {
   }
 
   // validate interactions
+  // Two teams have one interaction mode at a time: collaboration is meant to evolve
+  // into X-as-a-Service, not to run alongside it. So a pair may appear at most once
+  // as a current interaction and at most once as a [soon] one, in either direction.
+  const seen = new Map();   // "a\0b[ soon]" (ids sorted) → first interaction for that pair and state
   for (const it of model.interactions) {
     for (const end of ['from', 'to']) {
       if (!model.index[it[end]]) throw new ParseError(`unknown team "${it[end]}"`, it.line);
@@ -237,6 +241,10 @@ export function parse(source) {
     if (isAncestor(model, it.from, it.to) || isAncestor(model, it.to, it.from)) {
       throw new ParseError(`"${it.from}" and "${it.to}" are nested; a team cannot interact with its own container`, it.line);
     }
+    const key = [it.from, it.to].sort().join('\0') + (it.soon ? ' soon' : '');
+    const first = seen.get(key);
+    if (first) throw new ParseError(duplicateInteraction(it, first), it.line);
+    seen.set(key, it);
   }
   return model;
 }
@@ -250,6 +258,15 @@ function stripQuotes(s) {
 /** Normalise a Team API field name: "Ways of working" → "waysofworking". */
 function apiKey(s) {
   return s.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+/** Message for a second interaction between a pair that already has one. */
+function duplicateInteraction(it, first) {
+  const where = first.line === it.line ? 'earlier on this line' : `on line ${first.line}`;
+  const mode = MODES[first.mode].name;
+  return it.soon
+    ? `"${it.from}" and "${it.to}" already have an interaction expected soon (${mode} ${where}); a pair can have one current mode and one "[soon]" mode`
+    : `"${it.from}" and "${it.to}" already interact (${mode} ${where}); two teams have one interaction mode at a time — mark one "[soon]" if it is the mode you expect next`;
 }
 
 function isAncestor(model, maybeAncestor, id) {

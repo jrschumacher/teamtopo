@@ -165,7 +165,24 @@ Validation, applied after the whole file is parsed:
 - both ends must be declared ids (`unknown team "x"`);
 - an id cannot interact with itself;
 - an id cannot interact with a block that contains it, at any depth
-  (`"g" and "a" are nested; a team cannot interact with its own container`).
+  (`"g" and "a" are nested; a team cannot interact with its own container`);
+- a pair of teams may hold only one *current* interaction. Two teams have one
+  interaction mode at a time — collaboration evolves into X-as-a-Service rather than
+  coexisting with it — so a second interaction between the same pair is an error naming
+  the first line (`"a" and "b" already interact (Collaboration on line 7); two teams
+  have one interaction mode at a time`). Direction and mode do not matter: `a <--> b`,
+  `b --> a` and `a <-- b` are all the same pair. The exception is today's mode plus the
+  one expected next: one plain line and one `[soon]` line for the same pair is valid
+  (two `[soon]` lines are not).
+
+```tt
+teamTopology
+  stream    search  "Search"
+  subsystem ranking "Ranking Engine"
+
+  search  <--> ranking : new signals [duration="8 weeks"]
+  ranking --> search   : Ranking API [soon]
+```
 
 A block *can* interact with teams outside it (`ux1 <--> content`, where `content` is a
 group), and a team inside one block can interact with a team inside another.
@@ -240,3 +257,5 @@ Every error carries a line number; the CLI prints `file:line: message` and exits
 | `unknown team "x"` | interaction end not declared; typical after a rename or split |
 | `"x" cannot interact with itself` | same id on both sides |
 | `"a" and "b" are nested; a team cannot interact with its own container` | interaction between a block and one of its descendants |
+| `"a" and "b" already interact (Collaboration on line N)` | a second current interaction between the same pair; keep one mode, or mark the one you expect next `[soon]` |
+| `"a" and "b" already have an interaction expected soon (X-as-a-Service on line N)` | two `[soon]` lines for the same pair; only one mode can be next |
