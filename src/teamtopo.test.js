@@ -208,13 +208,15 @@ test('a fan-out from one provider is a single wedge spanning every consumer', ()
     stream b
     stream c
     platform p
-    p --> a, c : api`));
+    p --> a, b, c : api`));
   const wedges = lay.edges.filter((e) => e.geo.kind === 'wedge');
   assert.equal(wedges.length, 1);
   const [{ geo, inters }] = wedges;
-  assert.equal(inters.length, 2);
+  assert.equal(inters.length, 3);
+  assert.equal(geo.points[0].y, lay.boxes.p.y, 'base stays on the provider, which the run reaches');
   assert.equal(geo.points[2].y, lay.boxes.a.y, 'point reaches the top of the farthest consumer');
   assert.ok(Math.abs(geo.points[1].x - geo.points[0].x) > 64, 'base widens to cover more teams');
+  assert.equal(geo.stem, null, 'a run next to the provider needs no stem');
   // wedges with different labels stay separate
   const lay2 = layout(parse('teamTopology\nstream a\nstream b\nplatform p\np --> a : one\np --> b : two'));
   assert.equal(lay2.edges.length, 2);
@@ -883,6 +885,106 @@ test('fan-out with different labels keeps separate plates', () => {
   assert.equal(wedges.length, 2, 'different labels stay on separate wedges');
   const plates = wedges.map((w) => plateBox(w.geo.label));
   assert.ok(!overlaps(plates[0], plates[1]), 'the two label plates do not overlap each other');
+});
+
+// ── #38: wedges only collapse over a contiguous run of consumers ──
+
+/** Does this wedge's silhouette sweep across any part of `box`'s rows? */
+const wedgeSweeps = (geo, box) => {
+  const ys = geo.points.map((p) => p.y);
+  return Math.min(...ys) < box.y + box.h - 0.01 && Math.max(...ys) > box.y + 0.01;
+};
+
+/** docs/shapes/xaas-matrix.tt from spike/shape-gallery — finding 8's reproducer. */
+const XAAS_MATRIX = `teamTopology
+  title Three providers, three consumers, nine dependencies
+
+  stream provider_a "Provider A"
+  stream provider_b "Provider B"
+  stream provider_c "Provider C"
+  stream consumer_x "Consumer X"
+  stream consumer_y "Consumer Y"
+  stream consumer_z "Consumer Z"
+
+  provider_a --> consumer_x
+  provider_a --> consumer_y
+  provider_a --> consumer_z
+  provider_b --> consumer_x
+  provider_b --> consumer_y
+  provider_b --> consumer_z
+  provider_c --> consumer_x
+  provider_c --> consumer_y
+  provider_c --> consumer_z`;
+
+test('#38 reproducer: no wedge sweeps a lane that is not a consumer of that provider', () => {
+  const lay = layout(parse(XAAS_MATRIX));
+  const wedges = lay.edges.filter((e) => e.geo.kind === 'wedge');
+  const lanes = Object.values(lay.boxes).filter((b) => b.kind === 'lane');
+  assert.equal(wedges.length, 3, 'each provider serves one contiguous run of consumers');
+  for (const w of wedges) {
+    const consumers = new Set(w.inters.map((i) => i.to));
+    assert.equal(consumers.size, 3, 'the run collapses the three consumers into one sweep');
+    for (const lane of lanes) {
+      if (consumers.has(lane.node.id)) continue;
+      assert.ok(!wedgeSweeps(w.geo, lane), `${w.inter.from}'s wedge sweeps over ${lane.node.id}`);
+    }
+  }
+  // the two providers that do not sit next to the run reach it by a stem instead
+  assert.equal(wedges.filter((w) => w.geo.stem).length, 2);
+});
+
+test('#38: consumers with an unrelated lane between them get one wedge per contiguous run', () => {
+  const lay = layout(parse(`teamTopology
+    stream a
+    stream b
+    stream c
+    platform p
+    p --> a, c : api`));
+  const wedges = lay.edges.filter((e) => e.geo.kind === 'wedge');
+  assert.equal(wedges.length, 2, 'a and c are not contiguous, so they cannot share a sweep');
+  const toA = wedges.find((w) => w.inters.some((i) => i.to === 'a'));
+  const toC = wedges.find((w) => w.inters.some((i) => i.to === 'c'));
+  assert.ok(!wedgeSweeps(toA.geo, lay.boxes.b), 'the wedge for a never sweeps over b');
+  assert.ok(!wedgeSweeps(toA.geo, lay.boxes.c), 'nor over c, which it only passes on the way');
+  assert.equal(toC.geo.stem, null, 'c sits next to the platform, so its wedge keeps its base there');
+  assert.equal(toC.geo.points[0].y, lay.boxes.p.y, 'base on the platform top edge');
+  assert.ok(toA.geo.stem, 'a is two rows away, so a stem joins its wedge back to the platform');
+  assert.equal(toA.geo.stem.y1, lay.boxes.p.y, 'the stem starts on the provider');
+  assert.equal(toA.geo.stem.y2, lay.boxes.a.y + lay.boxes.a.h, 'and ends at the near edge of the run');
+  assert.equal(toA.geo.points[0].y, toA.geo.stem.y2, 'the wedge picks up where the stem ends');
+});
+
+test('#38: each split wedge carries its own label plate', () => {
+  const src = `teamTopology
+    stream a
+    stream b
+    stream c
+    platform p
+    p --> a, c : api`;
+  const lay = layout(parse(src));
+  const wedges = lay.edges.filter((e) => e.geo.kind === 'wedge');
+  const plates = wedges.map((w) => {
+    assert.equal(w.geo.label.text, 'api', 'one plate per distinct label per wedge (#28)');
+    return plateBox(w.geo.label);
+  });
+  assert.ok(!overlaps(plates[0], plates[1]), 'the two plates do not collide');
+  assert.equal((render(src).match(/>api</g) || []).length, 2, 'both plates carry the label text');
+});
+
+test('#38: a contiguous, complete fan-out keeps today\'s single wide sweep', () => {
+  // ecommerce's `infra --> checkout, search, accounts` and value-streams'
+  // `core --> storefront, fulfilment, catalog, invoicing` both reach every row between
+  // the provider and the farthest consumer, so neither splits nor gets displaced.
+  const lay = layout(parse(readFileSync(join(examplesDir, 'ecommerce.tt'), 'utf8')));
+  const infra = lay.edges.filter((e) => e.geo.kind === 'wedge' && e.inter.from === 'infra');
+  assert.equal(infra.length, 1, 'one sweep for the whole fan-out');
+  assert.equal(infra[0].inters.length, 3, 'covering all three lanes');
+  assert.equal(infra[0].geo.stem, null, 'no stem: the run starts next to the platform');
+  assert.equal(infra[0].geo.points[0].y, lay.boxes.infra.y, 'base still on the platform');
+  const vs = layout(parse(readFileSync(join(examplesDir, 'value-streams.tt'), 'utf8')));
+  const core = vs.edges.filter((e) => e.geo.kind === 'wedge' && e.inter.from === 'core');
+  assert.equal(core.length, 4, 'one wedge per consumer of the contiguous fan-out, as today');
+  for (const w of core) assert.equal(w.geo.stem, null, 'and none of them is displaced from its provider');
 });
 
 test('rendering is deterministic across repeated runs', () => {

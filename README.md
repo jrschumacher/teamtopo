@@ -212,6 +212,7 @@ Team Topologies book, so the domain does most of the work:
    for it.
 3. **Wedges.** Every other X-as-a-Service is a grey wedge with its wide base on the
    provider and its point reaching the far edge of the consumer, so the wedge covers
+<<<<<<< HEAD
    it. A fan-out (`infra --> a, b, c`) is one wedge that reaches the farthest consumer
    and covers the ones between, with a wider base, as in the book. Wedges from a
    platform to lanes get a reserved column on the left of the lane labels, so they can
@@ -222,6 +223,16 @@ Team Topologies book, so the domain does most of the work:
    Instead a small chevron marks the shared boundary, with the label (if any) on an
    opaque plate beside it, clear of both bars' titles. The interaction is unchanged in
    the parsed model, JSON and Team APIs; only this one rendering case is compact.
+=======
+   it. A fan-out (`infra --> a, b, c`) collapses into one wedge with a wider base, as
+   in the book — but only over a *contiguous run* of consumers, so a wedge never
+   sweeps across a lane the provider has no relationship with. `infra --> a, c` draws
+   two wedges, not one covering `b`; and a run that does not start next to its
+   provider is joined back to it by a thin stem instead of widening to reach it.
+   Wedges from a platform to lanes get a reserved column on the left of the lane
+   labels, so they can pass through intermediate lanes. Wedges between frames pick a
+   free column in the horizontal overlap of the two boxes.
+>>>>>>> 73a9197 (fix: only collapse X-as-a-Service wedges over a contiguous run of consumers)
 4. **Frames.** Groups and platform groupings are dashed frames laid out with the same
    rules, recursively. Frames of streams sit side by side; platform groupings stretch
    to full width beneath. Overlays declared at a level with no lanes of their own get a
@@ -418,8 +429,13 @@ npm run deploy    # build, migrate the remote D1, deploy (CI does this from main
 
 - No `direction LR` yet; the book's convention is lanes with flow left to right, and
   that is all this does.
-- Wedges pass through intermediate lanes rather than around them, as in the book.
-  Very tall stacks with many platform-to-top-lane wedges get busy.
+- Wedges pass through intermediate lanes rather than around them, as in the book —
+  a wedge that starts away from its provider passes as a thin stem so it does not
+  read as covering them. Very tall stacks with many platform-to-top-lane wedges get
+  busy.
+- The contiguous-run rule that keeps a wedge off unrelated lanes applies within one
+  frame's lane/platform stack. A cross-frame wedge has no such stack to reason about
+  and still falls back to geometry between the two boxes.
 - Enabling bars cannot cross lanes in a different frame; those facilitations become
   dotted bands.
 - Possible next steps: team-size and cognitive-load annotations, "as-is / to-be"
