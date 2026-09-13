@@ -1,5 +1,6 @@
 teamTopology
   title Enabling team facilitating one team in each group
+  legend
 
   group alpha "Alpha" {
     stream web    "Web"

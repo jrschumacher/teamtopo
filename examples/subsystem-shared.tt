@@ -1,5 +1,6 @@
 teamTopology
   title Complicated subsystem shared across groups
+  legend
 
   group growth "Growth" {
     stream acquisition "Acquisition"
