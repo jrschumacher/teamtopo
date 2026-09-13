@@ -310,16 +310,17 @@ test('root-level overlays get their own column beside a band of frames', () => {
   const lay = layout(parse(`teamTopology
     group g1 {
       stream a
+      stream a2
     }
     group g2 {
       stream b
     }
     enabling e
-    e ~~> a, b`));
+    e ~~> a, a2`));
   const { g1, g2, e } = lay.boxes;
   assert.ok(e.x >= g1.x + g1.w && e.x >= g2.x + g2.w, 'bar is to the right of both frames');
   assert.equal(lay.edges.filter((ed) => ed.geo.kind === 'band').length, 2, 'facilitating drawn as dotted bands when the bar cannot cross');
-  assert.equal(e.kind, 'en', 'a leaf target inside a group keeps the column, not the rail, even across frames');
+  assert.equal(e.kind, 'en', 'targets inside a single frame keep the column, not the rail');
 });
 
 // ── enabling rail (issue #22) ──
@@ -478,6 +479,185 @@ test('a rail label sits on an opaque plate over the facilitating dot pattern', (
   assert.match(railLabel, /<rect[^>]*rx="4"[^>]*fill="#0f172a"/,
     'an opaque plate in the theme background sits behind the rail label, not the raw dot-pattern hatch');
   assert.ok(railLabel.indexOf('<rect') < railLabel.indexOf('<text'), 'the plate is drawn before (under) the label text');
+});
+
+// ── rails that reach into specific teams: lane markers (issue #37) ──
+
+const LEAVES_SRC = `teamTopology
+  group alpha "Alpha" {
+    stream web "Web"
+    stream mobile "Mobile"
+  }
+  group beta "Beta" {
+    stream portal "Partner Portal"
+    stream api_gw "API Gateway"
+  }
+  group gamma "Gamma" {
+    stream ops "Ops Console"
+  }
+  enabling coaching "Platform Coaching"
+  coaching ~~> web
+  coaching ~~> portal
+  coaching ~~> ops`;
+
+const SHARED_SUB_SRC = `teamTopology
+  group growth "Growth" {
+    stream acquisition "Acquisition"
+    stream retention "Retention"
+  }
+  group commerce "Commerce" {
+    stream checkout "Checkout"
+    stream catalog "Catalog"
+  }
+  group support "Support" {
+    stream helpdesk "Helpdesk"
+    stream community "Community"
+  }
+  subsystem analytics "Analytics Engine"
+  analytics --> acquisition : event API
+  analytics --> checkout : event API
+  analytics --> helpdesk : event API`;
+
+test('an enabling team facilitating one team in each sibling group gets a rail under the groups', () => {
+  const lay = layout(parse(LEAVES_SRC));
+  const { alpha, beta, gamma, coaching } = lay.boxes;
+  assert.equal(coaching.kind, 'rail', 'a rail, not a column of bands across the lanes');
+  assert.equal(coaching.x, alpha.x, 'rail starts at the leftmost group holding a target');
+  assert.equal(coaching.x + coaching.w, gamma.x + gamma.w, 'rail ends at the rightmost group holding a target');
+  assert.ok(coaching.y >= Math.max(alpha.y + alpha.h, beta.y + beta.h, gamma.y + gamma.h), 'rail sits below the frame band');
+  assert.equal(lay.edges.filter((e) => e.geo.kind === 'band' || e.geo.kind === 'patch').length, 0,
+    'nothing is painted across the lanes any more');
+  assert.equal(lay.edges.filter((e) => e.geo.kind === 'marker').length, 3, 'one marker per targeted team');
+});
+
+test('only the targeted teams carry a marker, and it stays clear of their labels', () => {
+  const lay = layout(parse(LEAVES_SRC));
+  const marks = new Map(lay.edges.filter((e) => e.geo.kind === 'marker').map((e) => [e.inter.to, e.geo]));
+  assert.deepEqual([...marks.keys()].sort(), ['ops', 'portal', 'web']);
+  for (const id of ['mobile', 'api_gw']) assert.ok(!marks.has(id), `${id} is untargeted, so it carries no marker`);
+  for (const [id, geo] of marks) {
+    const lane = lay.boxes[id];
+    const [, textBottom] = textVerticalExtent(lane);
+    assert.ok(geo.rect.y > textBottom, `the ${id} marker sits below the lane label, never across it`);
+    assert.ok(geo.rect.y >= lane.y + lane.h - 6, 'the marker is a tab on the lane bottom edge');
+    assert.ok(geo.rect.x >= lane.x && geo.rect.x + geo.rect.w <= lane.x + lane.w, 'the tab stays within its lane');
+    assert.ok(geo.rect.w <= lane.w / 3, 'a tab, not a band across the lane');
+  }
+});
+
+test('lane-targeting rails stack as fixed rows, one per enabling team', () => {
+  const one = layout(parse(LEAVES_SRC));
+  const two = layout(parse(`${LEAVES_SRC}
+  enabling sec "Security"
+  sec ~~> mobile
+  sec ~~> api_gw`));
+  assert.equal(two.boxes.sec.kind, 'rail');
+  assert.equal(two.boxes.coaching.y, one.boxes.coaching.y, 'the first rail row does not move when a second team is added');
+  assert.ok(two.boxes.sec.y > two.boxes.coaching.y, 'the second rail stacks below the first');
+  assert.equal(two.boxes.sec.h, two.boxes.coaching.h, 'rail height is fixed');
+  assert.equal(two.height - one.height, two.boxes.sec.y - two.boxes.coaching.y,
+    'canvas height grows by exactly one fixed rail row for the second team');
+});
+
+test('two rails reaching the same team put their tabs side by side', () => {
+  const lay = layout(parse(`${LEAVES_SRC}
+  enabling sec "Security"
+  sec ~~> web
+  sec ~~> portal`));
+  const on = lay.edges.filter((e) => e.geo.kind === 'marker' && e.inter.to === 'web').map((e) => e.geo.rect);
+  assert.equal(on.length, 2);
+  const [a, b] = on.sort((p, q) => p.x - q.x);
+  assert.ok(a.x + a.w <= b.x, 'the two tabs do not overlap');
+  assert.equal(a.y, b.y, 'both sit on the same edge');
+});
+
+test('a rail only marks the relationship it carries; other modes keep their own shape', () => {
+  const lay = layout(parse(`${LEAVES_SRC}
+  coaching <--> mobile : design system`));
+  const collab = lay.edges.find((e) => e.inter.mode === 'collaboration');
+  assert.equal(collab.geo.kind, 'bridge', 'a collaboration with the railed team is still a parallelogram');
+  assert.equal(lay.edges.filter((e) => e.geo.kind === 'marker' && e.inter.to === 'mobile').length, 0);
+});
+
+test('a rail mixing a whole group with a team inside another marks only the team', () => {
+  const lay = layout(parse(`teamTopology
+    group alpha "Alpha" {
+      stream web "Web"
+      stream mobile "Mobile"
+    }
+    group beta "Beta" {
+      stream portal "Partner Portal"
+    }
+    enabling coaching "Coaching"
+    coaching ~~> alpha
+    coaching ~~> portal`));
+  const { alpha, beta, coaching } = lay.boxes;
+  assert.equal(coaching.kind, 'rail');
+  assert.equal(coaching.x, alpha.x);
+  assert.equal(coaching.x + coaching.w, beta.x + beta.w, 'the rail spans both groups it reaches into');
+  const markers = lay.edges.filter((e) => e.geo.kind === 'marker');
+  assert.deepEqual(markers.map((e) => e.inter.to), ['portal'], 'the whole-group target needs no marker; the named team gets one');
+});
+
+test('a subsystem consumed by teams in several sibling groups gets the same rail and markers', () => {
+  const lay = layout(parse(SHARED_SUB_SRC));
+  const { growth, support, analytics } = lay.boxes;
+  assert.equal(analytics.kind, 'rail', 'not a floating octagon in the overlay column');
+  assert.equal(analytics.x, growth.x);
+  assert.equal(analytics.x + analytics.w, support.x + support.w);
+  assert.equal(lay.edges.filter((e) => e.geo.kind === 'wedge').length, 0, 'no loose wedges across frame boundaries');
+  const markers = lay.edges.filter((e) => e.geo.kind === 'marker');
+  assert.deepEqual(markers.map((e) => e.inter.to).sort(), ['acquisition', 'checkout', 'helpdesk']);
+  assert.ok(markers.every((e) => e.inter.mode === 'xaas'), 'the markers carry the X-as-a-Service relationship');
+  assert.ok(markers.every((e) => e.geo.label?.text === 'event API'), 'an interaction label rides beside its tab when it fits');
+});
+
+test('a subsystem rail does not move with the order of its own lines', () => {
+  const reordered = SHARED_SUB_SRC.replace(
+    'analytics --> acquisition : event API\n  analytics --> checkout : event API\n  analytics --> helpdesk : event API',
+    'analytics --> helpdesk : event API\n  analytics --> checkout : event API\n  analytics --> acquisition : event API');
+  const a = layout(parse(SHARED_SUB_SRC)).boxes.analytics;
+  const b = layout(parse(reordered)).boxes.analytics;
+  assert.deepEqual([a.x, a.y, a.w, a.h], [b.x, b.y, b.w, b.h]);
+});
+
+test('a subsystem serving teams inside one group keeps the embedded octagon', () => {
+  const lay = layout(parse(`teamTopology
+    group growth {
+      stream acquisition
+      stream retention
+    }
+    group commerce {
+      stream checkout
+    }
+    subsystem analytics
+    analytics --> acquisition
+    analytics --> retention`));
+  assert.equal(lay.boxes.analytics.kind, 'sub');
+  assert.equal(lay.boxes.analytics.embeddedOn, 'acquisition');
+});
+
+test('a facilitating marker is a dotted tab in the enabling idiom, an xaas marker the service grey', () => {
+  const facil = render(LEAVES_SRC).split('class="tt-edge tt-facilitating"')[1].split('</g>')[0];
+  assert.match(facil, /url\(#tt-dots\)/, 'the facilitating hatch');
+  assert.match(facil, /stroke-dasharray="2 3"/, 'dotted outline');
+  assert.match(facil, /stroke="#6B4FA8"/, 'in the facilitating colour');
+  const xaas = render(SHARED_SUB_SRC).split('class="tt-edge tt-xaas"')[1].split('</g>')[0];
+  assert.ok(!xaas.includes('tt-dots'), 'a consumed-subsystem marker is not drawn in the facilitating hatch');
+  assert.ok(xaas.includes('event API'), 'its label is drawn beside the tab');
+});
+
+test('a subsystem rail keeps the subsystem shape and colour, an enabling rail the hatch', () => {
+  const sub = render(SHARED_SUB_SRC).split('data-id="analytics"')[1];
+  assert.match(sub, /<path[^>]*fill="#F6C79B"/, 'the subsystem octagon, flattened into a rail');
+  const en = render(LEAVES_SRC).split('class="tt-overlays"')[1].split('data-id="coaching"')[1];
+  assert.match(en, /<rect[^>]*fill="url\(#tt-dots\)"/, 'the enabling rail keeps the facilitating hatch');
+});
+
+test('enabling-groups example renders byte-identical to the committed svg (whole-group facilitation is unchanged)', () => {
+  const svg = render(readFileSync(join(examplesDir, 'enabling-groups.tt'), 'utf8'));
+  const committed = readFileSync(join(examplesDir, 'enabling-groups.svg'), 'utf8');
+  assert.equal(`${svg}\n`, committed);
 });
 
 test('ecommerce example renders byte-identical to the committed svg (in-lane facilitating is unaffected by the rail change)', () => {
