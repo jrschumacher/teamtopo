@@ -289,11 +289,32 @@ function interactionsHtml(model: Model, doc: OpenedDoc, teamId: string): string 
 	`;
 }
 
-function teamRowHtml(doc: OpenedDoc, t: Node, isCurrent: boolean): string {
+/** A non-link row for a node a team owns, shown indented under it. */
+function ownedRowHtml(node: Node): string {
+	return `
+		<div class="tm-other-owned">
+			${chipHtml(node.type, 'sm')}
+			<span class="tm-other-name">${escapeHtml(node.label)}</span>
+			<span class="tm-other-id">${escapeHtml(node.id)}</span>
+		</div>
+	`;
+}
+
+/** "3 streams", or "1 subsystem" when a team owns no stream at all. */
+function loadLabel(team: OrgTeam, model: Model): string {
+	if (team.load.streams > 0)
+		return `${team.load.streams} stream${team.load.streams === 1 ? '' : 's'}`;
+	if (team.load.nodes === 0) return '';
+	const first = model.index[team.owns[0]] as Node;
+	return `${team.load.nodes} ${first.type}${team.load.nodes === 1 ? '' : 's'}`;
+}
+
+function teamRowHtml(doc: OpenedDoc, t: Entry, isCurrent: boolean, load: string): string {
 	const rowInner = `
-			${chipHtml(t.type, 'sm')}
+			${chipHtml(entryType(t), 'sm')}
 			<span class="tm-other-name">${escapeHtml(t.label)}</span>
 			<span class="tm-other-id">${escapeHtml(t.id)}</span>
+			${load ? `<span class="tm-other-load">${escapeHtml(load)}</span>` : ''}
 	`;
 	if (isCurrent) {
 		return `<div class="tm-other-link tm-other-current" aria-current="page">${rowInner}</div>`;
@@ -303,10 +324,21 @@ function teamRowHtml(doc: OpenedDoc, t: Node, isCurrent: boolean): string {
 
 function asideHtml(model: Model, doc: OpenedDoc, teamId: string, teamLabel: string): string {
 	const docHref = `${docPath(doc.id)}${doc.fragment}`;
-	const teams = model.teams.filter((t) => t.type !== 'group');
-	const teamLinksHtml = teams.length
-		? teams.map((t) => teamRowHtml(doc, t, t.id === teamId)).join('')
-		: '<p class="tm-empty-value">No teams.</p>';
+	// real teams first, each with the nodes it owns indented beneath it — a three-stream
+	// team is as visible here as in the diagram legend — then the nodes no team owns
+	const owned = new Set(model.orgTeams.flatMap((t) => t.owns));
+	const unowned = model.teams.filter((t) => t.type !== 'group' && !owned.has(t.id));
+	const teamLinksHtml =
+		model.orgTeams.length || unowned.length
+			? [
+					...model.orgTeams.map(
+						(t) =>
+							teamRowHtml(doc, t, t.id === teamId, loadLabel(t, model)) +
+							t.owns.map((id) => ownedRowHtml(model.index[id] as Node)).join('')
+					),
+					...unowned.map((t) => teamRowHtml(doc, t, t.id === teamId, ''))
+				].join('')
+			: '<p class="tm-empty-value">No teams.</p>';
 
 	return `
 		<aside class="tm-aside">

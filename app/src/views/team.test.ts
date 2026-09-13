@@ -253,4 +253,18 @@ describe('team identity', () => {
 		expect(root.textContent).toContain('Alpha');
 		expect(root.textContent).toContain('endpoint protection');
 	});
+
+	it('lists teams first with owned nodes indented, then unowned nodes', () => {
+		const root = document.createElement('div');
+		renderTeamView(root, makeDoc({ source: OWNED_SRC }), 'alpha');
+		const rows = [...root.querySelectorAll('.tm-other-link, .tm-other-owned')].map((el) => ({
+			text: el.textContent?.trim() ?? '',
+			owned: el.classList.contains('tm-other-owned')
+		}));
+		expect(rows.map((r) => r.owned)).toEqual([false, true, true, false]);
+		expect(rows[0].text).toContain('Alpha');
+		expect(rows[0].text).toContain('2 streams');
+		expect(rows[1].text).toContain('Desktop');
+		expect(rows[3].text).toContain('Gateway');
+	});
 });

@@ -1069,7 +1069,7 @@ EOF
 - Consumes: `isOrgTeam` (Task 5), `model.orgTeams`, `orgTeams[].owns`, `orgTeams[].load`, `node.owners`.
 - Produces: the sidebar list order — every `orgTeams` entry as a link, each followed by its owned nodes as non-link rows with class `tm-other-owned`, then every non-group node with empty `owners` as a link. No other module depends on this.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to the `describe('team identity', …)` block in `app/src/views/team.test.ts`:
 
@@ -1089,12 +1089,12 @@ Append to the `describe('team identity', …)` block in `app/src/views/team.test
 	});
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `cd app && npx vitest run src/views/team.test.ts 2>&1 | tail -n 20`
 Expected: FAIL — the sidebar still lists `model.teams` flat.
 
-- [ ] **Step 3: Rewrite the sidebar list**
+- [x] **Step 3: Rewrite the sidebar list**
 
 In `app/src/views/team.ts`, add beside `teamRowHtml`:
 
@@ -1145,7 +1145,7 @@ Give `teamRowHtml` the extra parameter — `function teamRowHtml(doc: OpenedDoc,
 
 Use `isOrgTeam(t) ? 'team' : t.type` for the `chipHtml` call inside it.
 
-- [ ] **Step 4: Add the indent style**
+- [x] **Step 4: Add the indent style**
 
 Append to `app/src/views/team.css`:
 
@@ -1166,12 +1166,12 @@ Append to `app/src/views/team.css`:
 }
 ```
 
-- [ ] **Step 5: Run the tests, typecheck and lint**
+- [x] **Step 5: Run the tests, typecheck and lint**
 
 Run: `cd app && npm test 2>&1 | tail -n 20 && npm run typecheck && npm run lint`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add app/src/views/team.ts app/src/views/team.css app/src/views/team.test.ts
