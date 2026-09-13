@@ -1,4 +1,5 @@
 node_modules/
+scratch/
 app/dist
 app/node_modules
 app/.wrangler
@@ -7,3 +8,4 @@ app/.env
 app/.env.*
 app/worker-configuration.d.ts
 public/articles/
+scratch/

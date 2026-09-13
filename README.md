@@ -173,13 +173,29 @@ Team Topologies book, so the domain does most of the work:
    and covers the ones between, with a wider base, as in the book. Wedges from a
    platform to lanes get a reserved column on the left of the lane labels, so they can
    pass through intermediate lanes. Wedges between frames pick a free
-   column in the horizontal overlap of the two boxes.
+   column in the horizontal overlap of the two boxes. The one exception: a single-target
+   X-as-a-Service between two platform bars that stack directly adjacent, with nothing
+   between them, draws no wedge at all — the stack itself already shows the layering.
+   Instead a small chevron marks the shared boundary, with the label (if any) on an
+   opaque plate beside it, clear of both bars' titles. The interaction is unchanged in
+   the parsed model, JSON and Team APIs; only this one rendering case is compact.
 4. **Frames.** Groups and platform groupings are dashed frames laid out with the same
    rules, recursively. Frames of streams sit side by side; platform groupings stretch
    to full width beneath. Overlays declared at a level with no lanes of their own get a
    column beside the frames, and facilitating that cannot cross a team is drawn as a
    dotted band to it.
-5. **Canvas.** Anything that overflows the structural content grows the canvas.
+5. **The shared rail.** An enabling team that facilitates two or more sibling top-level
+   groups (`enabler ~~> groupA` and `enabler ~~> groupB`, not lanes inside them) is drawn
+   once as a thin horizontal rail below the frame band instead of a tall column with one
+   dotted patch per relationship — it uses the enabling colour on its border and the
+   facilitating dotted hatch as its fill, so the legend still explains it. The rail spans
+   from the leftmost to the rightmost group it targets; a group in between that it does
+   not target is simply covered, not excluded. Several facilitating enabling teams stack
+   as additional rail rows of the same fixed height, so canvas growth stays one row per
+   team regardless of how many groups are spanned or how tall they are. An enabling team
+   facilitating only one group, or facilitating lanes/teams directly rather than a whole
+   group, keeps the column treatment above.
+6. **Canvas.** Anything that overflows the structural content grows the canvas.
 
 To keep a subsystem or enabling team on the lanes it belongs with, declare it in the
 same block as those lanes.
@@ -230,7 +246,7 @@ const all = teamApis(model);              // [{ id, label, markdown }] for every
 directive), `idPrefix` (when several diagrams share a page), `fontFamily`.
 
 `layout` returns absolute boxes per team plus one geometry per interaction
-(`wedge`, `bridge`, `patch` or `band`), which is what the tests assert against.
+(`wedge`, `bridge`, `patch`, `band` or `boundary`), which is what the tests assert against.
 
 ## Agent Skill
 

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parse, layout, render, wrapText, textWidth, ParseError, THEMES } from './teamtopo.js';
+import { parse, layout, render, wrapText, textWidth, ParseError, THEMES, textVerticalExtent } from './teamtopo.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const examplesDir = join(here, '..', 'examples');
@@ -234,6 +234,96 @@ test('wedges between frames are spread apart', () => {
   assert.equal(new Set(xs).size, 4, 'four wedges, four columns');
 });
 
+// ── platform-to-platform xaas: boundary marker (issue #27) ──
+
+const BOUNDARY_SRC = `teamTopology
+  platform infrastructure "Infrastructure"
+  platform hosted "Hosted Product Platform"
+  stream app1 "Consumer App 1"
+  stream app2 "Consumer App 2"
+  infrastructure --> hosted : hosted infrastructure
+  hosted --> app1, app2 : platform capabilities`;
+
+test('adjacent platform-to-platform xaas draws a boundary marker instead of a wedge', () => {
+  const lay = layout(parse(BOUNDARY_SRC));
+  const boundary = lay.edges.find((e) => e.inter.from === 'infrastructure' && e.inter.to === 'hosted');
+  assert.ok(boundary, 'edge for infrastructure --> hosted exists');
+  assert.equal(boundary.geo.kind, 'boundary');
+  assert.equal(boundary.geo.marker.length, 3, 'chevron is a 3-point triangle');
+
+  // the fan-out from `hosted` to two stream consumers is unaffected
+  const fanout = lay.edges.filter((e) => e.inter.from === 'hosted');
+  assert.equal(fanout.length, 1, 'fan-out stays one grouped edge');
+  assert.equal(fanout[0].geo.kind, 'wedge');
+  assert.equal(fanout[0].inters.length, 2);
+});
+
+test('model, parse output and Team API are unaffected by the boundary-marker rendering change', () => {
+  const model = parse(BOUNDARY_SRC);
+  const it = model.interactions.find((i) => i.from === 'infrastructure' && i.to === 'hosted');
+  assert.deepEqual(
+    { mode: it.mode, from: it.from, to: it.to, label: it.label },
+    { mode: 'xaas', from: 'infrastructure', to: 'hosted', label: 'hosted infrastructure' },
+  );
+  const md = teamApi(BOUNDARY_SRC, 'hosted', { date: '2026-01-02' });
+  assert.ok(md.includes('| Infrastructure | X-as-a-Service (we consume) | hosted infrastructure |'));
+});
+
+test('non-adjacent platform stack (something between provider and consumer) keeps the wedge', () => {
+  const lay = layout(parse(`teamTopology
+    platform top "Top"
+    platform mid "Middle"
+    platform bottom "Bottom"
+    top --> bottom`));
+  const [{ geo }] = lay.edges;
+  assert.equal(geo.kind, 'wedge', 'top and bottom are not adjacent — mid sits between them');
+});
+
+test('labelled boundary marker: the label plate never overlaps either platform bar\'s rendered text', () => {
+  const lay = layout(parse(`teamTopology
+    platform infrastructure "Infrastructure Platform" [note="Kubernetes, CI, observability, logging"]
+    platform hosted "Hosted Product Platform" [note="managed by the platform team"]
+    stream app1 "Consumer App 1"
+    infrastructure --> hosted : shared identity, secrets and network policy enforcement
+    hosted --> app1`));
+  const boundary = lay.edges.find((e) => e.inter.from === 'infrastructure' && e.inter.to === 'hosted');
+  assert.equal(boundary.geo.kind, 'boundary');
+  assert.ok(boundary.geo.label, 'a labelled interaction gets a label plate');
+  const { plate } = boundary.geo.label;
+  const plateTop = plate.y, plateBottom = plate.y + plate.h;
+
+  const [, infraTextBottom] = textVerticalExtent(lay.boxes.infrastructure);
+  const [hostedTextTop] = textVerticalExtent(lay.boxes.hosted);
+
+  assert.ok(plateTop >= infraTextBottom - 0.01, `plate top (${plateTop}) overlaps infrastructure's text (bottom ${infraTextBottom})`);
+  assert.ok(plateBottom <= hostedTextTop + 0.01, `plate bottom (${plateBottom}) overlaps hosted's text (top ${hostedTextTop})`);
+});
+
+test('boundary marker rendering is deterministic', () => {
+  const svg1 = render(BOUNDARY_SRC);
+  const svg2 = render(BOUNDARY_SRC);
+  assert.equal(svg1, svg2);
+});
+
+test('no example other than org-groups.tt has a qualifying adjacent platform-to-platform xaas edge', () => {
+  // examples/org-groups.tt has `infra --> saas` — two adjacent platform bars inside the
+  // "cloud" platform group — which DOES qualify for the boundary-marker treatment (see the
+  // dedicated assertion below). Every other shipped example has no platform-to-platform xaas
+  // edge at all, so none of them can pick up a 'boundary' geo kind from this feature.
+  const files = readdirSync(examplesDir).filter((f) => f.endsWith('.tt') && f !== 'org-groups.tt');
+  for (const f of files) {
+    const lay = layout(parse(readFileSync(join(examplesDir, f), 'utf8')));
+    assert.ok(lay.edges.every((e) => e.geo.kind !== 'boundary'), `${f} should have no boundary-marker edges`);
+  }
+});
+
+test('org-groups.tt: infra --> saas (adjacent platform bars) now renders as a boundary marker', () => {
+  const lay = layout(parse(readFileSync(join(examplesDir, 'org-groups.tt'), 'utf8')));
+  const boundary = lay.edges.find((e) => e.inter.from === 'infra' && e.inter.to === 'saas');
+  assert.ok(boundary, 'infra --> saas edge exists');
+  assert.equal(boundary.geo.kind, 'boundary', 'infra and saas are adjacent platform bars in the cloud group');
+});
+
 test('root-level overlays get their own column beside a band of frames', () => {
   const lay = layout(parse(`teamTopology
     group g1 {
@@ -247,6 +337,171 @@ test('root-level overlays get their own column beside a band of frames', () => {
   const { g1, g2, e } = lay.boxes;
   assert.ok(e.x >= g1.x + g1.w && e.x >= g2.x + g2.w, 'bar is to the right of both frames');
   assert.equal(lay.edges.filter((ed) => ed.geo.kind === 'band').length, 2, 'facilitating drawn as dotted bands when the bar cannot cross');
+  assert.equal(e.kind, 'en', 'a leaf target inside a group keeps the column, not the rail, even across frames');
+});
+
+// ── enabling rail (issue #22) ──
+
+test('a cross-cutting enabling team facilitating every sibling group renders as a shared rail', () => {
+  const lay = layout(parse(`teamTopology
+    group product {
+      stream desktop
+    }
+    group services {
+      stream policy
+    }
+    group platform2 {
+      stream identity
+    }
+    enabling research
+    research ~~> product
+    research ~~> services
+    research ~~> platform2`));
+  const { product, services, platform2, research } = lay.boxes;
+  assert.equal(research.kind, 'rail', 'gets the shared rail treatment, not a column');
+  assert.equal(research.x, product.x, 'rail starts at the leftmost targeted frame');
+  assert.equal(research.x + research.w, platform2.x + platform2.w, 'rail ends at the rightmost targeted frame');
+  assert.ok(research.y >= Math.max(product.y + product.h, services.y + services.h, platform2.y + platform2.h),
+    'rail is drawn below the frame band');
+  assert.equal(lay.edges.filter((ed) => ed.inter.mode === 'facilitating').length, 0,
+    'the rail itself carries the relationship; no separate per-pair patches or bands');
+});
+
+test('a rail spans leftmost-to-rightmost among a subset of targeted sibling frames', () => {
+  const lay = layout(parse(`teamTopology
+    group product {
+      stream desktop
+    }
+    group services {
+      stream policy
+    }
+    group platform2 {
+      stream identity
+    }
+    enabling research
+    research ~~> product
+    research ~~> platform2`));
+  const { product, services, platform2, research } = lay.boxes;
+  assert.equal(research.kind, 'rail');
+  assert.equal(research.x, product.x);
+  assert.equal(research.x + research.w, platform2.x + platform2.w);
+  assert.ok(research.x < services.x && research.x + research.w > services.x + services.w,
+    'the untargeted frame in between is simply spanned, not excluded');
+});
+
+test('an enabling team targeting only one sibling frame keeps the column', () => {
+  const lay = layout(parse(`teamTopology
+    group a {
+      stream x
+    }
+    group b {
+      stream y
+    }
+    enabling e
+    e ~~> a`));
+  assert.equal(lay.boxes.e.kind, 'en');
+});
+
+test('two facilitating enabling teams stack as additional fixed-height rail rows', () => {
+  const src = (extra) => `teamTopology
+    group a {
+      stream x
+    }
+    group b {
+      stream y
+    }
+    enabling e1
+    e1 ~~> a
+    e1 ~~> b
+    ${extra}`;
+  const one = layout(parse(src('')));
+  const two = layout(parse(src('enabling e2\ne2 ~~> a\ne2 ~~> b')));
+  assert.equal(one.boxes.e1.kind, 'rail');
+  assert.equal(two.boxes.e1.kind, 'rail');
+  assert.equal(two.boxes.e2.kind, 'rail');
+  assert.equal(two.boxes.e1.y, one.boxes.e1.y, 'the first rail row does not move when a second team is added');
+  assert.ok(two.boxes.e2.y > two.boxes.e1.y, 'the second rail stacks below the first');
+  const rowHeight = two.boxes.e2.y - two.boxes.e1.y;
+  assert.equal(two.height - one.height, rowHeight, 'canvas height grows by exactly one fixed rail row for the second team');
+});
+
+test('a rail label that does not fit is ellipsised, never wraps, and never grows the rail height', () => {
+  const shortSrc = `teamTopology
+    group a {
+      stream x
+    }
+    group b {
+      stream y
+    }
+    enabling e
+    e ~~> a
+    e ~~> b`;
+  const longSrc = `teamTopology
+    group a {
+      stream x
+    }
+    group b {
+      stream y
+    }
+    enabling research "User Experience Research Insights and Behavioral Analytics Enablement Coaching Team for Product Organizations Worldwide"
+    research ~~> a
+    research ~~> b`;
+  const fullLabel = 'User Experience Research Insights and Behavioral Analytics Enablement Coaching Team for Product Organizations Worldwide';
+  const shortLay = layout(parse(shortSrc));
+  const longLay = layout(parse(longSrc));
+  const research = longLay.boxes.research;
+  assert.equal(research.kind, 'rail');
+  assert.equal(research.lines.length, 1, 'a rail label is always a single line');
+  assert.ok(research.lines[0].endsWith('…'), 'a too-wide label is ellipsised');
+  assert.notEqual(research.lines[0], fullLabel);
+  assert.equal(research.h, shortLay.boxes.e.h, 'rail height is fixed regardless of label length');
+
+  const svg = render(longSrc);
+  assert.ok(svg.includes(fullLabel), 'the full name is kept in the title tooltip');
+});
+
+test('rail rendering is deterministic', () => {
+  const src = `teamTopology
+    group product {
+      stream desktop
+    }
+    group services {
+      stream policy
+    }
+    group platform2 {
+      stream identity
+    }
+    enabling research
+    research ~~> product
+    research ~~> services
+    research ~~> platform2`;
+  assert.equal(render(src), render(src));
+});
+
+test('a rail label sits on an opaque plate over the facilitating dot pattern', () => {
+  const src = `teamTopology
+    group a {
+      stream x
+    }
+    group b {
+      stream y
+    }
+    enabling research
+    research ~~> a
+    research ~~> b`;
+  const svg = render(src, { theme: 'dark' });
+  const labelsGroup = svg.split('class="tt-overlay-labels"')[1];
+  assert.ok(labelsGroup, 'overlay labels group present');
+  const railLabel = labelsGroup.split('data-id="research"')[1];
+  assert.match(railLabel, new RegExp(`<rect[^>]*rx="4"[^>]*fill="${THEMES.dark.enabling.plate}"`),
+    'an opaque plate in the enabling tint sits behind the rail label, not the raw dot-pattern hatch');
+  assert.ok(railLabel.indexOf('<rect') < railLabel.indexOf('<text'), 'the plate is drawn before (under) the label text');
+});
+
+test('ecommerce example renders byte-identical to the committed svg (in-lane facilitating is unaffected by the rail change)', () => {
+  const svg = render(readFileSync(join(examplesDir, 'ecommerce.tt'), 'utf8'));
+  const committed = readFileSync(join(examplesDir, 'ecommerce.svg'), 'utf8');
+  assert.equal(`${svg}\n`, committed);
 });
 
 test('collaboration is a parallelogram bridging the two teams', () => {

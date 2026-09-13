@@ -300,6 +300,15 @@ export function wrapText(text, maxWidth, fontSize) {
   return lines.length ? lines : [''];
 }
 
+/** Truncate to one line that fits maxWidth, ending in an ellipsis. Never wraps. */
+function ellipsize(text, maxWidth, fontSize) {
+  const str = String(text);
+  if (textWidth(str, fontSize) <= maxWidth) return str;
+  let cut = str;
+  while (cut.length > 1 && textWidth(`${cut}…`, fontSize) > maxWidth) cut = cut.slice(0, -1);
+  return `${cut.trimEnd()}…`;
+}
+
 // ───────────────────────── Layout ─────────────────────────
 //
 // The layout follows the conventions of the Team Topologies book rather than
@@ -321,7 +330,7 @@ const L = {
   subW: 112, subH: 56, enW: 68, wedgeW: 64, slotGap: 22, labelMin: 170,
   pad: 24, frameTop: 26, frameBottom: 36, bandGap: 44, sideGap: 32, minW: 240,
   margin: 32, lineH: 1.25, noteFs: 11, titleH: 40, flowH: 46, legendH: 64, labelFs: 11,
-  leaderGap: 6, topClear: 8,
+  leaderGap: 6, topClear: 8, railH: 26, railGap: 10,
   fs: { stream: 14, platform: 14, subsystem: 12, enabling: 12, group: 13 },
 };
 
@@ -416,6 +425,17 @@ function structure(children, model, forcedW = 0) {
   const topFrames = frames.filter((c) => rankOf(c) < 2);
   const botFrames = frames.filter((c) => rankOf(c) === 2);
 
+  // an enabling team that facilitates two or more sibling top-level frames is drawn as
+  // one shared horizontal rail spanning them, instead of a right-hand column with one
+  // patch/band per relationship (issue #22). Every other enabling team (a single target,
+  // or targets inside a lane) keeps the column treatment below.
+  const frameIds = new Set(topFrames.map((f) => f.id));
+  const railEnab = topFrames.length > 1 ? enab.filter((n) => {
+    const targets = new Set(model.interactions.filter((it) => it.mode === 'facilitating' && it.from === n.id).map((it) => it.to));
+    return [...targets].filter((t) => frameIds.has(t)).length >= 2;
+  }) : [];
+  const barEnab = enab.filter((n) => !railEnab.includes(n));
+
   // vertical elements get their own x slot: wedges to the left of the lane labels,
   // subsystems and enabling bars to the right
   const stackIds = new Set([...lanes, ...plats, ...subs, ...enab].map((n) => n.id));
@@ -431,7 +451,7 @@ function structure(children, model, forcedW = 0) {
   const wedgeSlots = [...wedgeGroups.values()].map((its) => ({ kind: 'wedge', its, w: L.wedgeW + Math.min(3, its.length - 1) * 28 }));
   const rightSlots = [
     ...subs.map((node) => ({ kind: 'sub', node, w: L.subW })),
-    ...enab.map((node) => ({ kind: 'en', node, w: L.enW })),
+    ...barEnab.map((node) => ({ kind: 'en', node, w: L.enW })),
   ];
   const slotsWidth = (arr) => arr.reduce((a, s) => a + s.w + L.slotGap, 0);
   const leftW = slotsWidth(wedgeSlots), rightW = slotsWidth(rightSlots) + (rightSlots.length ? 24 : 0);
@@ -469,13 +489,33 @@ function structure(children, model, forcedW = 0) {
   const items = [];
   let y = 0;
   if (topLays.length) {
-    let bx = leftW || rightW ? leftW : (innerW - topBandW) / 2;
+    const bandX0 = leftW || rightW ? leftW : (innerW - topBandW) / 2;
+    let bx = bandX0;
     const bandH = Math.max(...topLays.map((l) => l.h));
-    topLays.forEach((l, i) => { items.push({ kind: 'frame', node: l.node, x: bx, y, w: l.w, h: l.h, inner: l.inner }); bx += l.w + (topGaps[i] ?? L.sideGap); });
+    const frameSpan = new Map();   // frame id -> [x0, x1], to size a rail that spans a subset of frames
+    topLays.forEach((l, i) => {
+      items.push({ kind: 'frame', node: l.node, x: bx, y, w: l.w, h: l.h, inner: l.inner });
+      frameSpan.set(l.node.id, [bx, bx + l.w]);
+      bx += l.w + (topGaps[i] ?? L.sideGap);
+    });
     y += bandH;
+    // one shared rail row per facilitating enabling team, below the frame band; width
+    // spans from the leftmost to the rightmost frame it targets (untargeted frames in
+    // between are simply covered), height is fixed so canvas growth stays bounded.
+    for (const n of railEnab) {
+      const targets = model.interactions
+        .filter((it) => it.mode === 'facilitating' && it.from === n.id)
+        .map((it) => it.to)
+        .filter((t) => frameSpan.has(t));
+      const x0 = Math.min(...targets.map((t) => frameSpan.get(t)[0]));
+      const x1 = Math.max(...targets.map((t) => frameSpan.get(t)[1]));
+      y += L.railGap;
+      items.push({ kind: 'rail', node: n, x: x0, y, w: x1 - x0, h: L.railH });
+      y += L.railH;
+    }
     if (lanes.length || plats.length || botLays.length) y += L.bandGap;
   }
-  const lanesTop = y + (subs.length ? L.subH / 2 + 8 : enab.length ? 20 : 2);
+  const lanesTop = y + (subs.length ? L.subH / 2 + 8 : barEnab.length ? 20 : 2);
   y = lanesTop;
   // all lanes in a frame share one label column: clear of wedge columns when a wedge
   // crosses any lane, clear of the subsystem/enabling columns, centred when there is room
@@ -509,7 +549,7 @@ function structure(children, model, forcedW = 0) {
     items.push({ kind: 'frame', node: l.node, x: (innerW - l.w) / 2, y, w: l.w, h: l.h, inner: l.inner });
     y += l.h;
   }
-  y += enab.length ? 20 : 2;
+  y += barEnab.length ? 20 : 2;
   return { w: innerW, h: y, items, slots: [...wedgeSlots, ...rightSlots], lanesRange };
 }
 
@@ -558,6 +598,63 @@ function intersect(a, b) {
 
 const overlap1d = (a0, a1, b0, b1) => Math.min(a1, b1) - Math.max(a0, b0);
 
+/**
+ * Vertical extent [top, bottom] of a box's rendered text (main label + note line),
+ * mirroring the placement math in `teamSVG()`. Used to keep the boundary-marker
+ * label plate clear of both platforms' actual rendered text.
+ */
+export function textVerticalExtent(box) {
+  const noteH = box.note.length ? L.noteFs * L.lineH + 2 : 0;
+  const cy = box.y + box.h / 2 - noteH / 2;
+  const mainH = box.lines.length * box.fs * L.lineH;
+  let top = cy - mainH / 2, bottom = cy + mainH / 2;
+  if (box.note.length) {
+    const noteLineH = L.noteFs * L.lineH;
+    bottom = box.y + box.h / 2 + mainH / 2 + 8 + noteLineH / 2;
+  }
+  return [top, bottom];
+}
+
+/**
+ * Compact "boundary marker" geometry for a platform-to-platform xaas interaction whose
+ * bars are visually adjacent (nothing between them) — see the qualifying criteria in
+ * `layout()`. Returns:
+ *   { kind: 'boundary',
+ *     marker: [{x,y},{x,y},{x,y}],                          // chevron triangle
+ *     label: null | { lines, plate: {x,y,w,h}, cx, cy } }   // optional label plate
+ */
+function boundaryGeo(P, Q, inter) {
+  const top = P.y < Q.y ? P : Q;
+  const bot = top === P ? Q : P;
+  const boundaryY = (top.y + top.h + bot.y) / 2;
+  const spanX0 = Math.max(top.x, bot.x), spanX1 = Math.min(top.x + top.w, bot.x + bot.w);
+  const cx = (spanX0 + spanX1) / 2;
+  const hw = 9, hh = 6;
+  const pointsDown = inter.from === top.node.id;   // provider above → arrow points down into the bar below
+  const marker = pointsDown
+    ? [{ x: cx - hw, y: boundaryY - hh }, { x: cx + hw, y: boundaryY - hh }, { x: cx, y: boundaryY + hh }]
+    : [{ x: cx - hw, y: boundaryY + hh }, { x: cx + hw, y: boundaryY + hh }, { x: cx, y: boundaryY - hh }];
+
+  let label = null;
+  if (inter.label) {
+    const [, clearTop] = textVerticalExtent(top);
+    const [clearBot] = textVerticalExtent(bot);
+    const maxWidth = Math.max(40, Math.min(top.w, bot.w) - (hw * 2 + 24));
+    const lines = wrapText(inter.label, maxWidth, L.labelFs);
+    const lh = L.labelFs * L.lineH;
+    const plateH = lines.length * lh + 8;
+    const plateW = Math.max(...lines.map((ln) => textWidth(ln, L.labelFs))) + 12;
+    const plateCy = clearBot - clearTop >= plateH ? clamp(boundaryY, clearTop + plateH / 2, clearBot - plateH / 2) : (clearTop + clearBot) / 2;
+    let plateCx = cx + hw + 8 + plateW / 2;
+    if (plateCx + plateW / 2 > spanX1) {
+      const leftCx = cx - hw - 8 - plateW / 2;
+      plateCx = leftCx >= spanX0 ? leftCx : plateCx;
+    }
+    label = { lines, plate: { x: plateCx - plateW / 2, y: plateCy - plateH / 2, w: plateW, h: plateH }, cx: plateCx, cy: plateCy };
+  }
+  return { kind: 'boundary', marker, label };
+}
+
 /** Base point on P and apex on Q for a wedge or bridge between two boxes, preferring axis-aligned placement. */
 function facing(P, Q, xOverride) {
   const xo = overlap1d(P.x, P.x + P.w, Q.x, Q.x + Q.w);
@@ -581,7 +678,7 @@ function facing(P, Q, xOverride) {
  * Compute absolute boxes for every team and geometry for every interaction.
  * Returns { width, height, boxes, edges, content, legend, flow, title }.
  *   boxes[id] = { x, y, w, h, node, kind, lines, note, fs, labelZone?, rotate? }
- *   edges     = [{ inter, geo }] with geo.kind ∈ wedge | bridge | patch | band
+ *   edges     = [{ inter, geo }] with geo.kind ∈ wedge | bridge | patch | band | boundary
  */
 export function layout(model, opts = {}) {
   const root = structure(model.nodes, model);
@@ -600,6 +697,11 @@ export function layout(model, opts = {}) {
         const n = it.node;
         boxes[n.id] = { x, y, w: it.w, h: it.h, node: n, kind: 'frame', lines: [n.label], note: n.attrs.note ? [n.attrs.note] : [], fs: L.fs.group };
         place(it.inner, x + it.inner.ox, y + it.inner.oy);
+      } else if (it.kind === 'rail') {
+        boxes[it.node.id] = {
+          x, y, w: it.w, h: it.h, node: it.node, kind: 'rail', fs: L.fs.enabling,
+          lines: [ellipsize(it.node.label, it.w - 16, L.fs.enabling)], note: [],
+        };
       } else {
         boxes[it.node.id] = {
           x, y, w: it.w, h: it.h, node: it.node, kind: it.kind, lines: it.lines,
@@ -658,8 +760,22 @@ export function layout(model, opts = {}) {
     if (handled.has(inter)) continue;
     let P = boxes[inter.from], Q = boxes[inter.to];
     if (!P || !Q) continue;
+    if (inter.mode === 'facilitating' && P.kind === 'rail') continue;   // the rail itself carries the relationship
     if (inter.mode === 'xaas') {
       if (P.kind === 'sub' && P.embeddedOn === inter.to) continue;   // embedding is the relationship
+      if (
+        model.index[inter.from].type === 'platform' && model.index[inter.to].type === 'platform' &&
+        P.kind === 'plat' && Q.kind === 'plat' &&
+        Math.abs(P.x - Q.x) < 1 && Math.abs(P.w - Q.w) < 1 &&
+        Math.abs((P.y < Q.y ? Q.y - (P.y + P.h) : P.y - (Q.y + Q.h)) - L.platGap) < 0.5 &&
+        model.interactions.filter((i) => i.line === inter.line).length === 1
+      ) {
+        // provider and consumer bars stack directly adjacent with nothing between —
+        // a compact boundary marker replaces the normal wedge (issue #27)
+        handled.add(inter);
+        edges.push({ inter, geo: boundaryGeo(P, Q, inter) });
+        continue;
+      }
       const slot = slots.find((s) => s.kind === 'wedge' && s.its.includes(inter));
       // #23: a fan-out from one provider to several targets with the same label text
       // renders once, even when the targets aren't stack-siblings sharing a wedge slot
@@ -989,13 +1105,20 @@ function frameSVG(box, T) {
   ]);
 }
 
-function teamSVG(box, T, part = 'all') {
+function teamSVG(box, T, part = 'all', prefix = 'tt') {
   const { x, y, w, h, node } = box;
   const c = T[node.type === 'group' ? 'stream' : node.type];
-  const parts = [tooltip(node)];
+  // a rail's label is often ellipsised, so its tooltip carries the full name too
+  const parts = [box.kind === 'rail'
+    ? el('title', {}, esc([node.label, TEAM_TYPES[node.type].name, ...Object.entries(node.attrs).map(([k, v]) => `${k}: ${v}`)].join('\n')))
+    : tooltip(node)];
   if (part !== 'label') switch (box.kind) {
     case 'sub':
       parts.push(el('path', { d: octagonPath(x, y, w, h, 12), fill: c.fill, stroke: c.stroke, 'stroke-width': 2 }));
+      break;
+    case 'rail':
+      // enabling colour on the stroke, facilitating hatch as the fill, so the legend still explains both
+      parts.push(el('rect', { x, y, width: w, height: h, rx: 6, fill: `url(#${prefix}-dots)`, stroke: c.stroke, 'stroke-width': 2 }));
       break;
     default:
       parts.push(el('rect', { x, y, width: w, height: h, rx: box.kind === 'en' ? 10 : 8, fill: c.fill, stroke: c.stroke, 'stroke-width': 2 }));
@@ -1013,6 +1136,14 @@ function teamSVG(box, T, part = 'all') {
       el('rect', { x: -tw / 2, y: -th * 0.65, width: tw, height: th, rx: 3, fill: c.plate }),
       el('text', { x: 0, y: 0, 'text-anchor': 'middle', 'font-size': fs, 'font-weight': 600, fill: c.text }, esc(node.label)),
     ]));
+  } else if (box.kind === 'rail') {
+    // a shared rail's label sits directly on the facilitating dot pattern, so it gets
+    // the same opaque enabling-tinted plate as the rotated bar label above
+    const cy = y + h / 2;
+    const plateW = textWidth(box.lines[0], box.fs) + 16;
+    const plateH = box.fs * L.lineH + 8;
+    parts.push(el('rect', { x: cx - plateW / 2, y: cy - plateH / 2, width: plateW, height: plateH, rx: 4, fill: c.plate }));
+    parts.push(textBlock(box.lines, cx, cy, box.fs, c.text, { 'font-weight': 600 }));
   } else {
     const noteH = box.note.length ? L.noteFs * L.lineH + 2 : 0;
     parts.push(textBlock(box.lines, cx, y + h / 2 - noteH / 2, box.fs, c.text, { 'font-weight': 600 }));
@@ -1083,6 +1214,13 @@ function edgeSVG({ inter, inters, geo }, lay, T, prefix) {
       parts.push(el('polygon', { points: pts(geo.points), fill: `url(#${prefix}-dots)`, stroke: T.facil.dot, 'stroke-width': 1, 'stroke-dasharray': '2 3', opacity: inter.soon ? 0.55 : null }));
       if (geo.leader) parts.push(el('line', { x1: geo.leader.x, y1: geo.leader.y1, x2: geo.leader.x, y2: geo.leader.y2, stroke: T.facil.dot, 'stroke-width': 1.5, 'stroke-dasharray': '3 3' }));
       parts.push(plateLabelSVG(geo.label, T.facil.text, T.facil.plate));
+      break;
+    case 'boundary':
+      parts.push(el('polygon', { points: pts(geo.marker), fill: T.xaas.fill, stroke: inter.soon ? T.xaas.text : T.xaas.stroke, 'stroke-width': 1, 'stroke-linejoin': 'round', ...soon }));
+      if (geo.label) {
+        parts.push(el('rect', { x: geo.label.plate.x, y: geo.label.plate.y, width: geo.label.plate.w, height: geo.label.plate.h, fill: T.bg }));
+        parts.push(textBlock(geo.label.lines, geo.label.cx, geo.label.cy, L.labelFs, T.xaas.text));
+      }
       break;
   }
   return el('g', { class: `tt-edge tt-${inter.mode}` }, parts);
@@ -1159,9 +1297,9 @@ export function render(input, opts = {}) {
     el('g', { class: 'tt-frames' }, frames.map((b) => frameSVG(b, T))),
     el('g', { class: 'tt-lanes' }, [...byKind('plat'), ...byKind('lane')].map((b) => teamSVG(b, T))),
     el('g', { class: 'tt-xaas' }, edgesOf('xaas')),
-    el('g', { class: 'tt-overlays' }, [...byKind('sub').map((b) => teamSVG(b, T)), ...byKind('en').map((b) => teamSVG(b, T, 'shape'))]),
+    el('g', { class: 'tt-overlays' }, [...byKind('sub').map((b) => teamSVG(b, T)), ...byKind('en').map((b) => teamSVG(b, T, 'shape')), ...byKind('rail').map((b) => teamSVG(b, T, 'shape', prefix))]),
     el('g', { class: 'tt-facilitating' }, edgesOf('facilitating')),
-    el('g', { class: 'tt-overlay-labels' }, byKind('en').map((b) => teamSVG(b, T, 'label'))),
+    el('g', { class: 'tt-overlay-labels' }, [...byKind('en').map((b) => teamSVG(b, T, 'label')), ...byKind('rail').map((b) => teamSVG(b, T, 'label'))]),
     el('g', { class: 'tt-collaboration' }, edgesOf('collaboration')),
     lay.legend ? legendSVG(lay.legend, T, prefix) : '',
   ];
@@ -1292,4 +1430,4 @@ function depth(model, node) {
   return d;
 }
 
-export default { parse, layout, render, teamApi, teamApis, textWidth, wrapText, VERSION, THEMES, TEAM_TYPES, MODES, TEAM_API_FIELDS, ParseError };
+export default { parse, layout, render, teamApi, teamApis, textWidth, wrapText, textVerticalExtent, VERSION, THEMES, TEAM_TYPES, MODES, TEAM_API_FIELDS, ParseError };
