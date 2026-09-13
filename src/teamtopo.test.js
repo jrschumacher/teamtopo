@@ -715,6 +715,10 @@ test('team identity errors', () => {
   }
 });
 
+test('an unclosed apiFields block is a parse error', () => {
+  assert.throws(() => parse('teamTopology\napiFields {\n  focus'), (e) => e instanceof ParseError && /apiFields block is never closed/.test(e.message));
+});
+
 test('apiFields is parsed into the model and otherwise unused', () => {
   const m = parse(`teamTopology
   apiFields {

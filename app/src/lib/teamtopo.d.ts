@@ -98,6 +98,7 @@ declare module '@lib/teamtopo' {
 		title: { x: number; y: number } | null;
 		flow: { x: number; y: number; w: number; label: string } | null;
 		legend: { x: number; y: number; w: number } | null;
+		teamLegend: { x: number; y: number; w: number } | null;
 	}
 
 	export interface ThemeColors {

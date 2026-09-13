@@ -275,6 +275,7 @@ export function parse(source) {
 
   if (!sawHeader) throw new ParseError('diagram must start with "teamTopology"', lines.length || 1);
   if (api) throw new ParseError(`api block for "${api.id}" opened on line ${api.line} is never closed with "}"`, lines.length);
+  if (fieldsBlock) throw new ParseError('the apiFields block is never closed with "}"', lines.length);
   if (stack.length) {
     const open = stack[stack.length - 1];
     throw new ParseError(`block for "${open.id}" opened on line ${open.line} is never closed with "}"`, lines.length);
