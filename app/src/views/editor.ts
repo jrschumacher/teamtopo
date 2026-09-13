@@ -2,8 +2,11 @@
  * Editor view: source pane with syntax highlighting + line gutter, debounced live
  * render, a Diagram/Team APIs tab bar, header popovers (Examples, History, Share),
  * explicit Save with the stale-409 reload/save-anyway flow, and /new draft persistence.
- * Element ids and classes are a contract with the visual design (docs/editor-design.md);
- * keep them stable. Ported from src/playground.html, then restyled.
+ * The workspace chrome — a draggable divider, editor-only/split/diagram-only modes and
+ * the renderer's zoom/fit/pan viewport — is state from `lib/workspace.ts` wired to the DOM
+ * here. Element ids and classes are a contract with the visual design
+ * (docs/editor-design.md); keep them stable. Ported from src/playground.html, then
+ * restyled.
  */
 
 import { parse, ParseError, render, teamApi, type Model, type Node } from '@lib/teamtopo';
@@ -15,6 +18,24 @@ import { teamLink, versionLink } from '../lib/links';
 import { escapeHtml } from '../lib/markdown';
 import { setupPopovers, type PopoverController } from '../lib/popover';
 import type { OpenedDoc, Version } from '../lib/types';
+import {
+	clampRatio,
+	clampZoom,
+	DEFAULT_RATIO,
+	fitZoom,
+	formatZoom,
+	MAX_ZOOM,
+	MIN_PANE_PX,
+	MIN_PANE_STACKED_PX,
+	MIN_ZOOM,
+	naturalSize,
+	nextZoom,
+	prevZoom,
+	readWorkspace,
+	writeWorkspace,
+	type PaneMode,
+	type Size
+} from '../lib/workspace';
 import { navigate } from '../router';
 import { loadCatalog, type CatalogEntry } from './landing';
 import './editor.css';
@@ -23,8 +44,31 @@ export const DRAFT_KEY = 'teamtopo.draft';
 const RENDER_DELAY_MS = 120;
 /** Matches `.ed-src`/`.ed-highlight` line-height in editor.css. */
 const LINE_HEIGHT_PX = 20;
+/** Matches `.ed-canvas` padding in editor.css — the diagram's usable viewport inset. */
+const CANVAS_PAD_PX = 24;
+/** Matches the `max-width` of the stacked-workspace media query in editor.css. */
+const NARROW_QUERY = '(max-width: 56rem)';
+/** Pointer travel before a press on the canvas becomes a pan instead of a click. */
+const PAN_THRESHOLD_PX = 4;
+/** Wheel delta that doubles/halves the zoom, for ctrl/⌘-wheel and trackpad pinch. */
+const WHEEL_ZOOM_DIVISOR = 180;
+/** Divider step per arrow key, as a fraction of the workspace (Shift takes bigger steps). */
+const RATIO_STEP = 0.02;
+const RATIO_STEP_COARSE = 0.1;
 const TOAST_MS = 1800;
 const COPY_FEEDBACK_MS = 1400;
+const PANE_MODES: PaneMode[] = ['editor', 'split', 'renderer'];
+const PANE_LABELS: Record<PaneMode, string> = {
+	editor: 'Editor only',
+	split: 'Split view',
+	renderer: 'Diagram only'
+};
+/** 16×12 glyphs: the workspace outline with the visible pane(s) filled. */
+const PANE_ICONS: Record<PaneMode, string> = {
+	editor: '<rect class="on" x="2" y="2" width="5" height="8"/>',
+	split: '<path d="M8 1.5v9"/>',
+	renderer: '<rect class="on" x="9" y="2" width="5" height="8"/>'
+};
 const FALLBACK_STARTER =
 	'teamTopology\n  stream app "Product"\n  platform infra "Platform"\n  infra --> app\n';
 
@@ -111,6 +155,16 @@ function shareHtml(doc: OpenedDoc | null): string {
 		}`;
 }
 
+/** The always-visible editor-only / split / diagram-only switch. */
+function paneSwitchHtml(): string {
+	const buttons = PANE_MODES.map(
+		(mode) => `<button class="ed-pane-btn" id="pane-${mode}" type="button"
+				aria-pressed="${mode === 'split'}" title="${PANE_LABELS[mode]}" aria-label="${PANE_LABELS[mode]}"
+				><svg viewBox="0 0 16 12" aria-hidden="true" focusable="false"><rect x="1.5" y="1.5" width="13" height="9" rx="1.5"/>${PANE_ICONS[mode]}</svg></button>`
+	).join('');
+	return `<div class="ed-panes" role="group" aria-label="Workspace layout">${buttons}</div>`;
+}
+
 function headerHtml(doc: OpenedDoc | null): string {
 	const showExamples = doc === null;
 	return `
@@ -120,6 +174,8 @@ function headerHtml(doc: OpenedDoc | null): string {
 		<span class="ed-title" id="doc-title">Untitled diagram</span>
 		<span class="ed-state" id="state-pill"><span class="ed-state-dot" id="state-dot"></span><span id="state-text"></span></span>
 		<span class="ed-spacer"></span>
+		${paneSwitchHtml()}
+		<span class="ed-divider"></span>
 		${
 			showExamples
 				? `<div class="ed-pop-wrap">
@@ -146,7 +202,7 @@ function shell(doc: OpenedDoc | null): string {
 	<div class="ed-shell">
 		${headerHtml(doc)}
 		<div class="banner" id="banner" role="status" hidden></div>
-		<div class="ed-work">
+		<div class="ed-work" id="work" data-pane-mode="split">
 			<section class="ed-pane ed-pane-source" aria-label="Diagram source">
 				<div class="ed-pane-head"><span>Source</span><span class="ed-spacer"></span><span class="ed-pane-ext">.tt</span></div>
 				<div class="ed-code" id="code">
@@ -158,6 +214,9 @@ function shell(doc: OpenedDoc | null): string {
 				</div>
 				<div class="ed-status" id="status"><span class="dot"></span><span id="status-text"></span></div>
 			</section>
+			<div class="ed-split" id="split" role="separator" tabindex="0" aria-orientation="vertical"
+				aria-label="Resize the source and diagram panes" title="Drag to resize · double-click to reset"
+				aria-valuemin="0" aria-valuemax="100" aria-valuenow="40"></div>
 			<section class="ed-pane ed-pane-main" aria-label="Diagram and Team APIs">
 				<div class="ed-tabbar" role="tablist" aria-label="View">
 					<button class="ed-tab" id="tab-diagram" type="button" role="tab" aria-selected="true" aria-controls="panel-diagram">Diagram</button>
@@ -165,10 +224,16 @@ function shell(doc: OpenedDoc | null): string {
 					<span class="ed-spacer"></span>
 					<button class="ed-btn" id="export-svg" type="button">Export SVG</button>
 					<button class="ed-btn" id="export-md" type="button">Markdown</button>
-					<button class="ed-btn" id="fit" type="button" aria-pressed="true" title="Scale the diagram to the pane width">Fit</button>
+					<div class="ed-zoom" role="group" aria-label="Diagram zoom and fit">
+						<button class="ed-btn ed-zoom-step" id="zoom-out" type="button" aria-label="Zoom out" title="Zoom out">−</button>
+						<button class="ed-btn ed-zoom-reset" id="zoom-reset" type="button" title="Reset zoom to 100%"><span id="zoom-level">100%</span></button>
+						<button class="ed-btn ed-zoom-step" id="zoom-in" type="button" aria-label="Zoom in" title="Zoom in">+</button>
+						<button class="ed-btn" id="fit" type="button" aria-pressed="true" title="Fit the whole diagram in view">Fit</button>
+					</div>
 				</div>
 				<div class="ed-panel" id="panel-diagram" role="tabpanel" aria-labelledby="tab-diagram">
-					<div class="ed-canvas fit" id="canvas"></div>
+					<div class="ed-canvas ed-canvas-zoom" id="canvas" role="group" tabindex="0"
+						aria-label="Diagram viewport — drag to pan, ctrl+wheel to zoom, +/−/0/F for zoom in, out, 100% and fit"></div>
 					<div class="ed-panel-foot"><span id="render-status"></span><span class="ed-spacer"></span><span id="dims"></span></div>
 				</div>
 				<div class="ed-panel" id="panel-api" role="tabpanel" aria-labelledby="tab-api" hidden>
@@ -231,6 +296,18 @@ export function renderEditor(
 	const tabApi = $<HTMLButtonElement>('#tab-api');
 	const panelDiagram = $<HTMLElement>('#panel-diagram');
 	const panelApi = $<HTMLElement>('#panel-api');
+	const work = $('#work');
+	const splitter = $('#split');
+	const sourcePane = $('.ed-pane-source');
+	const mainPane = $('.ed-pane-main');
+	const paneButtons = Object.fromEntries(
+		PANE_MODES.map((m) => [m, $<HTMLButtonElement>(`#pane-${m}`)])
+	) as Record<PaneMode, HTMLButtonElement>;
+	const zoomIn = $<HTMLButtonElement>('#zoom-in');
+	const zoomOut = $<HTMLButtonElement>('#zoom-out');
+	const zoomReset = $<HTMLButtonElement>('#zoom-reset');
+	const zoomLevel = $('#zoom-level');
+	const fitBtn = $<HTMLButtonElement>('#fit');
 
 	let model: Model | null = null;
 	let lastError: number | null = null;
@@ -315,6 +392,135 @@ export function renderEditor(
 		apiStatus.textContent = `${teams.length} Team API page${teams.length === 1 ? '' : 's'} generated`;
 	}
 
+	// ── workspace: pane split + renderer viewport ──────────────────────────────
+	const ws = readWorkspace();
+	const narrow = typeof matchMedia === 'function' ? matchMedia(NARROW_QUERY) : null;
+	let drag: { pointerId: number } | null = null;
+	let pan: { pointerId: number; x: number; y: number; left: number; top: number } | null = null;
+	let panned = false;
+	let syncing = false;
+
+	const persist = () => writeWorkspace(ws);
+	/** The workspace stacks its panes below `NARROW_QUERY`; the divider follows. */
+	const stacked = () => narrow?.matches === true;
+	const workExtent = () => (stacked() ? work.clientHeight : work.clientWidth);
+	const minPane = () => (stacked() ? MIN_PANE_STACKED_PX : MIN_PANE_PX);
+	const currentSvg = () => canvas.querySelector('svg');
+
+	/** Usable viewport inside the canvas' padding, or `null` while it has no layout. */
+	function viewportSize(): Size | null {
+		const w = canvas.clientWidth - 2 * CANVAS_PAD_PX;
+		const h = canvas.clientHeight - 2 * CANVAS_PAD_PX;
+		return w > 0 && h > 0 ? { w, h } : null;
+	}
+
+	const canPan = () =>
+		canvas.scrollWidth > canvas.clientWidth || canvas.scrollHeight > canvas.clientHeight;
+
+	/**
+	 * Scale the rendered SVG by its `width`/`height` attributes only — the `viewBox` stays
+	 * as rendered, so every zoom level is drawn from vectors rather than scaled pixels.
+	 */
+	function applyZoomToSvg() {
+		const svg = currentSvg();
+		const natural = naturalSize(svg);
+		if (!svg || !natural) return;
+		svg.setAttribute('width', String(Math.round(natural.w * ws.zoom)));
+		svg.setAttribute('height', String(Math.round(natural.h * ws.zoom)));
+	}
+
+	function updateViewportControls() {
+		zoomLevel.textContent = formatZoom(ws.zoom);
+		zoomReset.setAttribute('aria-label', `Zoom ${formatZoom(ws.zoom)}, reset to 100%`);
+		zoomIn.disabled = ws.zoom >= MAX_ZOOM;
+		zoomOut.disabled = ws.zoom <= MIN_ZOOM;
+		fitBtn.setAttribute('aria-pressed', String(ws.fit));
+		canvas.classList.toggle('can-pan', canPan());
+	}
+
+	/** Re-fit (when fit is on) and re-apply the zoom after anything changed the viewport. */
+	function syncViewport() {
+		if (syncing) return;
+		syncing = true;
+		try {
+			if (ws.fit) {
+				const fitted = fitZoom(naturalSize(currentSvg()), viewportSize());
+				if (fitted !== null) ws.zoom = fitted;
+			}
+			applyZoomToSvg();
+			updateViewportControls();
+		} finally {
+			syncing = false;
+		}
+	}
+
+	/** Keep the content under `client` (a viewport point) still while the scale changes. */
+	function keepAnchored(client: { x: number; y: number }, from: number, to: number) {
+		if (!(from > 0) || !(to > 0)) return;
+		const rect = canvas.getBoundingClientRect();
+		const x = client.x - rect.left;
+		const y = client.y - rect.top;
+		const k = to / from;
+		canvas.scrollLeft = (canvas.scrollLeft + x) * k - x;
+		canvas.scrollTop = (canvas.scrollTop + y) * k - y;
+	}
+
+	function setZoom(zoom: number, anchor?: { x: number; y: number }) {
+		const from = ws.zoom;
+		ws.zoom = clampZoom(zoom);
+		ws.fit = false;
+		applyZoomToSvg();
+		if (anchor) keepAnchored(anchor, from, ws.zoom);
+		updateViewportControls();
+		persist();
+	}
+
+	/** Fit the whole diagram in the viewport and keep it fitted as the viewport changes. */
+	function applyFit() {
+		ws.fit = true;
+		canvas.scrollLeft = 0;
+		canvas.scrollTop = 0;
+		syncViewport();
+		persist();
+	}
+
+	function setRatio(ratio: number) {
+		ws.ratio = clampRatio(ratio, workExtent(), minPane());
+		work.style.setProperty('--ed-split', `${(ws.ratio * 100).toFixed(2)}%`);
+		splitter.setAttribute('aria-valuenow', String(Math.round(ws.ratio * 100)));
+		syncViewport();
+	}
+
+	function applyLayout() {
+		work.dataset.paneMode = ws.mode;
+		for (const mode of PANE_MODES)
+			paneButtons[mode].setAttribute('aria-pressed', String(ws.mode === mode));
+		const extent = workExtent();
+		splitter.setAttribute('aria-orientation', stacked() ? 'horizontal' : 'vertical');
+		splitter.setAttribute(
+			'aria-valuemin',
+			String(Math.round(clampRatio(0, extent, minPane()) * 100))
+		);
+		splitter.setAttribute(
+			'aria-valuemax',
+			String(Math.round(clampRatio(1, extent, minPane()) * 100))
+		);
+		setRatio(ws.ratio);
+	}
+
+	/** Switch panes, never leaving focus stranded inside the pane that just went away. */
+	function setPaneMode(mode: PaneMode, from?: HTMLElement) {
+		const hiding = mode === 'editor' ? mainPane : mode === 'renderer' ? sourcePane : null;
+		const strands =
+			hiding !== null &&
+			document.activeElement instanceof HTMLElement &&
+			hiding.contains(document.activeElement);
+		ws.mode = mode;
+		applyLayout();
+		persist();
+		if (strands) (from ?? paneButtons[mode]).focus();
+	}
+
 	function renderNow() {
 		const text = src.value;
 		if (!doc) writeDraft(text);
@@ -322,10 +528,8 @@ export function renderEditor(
 		try {
 			model = parse(text);
 			canvas.innerHTML = render(model, { theme: currentTheme(), idPrefix: 'ed' });
-			const el = canvas.querySelector('svg');
-			dims.textContent = el
-				? `${Number(el.getAttribute('width')) | 0} × ${Number(el.getAttribute('height')) | 0}`
-				: '';
+			const natural = naturalSize(canvas.querySelector('svg'));
+			dims.textContent = natural ? `${natural.w | 0} × ${natural.h | 0}` : '';
 			const teams = model.teams.length;
 			const inters = model.interactions.length;
 			statusText.textContent = `${teams} team${teams === 1 ? '' : 's'}, ${inters} interaction${inters === 1 ? '' : 's'} · no errors`;
@@ -355,6 +559,7 @@ export function renderEditor(
 				canvas.innerHTML = '<p class="empty">Fix the source to see the diagram.</p>';
 			}
 		}
+		syncViewport();
 		updateGutter();
 		updateHighlight();
 		updateSaveState();
@@ -444,6 +649,8 @@ export function renderEditor(
 		tabApi.setAttribute('aria-selected', String(!showDiagram));
 		panelDiagram.hidden = !showDiagram;
 		panelApi.hidden = showDiagram;
+		// The diagram pane had no layout while hidden: re-fit now that it does.
+		if (showDiagram) syncViewport();
 	}
 
 	status.addEventListener('click', jumpToError);
@@ -491,12 +698,146 @@ export function renderEditor(
 		}
 	});
 
-	$('#fit').addEventListener('click', (e) => {
-		const btn = e.currentTarget as HTMLButtonElement;
-		const on = btn.getAttribute('aria-pressed') !== 'true';
-		btn.setAttribute('aria-pressed', String(on));
-		canvas.classList.toggle('fit', on);
+	// ── pane controls ──────────────────────────────────────────────────────────
+	for (const mode of PANE_MODES)
+		paneButtons[mode].addEventListener('click', () => setPaneMode(mode, paneButtons[mode]));
+
+	splitter.addEventListener('pointerdown', (e) => {
+		if (e.button !== 0) return;
+		e.preventDefault();
+		drag = { pointerId: e.pointerId };
+		splitter.classList.add('is-dragging');
+		try {
+			splitter.setPointerCapture(e.pointerId);
+		} catch {
+			// pointer capture is a nicety; the document listeners below still end the drag
+		}
 	});
+
+	function moveDivider(e: PointerEvent) {
+		if (!drag) return;
+		const extent = workExtent();
+		if (extent <= 0) return;
+		const rect = work.getBoundingClientRect();
+		const pos = stacked() ? e.clientY - rect.top : e.clientX - rect.left;
+		setRatio(pos / extent);
+	}
+
+	function endDrag() {
+		if (!drag) return;
+		try {
+			splitter.releasePointerCapture(drag.pointerId);
+		} catch {
+			// already released
+		}
+		drag = null;
+		splitter.classList.remove('is-dragging');
+		persist();
+	}
+
+	splitter.addEventListener('pointermove', moveDivider);
+	splitter.addEventListener('pointerup', endDrag);
+	splitter.addEventListener('pointercancel', endDrag);
+	splitter.addEventListener('dblclick', () => {
+		setRatio(DEFAULT_RATIO);
+		persist();
+	});
+
+	splitter.addEventListener('keydown', (e) => {
+		const [less, more] = stacked() ? ['ArrowUp', 'ArrowDown'] : ['ArrowLeft', 'ArrowRight'];
+		const step = e.shiftKey ? RATIO_STEP_COARSE : RATIO_STEP;
+		let next: number | null = null;
+		if (e.key === less) next = ws.ratio - step;
+		else if (e.key === more) next = ws.ratio + step;
+		else if (e.key === 'Home') next = 0;
+		else if (e.key === 'End') next = 1;
+		else if (e.key === 'Enter' || e.key === ' ') next = DEFAULT_RATIO;
+		if (next === null) return;
+		e.preventDefault();
+		setRatio(next);
+		persist();
+	});
+
+	// ── renderer viewport ──────────────────────────────────────────────────────
+	zoomIn.addEventListener('click', () => setZoom(nextZoom(ws.zoom)));
+	zoomOut.addEventListener('click', () => setZoom(prevZoom(ws.zoom)));
+	zoomReset.addEventListener('click', () => setZoom(1));
+	fitBtn.addEventListener('click', () => {
+		if (ws.fit) {
+			// Stop tracking the viewport but stay at the scale the user is looking at.
+			ws.fit = false;
+			updateViewportControls();
+			persist();
+			return;
+		}
+		applyFit();
+	});
+
+	canvas.addEventListener(
+		'wheel',
+		(e) => {
+			// Plain wheel scrolls (pans) the viewport; ctrl/⌘ — and trackpad pinch — zooms.
+			if (!e.ctrlKey && !e.metaKey) return;
+			e.preventDefault();
+			setZoom(ws.zoom * Math.exp(-e.deltaY / WHEEL_ZOOM_DIVISOR), { x: e.clientX, y: e.clientY });
+		},
+		{ passive: false }
+	);
+
+	canvas.addEventListener('keydown', (e) => {
+		if (e.ctrlKey || e.metaKey || e.altKey) return;
+		if (e.key === '+' || e.key === '=') setZoom(nextZoom(ws.zoom));
+		else if (e.key === '-' || e.key === '_') setZoom(prevZoom(ws.zoom));
+		else if (e.key === '0') setZoom(1);
+		else if (e.key === 'f' || e.key === 'F') applyFit();
+		else return;
+		e.preventDefault();
+	});
+
+	canvas.addEventListener('pointerdown', (e) => {
+		panned = false;
+		if (e.button !== 0 || !canPan()) return;
+		pan = {
+			pointerId: e.pointerId,
+			x: e.clientX,
+			y: e.clientY,
+			left: canvas.scrollLeft,
+			top: canvas.scrollTop
+		};
+	});
+
+	canvas.addEventListener('pointermove', (e) => {
+		if (!pan) return;
+		const dx = e.clientX - pan.x;
+		const dy = e.clientY - pan.y;
+		if (!panned) {
+			if (dx * dx + dy * dy < PAN_THRESHOLD_PX * PAN_THRESHOLD_PX) return;
+			panned = true;
+			canvas.classList.add('is-panning');
+			try {
+				canvas.setPointerCapture(pan.pointerId);
+			} catch {
+				// pointer capture is a nicety; panning still tracks moves over the canvas
+			}
+		}
+		e.preventDefault();
+		canvas.scrollLeft = pan.left - dx;
+		canvas.scrollTop = pan.top - dy;
+	});
+
+	function endPan() {
+		if (!pan) return;
+		try {
+			canvas.releasePointerCapture(pan.pointerId);
+		} catch {
+			// already released
+		}
+		pan = null;
+		canvas.classList.remove('is-panning');
+	}
+
+	canvas.addEventListener('pointerup', endPan);
+	canvas.addEventListener('pointercancel', endPan);
 
 	$('#export-svg').addEventListener('click', () => {
 		if (!model) return showToast('Nothing to export yet');
@@ -563,6 +904,11 @@ export function renderEditor(
 	});
 
 	canvas.addEventListener('click', (e) => {
+		if (panned) {
+			// The press was a pan, not a pick.
+			panned = false;
+			return;
+		}
 		const g = (e.target as Element | null)?.closest<SVGElement>('.tt-node, .tt-frame');
 		const id = g?.getAttribute('data-id');
 		if (!id || !model) return;
@@ -604,15 +950,29 @@ export function renderEditor(
 	const media =
 		typeof matchMedia === 'function' ? matchMedia('(prefers-color-scheme: dark)') : null;
 	media?.addEventListener('change', renderNow);
+
+	// Any viewport change — divider drag, pane mode, window resize, the pane stacking at
+	// narrow widths — re-fits the diagram so the layout is never left stale or clipped.
+	const onViewportChange = () => applyLayout();
+	const observer =
+		typeof ResizeObserver === 'function' ? new ResizeObserver(onViewportChange) : null;
+	observer?.observe(canvas);
+	addEventListener('resize', onViewportChange);
+	narrow?.addEventListener('change', onViewportChange);
+
 	disposers.set(root, () => {
 		clearTimeout(timer);
 		clearTimeout(toastTimer);
 		media?.removeEventListener('change', renderNow);
+		observer?.disconnect();
+		removeEventListener('resize', onViewportChange);
+		narrow?.removeEventListener('change', onViewportChange);
 		popovers.dispose();
 	});
 
 	updateHighlight();
 	selectTab('diagram');
+	applyLayout();
 	renderNow();
 }
 
