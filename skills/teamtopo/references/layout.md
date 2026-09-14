@@ -21,14 +21,16 @@ the same rules, recursively:
    right, embedded on the top edge of the **first lane they provide a service to** (the
    first `sub --> lane` in file order). That embedding *is* the X-as-a-Service
    relationship; no wedge is drawn for it. A subsystem with no `-->` to a lane sits
-   above the lanes.
+   above the lanes. **Exception — the shared rail:** a subsystem consumed across two or
+   more sibling top-level groups is drawn once as a rail below them instead, so its
+   position no longer depends on which `-->` line comes first — see rule 8b.
 5. **Enabling bars.** Enabling teams are tall purple bars in their own column on the
    right (after the subsystems), spanning from the first to the last team they
    facilitate (`~~>`), overlapping each one with a dotted patch. An enabling team with
    no `~~>` spans all the frame's lanes. **Exception — the shared rail:** an enabling
-   team that facilitates two or more sibling top-level groups (`~~>` to the group ids
-   themselves, not lanes inside them) is drawn once as a thin horizontal rail below the
-   frame band instead — see rule 8b.
+   team that facilitates two or more sibling top-level groups — the group ids themselves
+   or teams inside them — is drawn once as a thin horizontal rail below the frame band
+   instead — see rule 8b.
 6. **Wedges.** Every other X-as-a-Service is a grey wedge: wide base on the provider,
    point reaching the far edge of the consumer. A fan-out (`infra --> a, b, c` on one
    line, or several lines with the same provider and label) is one wedge that reaches
@@ -46,16 +48,16 @@ the same rules, recursively:
    enabling team declared outside the lanes it helps) fall back to geometry between the
    two boxes: legible, not pretty. Facilitating that cannot cross a lane becomes a
    dotted band.
-8b. **The shared rail.** `enabling research` with `research ~~> product`,
-    `research ~~> services`, `research ~~> platform` where `product`, `services` and
-    `platform` are sibling `group { }` blocks draws `research` once as a rail spanning
-    from the leftmost to the rightmost group it targets (a group in between that it does
-    not target is simply covered, not excluded), labelled once, in the enabling colour
-    with the facilitating hatch. A second facilitating enabling team at the same level
+8b. **The shared rail.** Anything shared across two or more sibling `group { }` blocks is
+    drawn once as a rail below them: an enabling team facilitating them (`~~>`, in the
+    enabling colour with the facilitating hatch) and a complicated subsystem they consume
+    (`-->`, the subsystem octagon flattened out). The rail spans from the leftmost to the
+    rightmost group it reaches into (a group in between that it does not touch is simply
+    covered, not excluded) and is labelled once. A second shared team at the same level
     stacks as another rail row of the same fixed height below the first — canvas growth
-    is one row per team, not per group spanned. Facilitating a single group, or
-    facilitating a lane/team directly instead of a whole group, keeps the tall column
-    treatment from rule 5 instead.
+    is one row per team, not per group spanned. A team shared with a single group, or
+    with teams inside one group, keeps the tall column / embedded octagon treatment from
+    rules 4-5 instead.
 
     ```tt
     teamTopology
@@ -69,6 +71,16 @@ the same rules, recursively:
       research ~~> product
       research ~~> services
     ```
+8c. **Lane markers.** The rail's targets can be the groups themselves or named teams
+    inside them. A group named outright is covered by the rail below it and needs no
+    other mark; a named team gets a small marker instead — a tab on its bottom edge,
+    dotted in the enabling colour for facilitating, grey for X-as-a-Service, with the
+    interaction label beside it when it fits (the tooltip carries it either way). So
+    `coaching ~~> web`, `coaching ~~> portal`, `coaching ~~> ops` for lanes in three
+    sibling groups draws one "Platform Coaching" rail under the three groups plus three
+    tabs — never a band across the lanes and their labels, and the lanes beside them
+    stay unmarked. Mixing the two (`~~> groupA`, `~~> laneInB`) is fine: the rail spans
+    both groups, only the named lane is tabbed.
 9. **Canvas** grows to fit; nothing is clipped. `title` goes at the top, `flow` is an
    arrow across the top, `legend` sits at the bottom.
 
@@ -83,13 +95,14 @@ the same rules, recursively:
 - **Overlays belong with their lanes.** Declare an enabling or subsystem team in the
   same block as the streams it facilitates or serves. If asked to add "security
   enablement for the retail teams" and the retail teams are in `group retail { }`,
-  declare `enabling security` inside that group, not at top level. If it helps lanes in
-  several groups, declare it at top level and accept dotted bands. If instead it
-  facilitates whole sibling groups (`security ~~> groupA`, `security ~~> groupB`), it
-  gets the shared rail (rule 8b) — cleaner than a column, and the intended shape for
-  that case.
-- **The first `sub --> lane` line decides where a subsystem sits.** Order the fan-out so
-  the lane it is most associated with comes first.
+  declare `enabling security` inside that group, not at top level. If it is shared across
+  several sibling groups — whole groups (`security ~~> groupA`, `security ~~> groupB`) or
+  named teams in them (`security ~~> laneInA`, `security ~~> laneInB`) — declare it at top
+  level and it gets the shared rail with lane markers (rules 8b-8c), which is the intended
+  shape for that case. The same goes for a subsystem several groups consume.
+- **The first `sub --> lane` line decides where a subsystem sits** — unless its consumers
+  are spread across sibling groups, in which case it gets a rail and file order stops
+  mattering. Order the fan-out so the lane it is most associated with comes first.
 - **Facilitation targets set an enabling bar's height.** `~~>` to the first and last
   lane makes the bar span everything between; a bar with a single target is short.
 - **A platform grouping is a `platform { }` block.** Its inner streams are lanes inside

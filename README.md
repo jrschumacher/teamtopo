@@ -227,17 +227,23 @@ Team Topologies book, so the domain does most of the work:
    to full width beneath. Overlays declared at a level with no lanes of their own get a
    column beside the frames, and facilitating that cannot cross a team is drawn as a
    dotted band to it.
-5. **The shared rail.** An enabling team that facilitates two or more sibling top-level
-   groups (`enabler ~~> groupA` and `enabler ~~> groupB`, not lanes inside them) is drawn
-   once as a thin horizontal rail below the frame band instead of a tall column with one
-   dotted patch per relationship — it uses the enabling colour on its border and the
-   facilitating dotted hatch as its fill, so the legend still explains it. The rail spans
-   from the leftmost to the rightmost group it targets; a group in between that it does
-   not target is simply covered, not excluded. Several facilitating enabling teams stack
-   as additional rail rows of the same fixed height, so canvas growth stays one row per
-   team regardless of how many groups are spanned or how tall they are. An enabling team
-   facilitating only one group, or facilitating lanes/teams directly rather than a whole
-   group, keeps the column treatment above.
+5. **The shared rail.** Anything shared across two or more sibling top-level groups is
+   drawn once as a thin horizontal rail below the frame band, instead of a tall column
+   with one dotted patch, band or wedge per relationship: an enabling team that
+   facilitates them (`enabler ~~> …`), and a complicated subsystem they consume
+   (`subsystem --> …`). An enabling rail uses the enabling colour on its border and the
+   facilitating dotted hatch as its fill; a subsystem rail is the subsystem's own
+   octagon flattened out — so the legend still explains both. The rail spans from the
+   leftmost to the rightmost group it reaches into; a group in between that it does not
+   touch is simply covered, not excluded. The targets can be the groups themselves or
+   named teams inside them: a group named outright is covered by the rail below it,
+   while a named team gets a small marker — a tab on its bottom edge, dotted for
+   facilitating, grey for X-as-a-Service, with the interaction label beside it when it
+   fits — so a lane's own label is never painted over and untargeted teams beside it
+   stay unmarked. Several shared teams stack as additional rail rows of the same fixed
+   height, so canvas growth stays one row per team regardless of how many groups are
+   spanned or how tall they are. A team shared with only one group, or with teams inside
+   a single group, keeps the column treatment above.
 6. **Canvas.** Anything that overflows the structural content grows the canvas.
 
 To keep a subsystem or enabling team on the lanes it belongs with, declare it in the
