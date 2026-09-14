@@ -73,6 +73,47 @@ Indentation is ignored.
   Teams declared inside are laid out inside the container. A platform block is the
   book's *platform grouping*: a platform that is itself a topology of teams.
 
+### Real teams
+
+**Most diagrams need none of this.** A `stream`, `platform`, `subsystem` or `enabling`
+node that no team owns *is* a team — one team aligned to one stream is the shape Team
+Topologies recommends, and it stays the default the syntax assumes. Reach for `team` and
+`owns` only where the org does not match that shape: one real team spread across several
+streams or capabilities. Declaring a team per node adds ceremony and says nothing the node
+did not already say.
+
+Where the mismatch is real, name the team and say what it owns:
+
+```
+team endpoint "Endpoint Team"
+endpoint owns desktop, mail
+```
+
+- `team <id> ["Label"] [attrs]` declares a real team. Team ids share the identifier
+  namespace with teams-in-the-diagram, so an id can only be used once.
+- `<team> owns a, b` may appear anywhere in the file, before or after the nodes it names,
+  and repeats accumulate. A team may own leaf teams only, not a `{ ... }` container.
+- A node a team owns is **work, not a team**: it carries an `owners` list, gets a chip in
+  the diagram, and no longer has a Team API of its own — the team has one instead.
+- Several teams may own the same node; the node gets a chip for each.
+- A team with no `owns` line is a valid placeholder: it gets a Team API and draws nothing.
+- One team owning exactly one node is not an error, just redundant: it reports `Streams: 1`
+  and warns about nothing, because that is the orthodox shape.
+
+Its `api` block goes on the team, and an `api` block on an owned node is an error telling
+you where to move it.
+
+Two non-fatal diagnostics report cognitive load, on stderr and in `--json` under
+`diagnostics` (they never stop a document rendering):
+
+| Code | Fires when | Why |
+|---|---|---|
+| `team-multi-stream` | a team is aligned to more than one stream | the team carries the load of every stream it owns |
+| `team-multi-subsystem` | a team owns more than one complicated subsystem | each subsystem is its own deep specialism to hold |
+
+Both name the nodes involved, so the message doubles as the list of split candidates, and
+both appear in the team's Team API document as a note under its `Owns` list.
+
 ### Interactions
 
 | Syntax | Mode | Meaning |
@@ -95,11 +136,31 @@ contains `[`. Attributes come last in square brackets:
 |---|---|
 | `[duration="until Q3"]` | fills the Duration column of the Team API tables |
 | `[soon]` (or `[expected]`) | an interaction expected soon: drawn dashed and faded, listed under "teams we expect to interact with soon" |
+| `[labelPos=above]` | on any interaction: moves the label off the shape and above it, on a plate with a dashed leader down to the shape, instead of on/at the shape (`gap`, the default). See below for what "on/at the shape" means per mode. |
 
 ```
 devex ~~> checkout : CI pipelines [duration="until Q3"]
 search <--> accounts : personalised results [soon, duration="8 weeks"]
+provider --> consumer : platform capabilities [labelPos=above]
 ```
+
+Every interaction label — X-as-a-Service, Collaboration and Facilitating alike —
+renders on an opaque background plate, tinted to match its mode's shape colour,
+and wraps onto multiple lines when it's long (wrap width `clamp(90, ..., 220)`
+px). `labelPos` is accepted on every mode:
+
+| Mode | `labelPos=gap` (default) | `labelPos=above` |
+|---|---|---|
+| X-as-a-Service | plate on the wedge, riding its wide end so the point still shows | plate above the shape, leader to the wedge |
+| Collaboration | plate centred on the parallelogram | plate above the parallelogram, leader down to it |
+| Facilitating | plate beside the patch (or centred on the band) | plate above the patch/band, leader down to it |
+
+Only X-as-a-Service supports growing the gap between two sibling frames to fit a
+long label (`labelPos=gap` on a frame-to-frame edge) — Collaboration and
+Facilitating don't bridge sibling frames today, so a labelled edge between them
+never changes frame spacing; use `labelPos=above` there if the plate needs room.
+That growth is capped: past the cap the label wraps tighter instead of pushing
+the frames further apart, so the wedge always keeps its point visible.
 
 **One interaction mode per pair.** Two teams have one interaction mode at a time —
 collaboration is meant to evolve into X-as-a-Service, not to run alongside it. A second
@@ -209,7 +270,9 @@ node src/cli.js --api --team checkout examples/ecommerce.tt  # one team
 | Template field | Where it comes from |
 |---|---|
 | Team name and focus | the team's label, plus `focus` from its `api` block |
-| Team type | the team keyword |
+| Team type | the team keyword, or the union of the keywords a real team owns |
+| Owns / Streams | the team's `owns` list and its stream count; more than one stream adds a cognitive-load note |
+| Internal | interactions between two nodes the same team owns |
 | Part of a Platform? | whether the team is declared inside a `platform { }` block, plus `platform` from the `api` block |
 | Do we provide a service to other teams? | outgoing `-->` interactions and their labels, plus `service` |
 | Service Level Expectations, software, versioning, wiki, chat, sync | the `api` block (`sle`, `software`, `versioning`, `wiki`, `chat`, `sync`) |
@@ -228,11 +291,13 @@ The document layout follows the Team API template by Team Topologies, licensed
 ```js
 import { parse, layout, render, teamApi, teamApis } from './src/teamtopo.js';
 
-const model = parse(source);              // { title, flow, legend, nodes, teams, interactions, index }
+const model = parse(source);              // { title, flow, legend, nodes, teams, orgTeams,
+                                          //   interactions, apiFields, diagnostics, index }
 const lay = layout(model);                // { width, height, boxes, edges, ... }
 const svg = render(source, { theme: 'dark' });   // or render(model, opts)
 const md = teamApi(model, 'checkout', { date: '2026-01-02' });   // one Team API document
-const all = teamApis(model);              // [{ id, label, markdown }] for every team
+const all = teamApis(model);              // [{ id, label, markdown }]: one per real team,
+                                          //   then one per node no team owns
 ```
 
 `render` options: `theme` (`'light'`, `'dark'`, or a theme object), `legend` (override the

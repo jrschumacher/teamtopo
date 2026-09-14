@@ -187,6 +187,109 @@
 	border-color: var(--accent);
 }
 
+/* ── workspace layout switch (header) ── */
+.ed-panes {
+	display: inline-flex;
+	gap: 2px;
+	padding: 2px;
+	border: 1px solid var(--border-strong);
+	border-radius: 7px;
+	flex: none;
+}
+
+.ed-pane-btn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 28px;
+	height: 24px;
+	padding: 0;
+	border: 0;
+	border-radius: 5px;
+	background: transparent;
+	color: var(--muted);
+	cursor: pointer;
+}
+
+.ed-pane-btn[hidden] {
+	display: none;
+}
+
+.ed-pane-btn:hover {
+	color: var(--fg);
+	background: var(--accent-soft);
+}
+
+.ed-pane-btn[aria-pressed='true'] {
+	color: var(--accent);
+	background: var(--accent-soft);
+}
+
+.ed-pane-btn svg {
+	width: 16px;
+	height: 12px;
+	fill: none;
+	stroke: currentColor;
+	stroke-width: 1;
+}
+
+.ed-pane-btn svg .on {
+	fill: currentColor;
+	stroke: none;
+	opacity: 0.45;
+}
+
+/* The glyph carries the meaning where the switch is one control among many; the name
+   joins it at narrow widths, where the switch is how you get to the other half. */
+.ed-pane-name {
+	display: none;
+	font-size: 12.5px;
+	font-weight: 500;
+}
+
+/* ── renderer zoom group (tab bar) ── */
+.ed-zoom {
+	display: inline-flex;
+	flex: none;
+}
+
+.ed-zoom .ed-btn {
+	border-radius: 0;
+	margin-left: -1px;
+}
+
+.ed-zoom .ed-btn:first-child {
+	border-radius: 6px 0 0 6px;
+	margin-left: 0;
+}
+
+.ed-zoom .ed-btn:last-child {
+	border-radius: 0 6px 6px 0;
+}
+
+/* Lift the hovered/active button's border above its neighbours' overlapping edge. */
+.ed-zoom .ed-btn:hover,
+.ed-zoom .ed-btn[aria-pressed='true'] {
+	position: relative;
+	z-index: 1;
+}
+
+.ed-zoom-step {
+	width: 30px;
+	padding: 0;
+	justify-content: center;
+	font-size: 15px;
+	line-height: 1;
+}
+
+.ed-zoom-reset {
+	min-width: 56px;
+	justify-content: center;
+	font-family: var(--mono);
+	font-size: 12px;
+	font-variant-numeric: tabular-nums;
+}
+
 .ed-backdrop {
 	position: fixed;
 	inset: 0;
@@ -342,7 +445,10 @@
 }
 
 /* ── workspace ── */
+/* `--ed-split` is the source pane's share of the workspace, written by editor.ts on every
+   divider drag; the pane mode on `.ed-work` collapses one side or the other. */
 .ed-work {
+	--ed-split: 40%;
 	flex: 1;
 	min-height: 0;
 	display: flex;
@@ -356,15 +462,56 @@
 }
 
 .ed-pane-source {
-	flex: 1 1 380px;
-	min-width: 280px;
-	border-right: 1px solid var(--border);
+	flex: 0 0 var(--ed-split);
 	background: var(--surface);
 }
 
 .ed-pane-main {
-	flex: 1.5 1 480px;
+	flex: 1 1 0;
 	background: var(--bg);
+}
+
+.ed-work[data-pane-mode='editor'] .ed-pane-main,
+.ed-work[data-pane-mode='editor'] .ed-split,
+.ed-work[data-pane-mode='renderer'] .ed-pane-source,
+.ed-work[data-pane-mode='renderer'] .ed-split {
+	display: none;
+}
+
+.ed-work[data-pane-mode='editor'] .ed-pane-source,
+.ed-work[data-pane-mode='renderer'] .ed-pane-main {
+	flex: 1 1 auto;
+}
+
+/* ── divider ── */
+.ed-split {
+	position: relative;
+	flex: none;
+	width: 1px;
+	background: var(--border);
+	cursor: col-resize;
+	touch-action: none;
+}
+
+/* A 1px line is the design; the hit area either side of it is not. */
+.ed-split::after {
+	content: '';
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: -3px;
+	right: -3px;
+}
+
+.ed-split:hover,
+.ed-split:focus-visible,
+.ed-split.is-dragging {
+	background: var(--accent);
+}
+
+.ed-split:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 1px;
 }
 
 .ed-pane-head {
@@ -623,6 +770,34 @@
 	height: auto;
 }
 
+/* The editor's canvas is a viewport: editor.ts sizes the SVG (zoom) and the scroll
+   position is the pan. `margin: auto` on the child centres it while leaving overflow
+   reachable on every side — `justify-content: center` would clip the near edge. */
+.ed-canvas-zoom {
+	align-items: stretch;
+	justify-content: flex-start;
+	overscroll-behavior: contain;
+}
+
+.ed-canvas-zoom > * {
+	margin: auto;
+	flex: none;
+}
+
+.ed-canvas-zoom:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: -2px;
+}
+
+.ed-canvas-zoom.can-pan {
+	cursor: grab;
+}
+
+.ed-canvas-zoom.is-panning {
+	cursor: grabbing;
+	user-select: none;
+}
+
 .ed-canvas .empty {
 	color: var(--muted);
 	padding: 40px;
@@ -829,15 +1004,53 @@ a.ed-api-card:hover {
 }
 
 /* ── responsive ── */
+/* Keep this breakpoint in sync with `NARROW_QUERY` in editor.ts. Below it the workspace
+   never splits: editor.ts shows one pane and withdraws the split button, so the layout
+   switch becomes a source/diagram toggle. */
 @media (max-width: 56rem) {
-	.ed-work {
-		flex-direction: column;
+	/* The source/diagram toggle is the primary control here — everything else is one tap
+	   away, but this is how you see the other half of your work. The header scrolls
+	   sideways at this width, which would leave the toggle off-screen on load, so lift it
+	   out into a bar pinned above the thumb. `.ed-shell` is border-box, so the padding
+	   reserves the band rather than pushing the workspace past the viewport. */
+	.ed-shell {
+		padding-bottom: 52px;
 	}
 
-	.ed-pane-source {
-		border-right: 0;
-		border-bottom: 1px solid var(--border);
-		flex-basis: 40vh;
+	.ed-panes {
+		position: fixed;
+		left: 50%;
+		bottom: 10px;
+		transform: translateX(-50%);
+		z-index: 26;
+		background: var(--surface);
+		border-color: var(--border-strong);
+		box-shadow: var(--shadow);
+	}
+
+	.ed-pane-btn {
+		width: auto;
+		height: 34px;
+		gap: 7px;
+		padding: 0 14px;
+	}
+
+	.ed-pane-name {
+		display: inline;
+	}
+
+	/* The rule that separated the toggle from the header's popovers goes with it. */
+	.ed-divider-panes {
+		display: none;
+	}
+
+	.toast {
+		bottom: 62px;
+	}
+
+	.ed-tabbar {
+		gap: 4px;
+		padding: 6px 8px;
 	}
 
 	/* The header's controls don't wrap at 48px tall; let it scroll sideways within

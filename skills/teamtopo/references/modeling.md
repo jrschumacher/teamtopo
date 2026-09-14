@@ -27,9 +27,17 @@ is the reasoning; `syntax.md` is the spelling. Every ```tt snippet here parses.
 | Data team | `platform` (data platform, pipelines, warehouse), `stream` (analytics product), or `subsystem` (ML model) | "Who is the customer: other teams, end users, or a model consumed by a product?" |
 | DevOps team | `platform` (runs CI/CD and infra) or `enabling` (spreads DevOps practices) | A DevOps team that deploys for others is a gate; model as platform and flag. |
 | Operations, support, run team | `platform` if they run something teams consume; otherwise not a separate team (you build it, you run it) | Ask what they run. |
+| One team staffing several streams | `team` + `owns` | Model the streams as they are and declare the team over them — the warning is the point, not a problem to model away. |
+| One team holding several complicated subsystems | `team` + `owns` | Same treatment: each subsystem is its own deep specialism, so the diagnostic names them as split candidates. |
 
 When a mapping is ambiguous, ask the resolving question rather than guessing. One
 question, then write the file.
+
+One team to one stream, platform or complicated subsystem is the standard model: write the
+node and stop. Only reach for `team` + `owns` when a real team spans several of them, and
+then leave the streams separate — the count and the warning are the finding you came for.
+Never use `team` to wrap each node individually, and never merge several streams into one
+node to silence the warning: that hides the cost instead of measuring it.
 
 ## Patterns by org shape
 

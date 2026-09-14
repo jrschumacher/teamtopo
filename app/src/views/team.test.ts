@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { OpenedDoc, Version } from '../lib/types';
 import { readApiBlock } from '../lib/apiblock';
-import { renderTeamView } from './team';
+import { isOrgTeam, ownerRedirectTarget, renderTeamView } from './team';
+import { parse } from '@lib/teamtopo';
 
 const SRC = [
 	'teamTopology',
@@ -215,5 +216,76 @@ describe('renderTeamView', () => {
 		expect(svg).not.toBeNull();
 		const highlighted = root.querySelector('[data-id="checkout"].tt-team-highlight');
 		expect(highlighted).not.toBeNull();
+	});
+});
+
+const OWNED_SRC = [
+	'teamTopology',
+	'  stream desktop "Desktop"',
+	'  stream sharepoint "SharePoint Proxy"',
+	'  stream gateway "Gateway"',
+	'  team alpha "Alpha"',
+	'  alpha owns desktop, sharepoint',
+	'  api alpha {',
+	'    focus: endpoint protection',
+	'  }',
+	''
+].join('\n');
+
+describe('team identity', () => {
+	it('narrows an index entry to a team or a node', () => {
+		const model = parse(OWNED_SRC);
+		expect(isOrgTeam(model.index.alpha)).toBe(true);
+		expect(isOrgTeam(model.index.desktop)).toBe(false);
+	});
+
+	it('redirects an owned node to its owning team and leaves others alone', () => {
+		const model = parse(OWNED_SRC);
+		expect(ownerRedirectTarget(model, 'desktop')).toBe('alpha');
+		expect(ownerRedirectTarget(model, 'gateway')).toBeNull();
+		expect(ownerRedirectTarget(model, 'alpha')).toBeNull();
+		expect(ownerRedirectTarget(model, 'nope')).toBeNull();
+	});
+
+	it('renders a team page for a real team', () => {
+		const root = document.createElement('div');
+		renderTeamView(root, makeDoc({ source: OWNED_SRC }), 'alpha');
+		expect(root.textContent).toContain('Alpha');
+		expect(root.textContent).toContain('endpoint protection');
+	});
+
+	it('aggregates the interactions of every node a team owns, with an Internal section', () => {
+		const src = [
+			OWNED_SRC.trimEnd(),
+			'  platform infra "Infra"',
+			'  infra --> desktop : CI',
+			'  infra --> sharepoint : CI',
+			'  desktop <--> sharepoint : shared installer',
+			''
+		].join('\n');
+		const root = document.createElement('div');
+		renderTeamView(root, makeDoc({ source: src }), 'alpha');
+		const text = root.textContent ?? '';
+		expect(text).not.toContain('No interactions recorded yet.');
+		// the same service consumed by two owned nodes collapses to one row
+		const rows = [...root.querySelectorAll('.tm-inter-row')].map((el) => el.textContent ?? '');
+		expect(rows.filter((r) => r.includes('CI'))).toHaveLength(1);
+		// an edge between two nodes the team owns is internal, not an external interaction
+		expect(text).toContain('Internal');
+		expect(rows.filter((r) => r.includes('shared installer'))).toHaveLength(1);
+	});
+
+	it('lists teams first with owned nodes indented, then unowned nodes', () => {
+		const root = document.createElement('div');
+		renderTeamView(root, makeDoc({ source: OWNED_SRC }), 'alpha');
+		const rows = [...root.querySelectorAll('.tm-other-link, .tm-other-owned')].map((el) => ({
+			text: el.textContent?.trim() ?? '',
+			owned: el.classList.contains('tm-other-owned')
+		}));
+		expect(rows.map((r) => r.owned)).toEqual([false, true, true, false]);
+		expect(rows[0].text).toContain('Alpha');
+		expect(rows[0].text).toContain('2 streams');
+		expect(rows[1].text).toContain('Desktop');
+		expect(rows[3].text).toContain('Gateway');
 	});
 });

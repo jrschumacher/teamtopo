@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parse, layout, render, wrapText, ParseError, textVerticalExtent } from './teamtopo.js';
+import { parse, layout, render, wrapText, textWidth, ParseError, THEMES, textVerticalExtent } from './teamtopo.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const examplesDir = join(here, '..', 'examples');
@@ -177,6 +177,24 @@ test('reports errors with line numbers', () => {
   for (const [src, re, line] of cases) {
     assert.throws(() => parse(src), (e) => e instanceof ParseError && re.test(e.message) && e.line === line, src);
   }
+});
+
+test('unknown labelPos value throws a ParseError on that line', () => {
+  const src = `teamTopology
+    stream a
+    stream b
+    a --> b : x [labelPos=sideways]`;
+  assert.throws(
+    () => parse(src),
+    (e) => e instanceof ParseError && /labelPos/.test(e.message) && e.line === 4,
+  );
+});
+
+test('labelPos defaults to "gap" and accepts "above"', () => {
+  const m = parse('teamTopology\nstream a\nstream b\na --> b : x');
+  assert.equal(m.interactions[0].labelPos, 'gap');
+  const m2 = parse('teamTopology\nstream a\nstream b\na --> b : x [labelPos=above]');
+  assert.equal(m2.interactions[0].labelPos, 'above');
 });
 
 // ── layout ──
@@ -525,8 +543,8 @@ test('a rail label sits on an opaque plate over the facilitating dot pattern', (
   const labelsGroup = svg.split('class="tt-overlay-labels"')[1];
   assert.ok(labelsGroup, 'overlay labels group present');
   const railLabel = labelsGroup.split('data-id="research"')[1];
-  assert.match(railLabel, /<rect[^>]*rx="4"[^>]*fill="#0f172a"/,
-    'an opaque plate in the theme background sits behind the rail label, not the raw dot-pattern hatch');
+  assert.match(railLabel, new RegExp(`<rect[^>]*rx="4"[^>]*fill="${THEMES.dark.enabling.plate}"`),
+    'an opaque plate in the enabling tint sits behind the rail label, not the raw dot-pattern hatch');
   assert.ok(railLabel.indexOf('<rect') < railLabel.indexOf('<text'), 'the plate is drawn before (under) the label text');
 });
 
@@ -552,6 +570,214 @@ test('collaboration is a parallelogram bridging the two teams', () => {
 test('wraps long labels', () => {
   assert.deepEqual(wrapText('Developer Experience Enablement', 90, 12), ['Developer', 'Experience', 'Enablement']);
   assert.deepEqual(wrapText('short', 90, 12), ['short']);
+});
+
+// ── #23: interaction label layout ──
+
+const overlaps = (a, b) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+
+/** Plate bbox for a wedge label, matching the geometry layout() computes. */
+function plateBox(label) {
+  assert.ok(Number.isFinite(label.plateW) && label.plateW > 0, 'label has a finite plate width');
+  assert.ok(Number.isFinite(label.plateH) && label.plateH > 0, 'label has a finite plate height');
+  return { x: label.x - label.plateW / 2, y: label.y - label.plateH / 2, w: label.plateW, h: label.plateH };
+}
+
+const ISSUE_23_REPRODUCER = `teamTopology
+  title Interaction label layout in nested platform diagrams
+
+  platform cloud "Cloud Platform" {
+    group provider "Provider Group" {
+      stream services "Platform Services"
+    }
+
+    group consumer "Product Group" {
+      stream app "App"
+    }
+
+    provider --> consumer : platform capabilities
+  }`;
+
+test('wedge labels render on an opaque plate with wrapping metadata', () => {
+  const lay = layout(parse('teamTopology\nstream a\nplatform p\np --> a : Kubernetes API'));
+  const [{ geo }] = lay.edges;
+  assert.equal(geo.kind, 'wedge');
+  assert.ok(Array.isArray(geo.label.lines) && geo.label.lines.length >= 1);
+  assert.ok(geo.label.plateW > 0 && geo.label.plateH > 0, 'plate has a size');
+});
+
+test('a long wedge label wraps onto multiple lines', () => {
+  const lay = layout(parse(
+    'teamTopology\nstream a\nplatform p\np --> a : a very long interaction label that will not fit on one line',
+  ));
+  const [{ geo }] = lay.edges;
+  assert.ok(geo.label.lines.length > 1, 'wraps onto multiple lines');
+});
+
+test('#23 reproducer: the frame-to-frame label plate does not collide with either frame', () => {
+  const lay = layout(parse(ISSUE_23_REPRODUCER));
+  const wedge = lay.edges.find((e) => e.geo.kind === 'wedge');
+  assert.ok(wedge, 'has a wedge edge');
+  const plate = plateBox(wedge.geo.label);
+  assert.ok(!overlaps(plate, lay.boxes.provider), 'plate does not overlap the provider frame');
+  assert.ok(!overlaps(plate, lay.boxes.consumer), 'plate does not overlap the consumer frame');
+});
+
+// Bounding box of a frame's own rendered label, mirroring frameSVG(): an opaque
+// patch on the bottom border, centred, wide enough for the text plus 8px each side.
+function frameLabelBBox(box) {
+  const tw = textWidth(box.node.label, 13) + 16;
+  return { x: box.x + box.w / 2 - tw / 2, y: box.y + box.h - 10, w: tw, h: 20 };
+}
+
+test('#23 reproducer: the label plate rides the wedge and leaves its point showing', () => {
+  const lay = layout(parse(ISSUE_23_REPRODUCER));
+  const { geo } = lay.edges.find((e) => e.geo.kind === 'wedge');
+  const plate = plateBox(geo.label);
+  const base = geo.points[0].x, tip = geo.points[2].x;
+  assert.ok(tip > base, 'the wedge points right, from provider to consumer');
+  // on the wedge, not floating beside it: the plate straddles the wedge's axis
+  assert.ok(plate.x > base && plate.x < tip, 'plate starts inside the wedge');
+  assert.ok(plate.y < geo.points[0].y && plate.y + plate.h > geo.points[1].y, 'plate sits on the wedge axis');
+  // and the point is still visible past it, so the wedge reads as directional
+  assert.ok(tip - (plate.x + plate.w) >= 20, `point is visible past the plate (got ${tip - (plate.x + plate.w)})`);
+  assert.ok(plate.x - base <= 12, 'plate rides the wide end rather than floating mid-gap');
+});
+
+test('#23 reproducer: the label plate clears every team label and every frame label', () => {
+  const lay = layout(parse(ISSUE_23_REPRODUCER));
+  const plate = plateBox(lay.edges.find((e) => e.geo.kind === 'wedge').geo.label);
+  for (const id of ['services', 'app']) {
+    assert.ok(!overlaps(plate, teamLabelBBox(lay.boxes[id])), `plate overlaps the ${id} team label`);
+  }
+  for (const id of ['cloud', 'provider', 'consumer']) {
+    assert.ok(!overlaps(plate, frameLabelBBox(lay.boxes[id])), `plate overlaps the ${id} frame label`);
+  }
+});
+
+test('#23 reproducer: a medium-length label stays on one line, and the gap grows to fit it', () => {
+  const lay = layout(parse(ISSUE_23_REPRODUCER));
+  const { geo } = lay.edges.find((e) => e.geo.kind === 'wedge');
+  assert.deepEqual(geo.label.lines, ['platform capabilities'], 'not broken across lines');
+  const gap = lay.boxes.consumer.x - (lay.boxes.provider.x + lay.boxes.provider.w);
+  assert.ok(gap >= geo.label.plateW, `the frame gap (${gap}) fits the plate (${geo.label.plateW})`);
+  assert.ok(gap <= 220, 'and stays within the cap on frame gap growth');
+});
+
+test('a label too long for the gap cap wraps tighter instead of eating the wedge point', () => {
+  const lay = layout(parse(`teamTopology
+    platform cloud {
+      group provider {
+        stream services
+      }
+      group consumer {
+        stream app
+      }
+      provider --> consumer : policy decisions, key access and audit events for every tenant
+    }`));
+  const { geo } = lay.edges.find((e) => e.geo.kind === 'wedge');
+  const plate = plateBox(geo.label);
+  const base = geo.points[0].x, tip = geo.points[2].x;
+  assert.ok(geo.label.lines.length > 1, 'a label this long wraps onto several lines');
+  assert.ok(tip - base <= 220, `frame gap growth stays capped (got ${tip - base})`);
+  assert.ok(tip - (plate.x + plate.w) >= 20, 'the point is still visible past the plate');
+  assert.ok(!overlaps(plate, lay.boxes.provider) && !overlaps(plate, lay.boxes.consumer), 'plate clears both frames');
+});
+
+test('three sibling frames with labels on both gaps: no plate/frame overlaps', () => {
+  const lay = layout(parse(`teamTopology
+    platform cloud {
+      group g1 {
+        stream a
+      }
+      group g2 {
+        stream b
+      }
+      group g3 {
+        stream c
+      }
+      g1 --> g2 : platform capabilities
+      g2 --> g3 : policy, key access and audit events
+    }`));
+  const wedges = lay.edges.filter((e) => e.geo.kind === 'wedge');
+  assert.equal(wedges.length, 2);
+  const frameBoxes = [lay.boxes.g1, lay.boxes.g2, lay.boxes.g3];
+  for (const w of wedges) {
+    const plate = plateBox(w.geo.label);
+    for (const f of frameBoxes) assert.ok(!overlaps(plate, f), `plate for "${w.inter.label}" overlaps a frame`);
+  }
+});
+
+test('labelPos=above positions the plate above both frames with a leader', () => {
+  const lay = layout(parse(`teamTopology
+    platform cloud {
+      group provider {
+        stream services
+      }
+      group consumer {
+        stream app
+      }
+      provider --> consumer : platform capabilities [labelPos=above]
+    }`));
+  const wedge = lay.edges.find((e) => e.geo.kind === 'wedge');
+  assert.ok(wedge.geo.leader, 'has a leader line');
+  const topOfFrames = Math.min(lay.boxes.provider.y, lay.boxes.consumer.y);
+  assert.ok(wedge.geo.label.y + wedge.geo.label.plateH / 2 <= topOfFrames, 'plate sits above both frames');
+  const plate = plateBox(wedge.geo.label);
+  assert.ok(!overlaps(plate, lay.boxes.provider) && !overlaps(plate, lay.boxes.consumer), 'plate clears both frames');
+});
+
+test('fan-out to multiple targets with the same label renders one wedge, one label', () => {
+  const lay = layout(parse(`teamTopology
+    stream m
+    stream w
+    platform cloud {
+      stream k
+    }
+    k --> m, w : runtime`));
+  const wedges = lay.edges.filter((e) => e.geo.kind === 'wedge' && e.inter.label === 'runtime');
+  assert.equal(wedges.length, 1, 'one wedge for the fanned-out same-label interactions');
+  assert.equal(wedges[0].inters.length, 2, 'covers both targets');
+});
+
+test('fan-out with different labels keeps separate plates', () => {
+  const lay = layout(parse(`teamTopology
+    stream m
+    stream w
+    platform cloud {
+      stream k
+    }
+    k --> m : runtime
+    k --> w : dashboards`));
+  const wedges = lay.edges.filter((e) => e.geo.kind === 'wedge');
+  assert.equal(wedges.length, 2, 'different labels stay on separate wedges');
+  const plates = wedges.map((w) => plateBox(w.geo.label));
+  assert.ok(!overlaps(plates[0], plates[1]), 'the two label plates do not overlap each other');
+});
+
+test('rendering is deterministic across repeated runs', () => {
+  for (const src of [ISSUE_23_REPRODUCER, 'teamTopology\nstream m\nstream w\nplatform cloud {\nstream k\n}\nk --> m, w : runtime']) {
+    const a = render(src);
+    const b = render(src);
+    assert.equal(a, b);
+  }
+});
+
+test('every example renders byte-identical to its committed svg (run `npm run examples` after a layout change)', () => {
+  const files = readdirSync(examplesDir).filter((f) => f.endsWith('.tt')).sort();
+  for (const f of files) {
+    const svg = render(readFileSync(join(examplesDir, f), 'utf8'));
+    const committed = readFileSync(join(examplesDir, f.replace(/\.tt$/, '.svg')), 'utf8');
+    assert.equal(`${svg}\n`, committed, f);
+  }
+});
+
+test('every example .tt parses and renders without throwing', () => {
+  const files = readdirSync(examplesDir).filter((f) => f.endsWith('.tt'));
+  for (const f of files) {
+    const src = readFileSync(join(examplesDir, f), 'utf8');
+    assert.doesNotThrow(() => render(parse(src)), f);
+  }
 });
 
 // ── renderer ──
@@ -665,4 +891,616 @@ test('teamApis covers every team except groups', () => {
 test('interactions expected soon render dashed and faded', () => {
   const svg = render('teamTopology\nstream a\nplatform p\np --> a [soon]');
   assert.ok(/<polygon[^>]*stroke-dasharray="5 4"[^>]*opacity="0.55"|<polygon[^>]*opacity="0.55"[^>]*stroke-dasharray="5 4"/.test(svg));
+});
+
+// ── backward-compatibility corpus ──
+
+test('every example renders byte-identically to its committed svg', () => {
+  const files = readdirSync(examplesDir).filter((f) => f.endsWith('.tt')).sort();
+  assert.ok(files.length >= 3);
+  for (const f of files) {
+    const source = readFileSync(join(examplesDir, f), 'utf8');
+    const expected = readFileSync(join(examplesDir, f.replace(/\.tt$/, '.svg')), 'utf8');
+    assert.equal(render(source) + '\n', expected, f);
+  }
+});
+
+test('teamApis markdown is stable for every example', () => {
+  const golden = JSON.parse(readFileSync(join(here, 'teamtopo.api.golden.json'), 'utf8'));
+  const files = readdirSync(examplesDir).filter((f) => f.endsWith('.tt')).sort();
+  assert.deepEqual(files, Object.keys(golden));
+  for (const f of files) {
+    const actual = teamApis(readFileSync(join(examplesDir, f), 'utf8'), { date: '2026-01-01' })
+      .map((t) => `${t.id}\n${t.markdown}`).join('\n---\n');
+    assert.equal(actual, golden[f], f);
+  }
+});
+
+// ── team identity ──
+
+const TEAM_SRC = `teamTopology
+  stream desktop "Desktop"
+  stream sharepoint "SharePoint Proxy"
+  subsystem crypto "Crypto"
+  team alpha "Alpha"
+  alpha owns desktop, sharepoint
+  api alpha {
+    focus: endpoint protection
+  }`;
+
+test('declares teams and resolves ownership', () => {
+  const m = parse(TEAM_SRC);
+  assert.equal(m.orgTeams.length, 1);
+  const alpha = m.orgTeams[0];
+  assert.equal(alpha.isTeam, true);
+  assert.equal(alpha.label, 'Alpha');
+  assert.deepEqual(alpha.owns, ['desktop', 'sharepoint']);
+  assert.deepEqual(alpha.load, { streams: 2, subsystems: 0, nodes: 2 });
+  assert.deepEqual(m.index.desktop.owners, ['alpha']);
+  assert.deepEqual(m.index.crypto.owners, []);
+  assert.equal(m.index.alpha.api.focus, 'endpoint protection');
+  assert.deepEqual(m.diagnostics.length >= 0, true);
+});
+
+test('owns accumulates across lines, deduped, and counts only streams', () => {
+  const m = parse(`teamTopology
+    stream desktop "Desktop"
+    subsystem crypto "Crypto"
+    team alpha "Alpha"
+    alpha owns desktop
+    alpha owns crypto, desktop`);
+  assert.deepEqual(m.orgTeams[0].owns, ['desktop', 'crypto']);
+  assert.deepEqual(m.orgTeams[0].load, { streams: 1, subsystems: 1, nodes: 2 });
+  assert.equal(m.orgTeams[0].ownsLine, 6);
+});
+
+test('a placeholder team with no owns line is valid', () => {
+  const m = parse('teamTopology\nteam alpha "Alpha"');
+  assert.deepEqual(m.orgTeams[0].owns, []);
+  assert.deepEqual(m.orgTeams[0].load, { streams: 0, subsystems: 0, nodes: 0 });
+});
+
+test('owns is matched before the node keywords and only for non-keyword ids', () => {
+  for (const id of ['sales', 'engineering', 'platform_core']) {
+    const m = parse(`teamTopology\nstream x "X"\nteam ${id} "T"\n${id} owns x`);
+    assert.deepEqual(m.orgTeams[0].owns, ['x'], id);
+  }
+  const m = parse('teamTopology\nstream owns "Owns"');
+  assert.equal(m.index.owns.type, 'stream');
+  assert.equal(m.orgTeams.length, 0);
+});
+
+test('team and owns keywords are case-insensitive', () => {
+  const m = parse('teamTopology\nstream x "X"\nTEAM alpha "Alpha"\nalpha OWNS x');
+  assert.deepEqual(m.orgTeams[0].owns, ['x']);
+});
+
+test('team identity errors', () => {
+  const cases = [
+    ['teamTopology\nstream x\nteam x "X"', /duplicate identifier "x"/, 3],
+    ['teamTopology\nteam a "A"\nteam a "A2"', /duplicate identifier "a"/, 3],
+    ['teamTopology\nstream x\na owns x', /"a" is not a team/, 3],
+    ['teamTopology\nteam a "A"\na owns nope', /owns names an unknown team "nope"/, 3],
+    ['teamTopology\ngroup g {\nstream x\n}\nteam a "A"\na owns g', /"g" is a container/, 6],
+    ['teamTopology\nstream x\nteam a "A"\na owns x\napi x {\n  focus: f\n}',
+      /api x belongs to team a, which owns x; move these fields into "api a"/, 5],
+    ['teamTopology\nstream x\nteam a "A"\na owns x\na --> x', /"a" is a team, not a node; use one of the nodes it owns \(x\)/, 5],
+  ];
+  for (const [src, re, line] of cases) {
+    assert.throws(() => parse(src), (e) => e instanceof ParseError && re.test(e.message) && e.line === line, src);
+  }
+});
+
+test('an unclosed apiFields block is a parse error', () => {
+  assert.throws(() => parse('teamTopology\napiFields {\n  focus'), (e) => e instanceof ParseError && /apiFields block is never closed/.test(e.message));
+});
+
+test('apiFields is parsed into the model and otherwise unused', () => {
+  const m = parse(`teamTopology
+  apiFields {
+    focus
+    tier: gold | silver | bronze
+
+    wiki
+  }
+  stream x "X"`);
+  assert.deepEqual(m.apiFields, [
+    { key: 'focus', choices: [], group: 0 },
+    { key: 'tier', choices: ['gold', 'silver', 'bronze'], group: 0 },
+    { key: 'wiki', choices: [], group: 1 },
+  ]);
+});
+
+// ── diagnostics ──
+
+test('a multi-stream team warns once, on its last owns line, with the final count', () => {
+  const m = parse(`teamTopology
+    stream desktop "Desktop"
+    stream sharepoint "SharePoint"
+    stream web "Web"
+    team alpha "Alpha"
+    alpha owns desktop
+    alpha owns sharepoint
+    alpha owns web`);
+  assert.equal(m.diagnostics.length, 1);
+  const d = m.diagnostics[0];
+  assert.equal(d.level, 'warning');
+  assert.equal(d.code, 'team-multi-stream');
+  assert.equal(d.line, 8);
+  assert.equal(d.message,
+    'team alpha is aligned to 3 streams: desktop, sharepoint, web; a team aligned to more than one stream carries extra cognitive load');
+});
+
+test('one stream, or a stream plus a subsystem, does not warn', () => {
+  const one = parse('teamTopology\nstream x\nteam a "A"\na owns x');
+  assert.deepEqual(one.diagnostics, []);
+  const mixed = parse('teamTopology\nstream x\nsubsystem y\nteam a "A"\na owns x, y');
+  assert.deepEqual(mixed.diagnostics, []);
+  assert.deepEqual(mixed.orgTeams[0].load, { streams: 1, subsystems: 1, nodes: 2 });
+});
+
+test('a team owning several complicated subsystems warns the same way', () => {
+  const m = parse(`teamTopology
+    subsystem pricing "Pricing"
+    subsystem billing "Billing"
+    stream web "Web"
+    team alpha "Alpha"
+    alpha owns pricing
+    alpha owns billing, web`);
+  assert.deepEqual(m.orgTeams[0].load, { streams: 1, subsystems: 2, nodes: 3 });
+  assert.deepEqual(m.diagnostics.map((d) => d.code), ['team-multi-subsystem']);
+  const d = m.diagnostics[0];
+  assert.equal(d.level, 'warning');
+  assert.equal(d.line, 7);
+  assert.equal(d.message,
+    'team alpha owns 2 complicated subsystems: pricing, billing; each carries its own deep specialism, so one team owning several carries extra cognitive load');
+});
+
+test('one subsystem does not warn, and both rules can fire for one team', () => {
+  assert.deepEqual(parse('teamTopology\nsubsystem y\nteam a "A"\na owns y').diagnostics, []);
+  const both = parse(`teamTopology
+    stream w "W"
+    stream x "X"
+    subsystem y "Y"
+    subsystem z "Z"
+    team a "A"
+    a owns w, x, y, z`);
+  assert.deepEqual(both.diagnostics.map((d) => d.code), ['team-multi-stream', 'team-multi-subsystem']);
+});
+
+test('the team document counts subsystems and adds their split-candidate note', () => {
+  const md = teamApi(`teamTopology
+    subsystem pricing "Pricing"
+    subsystem billing "Billing"
+    team a "A"
+    a owns pricing, billing`, 'a', { date: '2026-01-01' });
+  assert.match(md, /^\* Streams: 0$/m);
+  assert.match(md, /^\* Subsystems: 2$/m);
+  assert.match(md, /each one's deep specialism; the subsystems above are split candidates/);
+  // a team with no subsystem keeps the document it had
+  const plain = teamApi('teamTopology\nstream x "X"\nteam a "A"\na owns x', 'a', { date: '2026-01-01' });
+  assert.ok(!/Subsystems:/.test(plain));
+});
+
+test('the legend shows a subsystem load riding alongside the stream count', () => {
+  const svg = render(`teamTopology
+    stream w "W"
+    subsystem y "Y"
+    subsystem z "Z"
+    team a "A"
+    a owns w, y, z`);
+  assert.match(svg, />A \(1 stream, 2 subsystems\)</);
+});
+
+test('diagnostics is always an array and never throws', () => {
+  assert.deepEqual(parse('teamTopology\nstream x').diagnostics, []);
+  assert.deepEqual(parse('teamTopology').diagnostics, []);
+});
+
+// ── team api bound to a team ──
+
+const OWNED_SRC = `teamTopology
+  stream desktop "Desktop"
+  stream sharepoint "SharePoint Proxy"
+  platform infra "Infra"
+  stream gateway "Gateway"
+  team alpha "Alpha"
+  team bravo "Bravo"
+  alpha owns desktop, sharepoint
+  bravo owns gateway
+  desktop <--> sharepoint : shared installer
+  infra --> desktop : CI
+  infra --> sharepoint : CI
+  gateway <--> desktop : token exchange
+  api alpha {
+    focus: endpoint protection
+  }
+  api bravo {
+    focus: north-south traffic
+  }`;
+
+test('teamApis emits one document per team plus one per unowned node', () => {
+  const ids = teamApis(OWNED_SRC, { date: '2026-01-01' }).map((t) => t.id);
+  assert.deepEqual(ids, ['alpha', 'bravo', 'infra']);
+});
+
+test('teamApi resolves an owned node id to its owning team', () => {
+  const model = parse(OWNED_SRC);
+  assert.equal(teamApi(model, 'desktop', { date: '2026-01-01' }), teamApi(model, 'alpha', { date: '2026-01-01' }));
+});
+
+test('the team document lists ownership, the stream count and the load note', () => {
+  const md = teamApi(OWNED_SRC, 'alpha', { date: '2026-01-01' });
+  assert.match(md, /^# Team API: Alpha$/m);
+  assert.match(md, /^\* Team type: Stream-Aligned$/m);
+  assert.match(md, /^\* Owns 2: desktop \(stream-aligned\), sharepoint \(stream-aligned\)$/m);
+  assert.match(md, /^\* Streams: 2$/m);
+  assert.match(md, /cognitive load of all of them; the streams above are split candidates/);
+});
+
+test('a single-node team pluralises Owns and omits the load note', () => {
+  const md = teamApi(OWNED_SRC, 'bravo', { date: '2026-01-01' });
+  assert.match(md, /^\* Owns 1: gateway \(stream-aligned\)$/m);
+  assert.match(md, /^\* Streams: 1$/m);
+  assert.ok(!/split candidates/.test(md));
+});
+
+test('an interaction inside one team is Internal, and rows resolve to the owning team', () => {
+  const md = teamApi(OWNED_SRC, 'alpha', { date: '2026-01-01' });
+  const internal = md.slice(md.indexOf('### Internal'));
+  assert.match(internal, /shared installer/);
+  const current = md.slice(md.indexOf('### Teams we currently interact with'), md.indexOf('### Internal'));
+  assert.ok(!/shared installer/.test(current));
+  // gateway is owned by Bravo, so the row names Bravo and Bravo's focus
+  assert.match(current, /\| Bravo \/ north-south traffic \|/);
+  // two owned nodes consuming the same service from Infra collapse to one row
+  assert.equal(current.split('\n').filter((l) => l.includes('| Infra |')).length, 1);
+});
+
+test('an unowned node reports an owned counterpart as its owning team', () => {
+  const md = teamApi(OWNED_SRC, 'infra', { date: '2026-01-01' });
+  assert.match(md, /\| Alpha \/ endpoint protection \|/);
+  assert.ok(!/\| Desktop \|/.test(md));
+});
+
+test('a team owning a stream and a subsystem unions both type names', () => {
+  const md = teamApi(`teamTopology
+    stream x "X"
+    subsystem y "Y"
+    team a "A"
+    a owns x, y`, 'a', { date: '2026-01-01' });
+  assert.match(md, /^\* Team type: Stream-Aligned, Complicated Subsystem$/m);
+});
+
+test('a placeholder team gets a document with no platform line', () => {
+  const md = teamApi('teamTopology\nteam a "A"', 'a', { date: '2026-01-01' });
+  assert.match(md, /^\* Team type: Team$/m);
+  assert.match(md, /^\* Owns 0: $/m);
+  assert.ok(!/Part of a Platform/.test(md));
+});
+
+test('the platform line appears only when every owned node is in the same platform', () => {
+  const same = teamApi(`teamTopology
+    platform p "P" {
+      stream a "A"
+      stream b "B"
+    }
+    team t "T"
+    t owns a, b`, 't', { date: '2026-01-01' });
+  assert.match(same, /Part of a Platform\? \(y\/n\) Details: y — part of P/);
+  const split = teamApi(`teamTopology
+    platform p "P" {
+      stream a "A"
+    }
+    stream b "B"
+    team t "T"
+    t owns a, b`, 't', { date: '2026-01-01' });
+  assert.ok(!/Part of a Platform/.test(split));
+});
+
+// ── team chips and legend ──
+
+const CHIP_SRC = `teamTopology
+  stream desktop "Desktop"
+  stream sharepoint "SharePoint"
+  stream gateway "Gateway"
+  team alpha "Alpha"
+  team bravo "Bravo"
+  alpha owns desktop, sharepoint
+  bravo owns gateway, desktop`;
+
+test('a team-free diagram gets no chips and no team legend', () => {
+  const svg = render('teamTopology\nstream a "A"');
+  assert.ok(!svg.includes('tt-chips'));
+  assert.ok(!svg.includes('tt-team-legend'));
+});
+
+test('each owned node gets a chip and the legend names every team once', () => {
+  const svg = render(CHIP_SRC);
+  assert.equal((svg.match(/class="tt-chips"/g) || []).length, 3);
+  assert.equal((svg.match(/class="tt-team-legend"/g) || []).length, 1);
+  assert.equal((svg.match(/>Alpha \(2 streams\)</g) || []).length, 1);
+  assert.equal((svg.match(/>Bravo \(2 streams\)</g) || []).length, 1);
+});
+
+test('chip colours are deterministic across renders', () => {
+  assert.equal(render(CHIP_SRC), render(CHIP_SRC));
+});
+
+test('a node owned by two teams carries two chips', () => {
+  const svg = render(CHIP_SRC);
+  const from = svg.indexOf('data-id="desktop"');
+  const next = svg.indexOf('data-id=', from + 10);
+  const desktop = svg.slice(from, next === -1 ? undefined : next);
+  assert.equal((desktop.match(/class="tt-chip"/g) || []).length, 2);
+});
+
+test('more than three owners collapse to three chips and a +N', () => {
+  const src = ['teamTopology', 'stream x "X"',
+    ...['a', 'b', 'c', 'd'].map((t) => `team ${t} "T${t}"`),
+    ...['a', 'b', 'c', 'd'].map((t) => `${t} owns x`)].join('\n');
+  const svg = render(src);
+  assert.equal((svg.match(/class="tt-chip"/g) || []).length, 3);
+  assert.match(svg, />\+1</);
+});
+
+test('past twenty teams the chip layer is suppressed with a note', () => {
+  const ids = Array.from({ length: 21 }, (_, i) => `t${i}`);
+  const src = ['teamTopology', ...ids.map((t) => `stream s${t} "S"`),
+    ...ids.map((t) => `team ${t} "T"`), ...ids.map((t) => `${t} owns s${t}`)].join('\n');
+  const svg = render(src);
+  assert.ok(!svg.includes('class="tt-chip"'));
+  assert.match(svg, /21 teams — ownership shown in the Team APIs/);
+});
+
+test('the team legend is independent of the type legend', () => {
+  const withTeams = render(CHIP_SRC, { legend: false });
+  assert.ok(withTeams.includes('tt-team-legend'));
+  assert.ok(!withTeams.includes('class="tt-legend"'));
+  const both = render(`${CHIP_SRC}\n  legend`);
+  assert.ok(both.includes('tt-team-legend') && both.includes('class="tt-legend"'));
+});
+
+test('a team owning no stream shows its node count in the legend', () => {
+  const svg = render('teamTopology\nsubsystem y "Y"\nteam a "A"\na owns y');
+  assert.match(svg, />A \(1 subsystem\)</);
+});
+
+// ── #28: labels for every interaction mode (plates, mode colour, labelPos) ──
+
+// WCAG relative luminance / contrast ratio — implemented here only; no new dependency.
+function parseColor(c) {
+  c = c.trim();
+  let m;
+  if ((m = /^#([0-9a-f]{6})$/i.exec(c))) {
+    const n = parseInt(m[1], 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255, 1];
+  }
+  if ((m = /^rgba?\(([^)]+)\)$/i.exec(c))) {
+    const parts = m[1].split(',').map((s) => parseFloat(s));
+    return [parts[0], parts[1], parts[2], parts[3] !== undefined ? parts[3] : 1];
+  }
+  throw new Error(`unrecognised color "${c}"`);
+}
+function blendOverBg(fg, bg) {
+  const [r1, g1, b1, a1] = parseColor(fg);
+  const [r2, g2, b2] = parseColor(bg);
+  return [r1 * a1 + r2 * (1 - a1), g1 * a1 + g2 * (1 - a1), b1 * a1 + b2 * (1 - a1)];
+}
+function relLuminance([r, g, b]) {
+  const f = (c) => { c /= 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
+  return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+}
+function contrastRatio(colorA, colorB) {
+  const L1 = relLuminance(colorA), L2 = relLuminance(colorB);
+  const [hi, lo] = L1 > L2 ? [L1, L2] : [L2, L1];
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+test('WCAG contrast: mode plate colours are legible and visible in both themes', () => {
+  for (const [themeName, T] of Object.entries(THEMES)) {
+    for (const mode of ['collab', 'xaas', 'facil', 'enabling']) {
+      assert.ok(T[mode].plate, `${themeName}/${mode} has a plate token`);
+      const plateRGB = parseColor(T[mode].plate).slice(0, 3);
+      const bgRGB = parseColor(T.bg).slice(0, 3);
+      const textRGB = parseColor(T[mode].text).slice(0, 3);
+      const textContrast = contrastRatio(textRGB, plateRGB);
+      const bgContrast = contrastRatio(plateRGB, bgRGB);
+      assert.ok(textContrast >= 4.5, `${themeName}/${mode} text-on-plate contrast ${textContrast.toFixed(2)} >= 4.5`);
+      assert.ok(bgContrast >= 1.5, `${themeName}/${mode} plate-vs-bg contrast ${bgContrast.toFixed(2)} >= 1.5`);
+    }
+  }
+});
+
+test('WCAG contrast: collaboration text on the parallelogram fill itself (labelPos=gap draws directly on the shape)', () => {
+  for (const [themeName, T] of Object.entries(THEMES)) {
+    const textRGB = parseColor(T.collab.text).slice(0, 3);
+    const bgRGB = parseColor(T.bg).slice(0, 3);
+    const fillOnBg = blendOverBg(T.collab.fill, T.bg);
+    const contrastOnBg = contrastRatio(textRGB, fillOnBg);
+    assert.ok(contrastOnBg >= 4.5, `${themeName} collab text-on-fill (over bg) ${contrastOnBg.toFixed(2)} >= 4.5`);
+    // the parallelogram usually sits over a stream lane, not bare bg
+    const streamOverBg = blendOverBg(T.stream.fill, T.bg);
+    const fillOnStream = blendOverBg(T.collab.fill, `rgb(${streamOverBg.map(Math.round).join(',')})`);
+    const contrastOnStream = contrastRatio(textRGB, fillOnStream);
+    assert.ok(contrastOnStream >= 4.5, `${themeName} collab text-on-fill (over stream lane) ${contrastOnStream.toFixed(2)} >= 4.5`);
+  }
+});
+
+test('collaboration labels (labelPos=gap) wrap and draw directly on the parallelogram fill, no inner plate', () => {
+  const lay = layout(parse(
+    'teamTopology\nstream a\nstream b\na <--> b : a very long collaboration label that will not fit on one line',
+  ));
+  const [{ geo }] = lay.edges;
+  assert.equal(geo.kind, 'bridge');
+  assert.ok(geo.label.lines.length > 1, 'wraps onto multiple lines');
+  assert.equal(geo.label.onShape, true, 'label is drawn on the shape fill, not a plate');
+  assert.equal(geo.label.plateW, undefined, 'no inner plate rect for labelPos=gap');
+});
+
+test('facilitating patch labels wrap and render on a plate', () => {
+  const lay = layout(parse(
+    'teamTopology\nstream a\nenabling e\ne ~~> a : a very long facilitating label that will not fit on one line',
+  ));
+  const patch = lay.edges.find((e) => e.geo.kind === 'patch');
+  assert.ok(patch, 'has a patch edge');
+  assert.ok(patch.geo.label.lines.length > 1, 'wraps onto multiple lines');
+  assert.ok(patch.geo.label.plateW > 0 && patch.geo.label.plateH > 0, 'plate has a size');
+});
+
+test('facilitating band labels wrap and render on a plate', () => {
+  const lay = layout(parse(`teamTopology
+    group g1 {
+      stream a
+    }
+    enabling e
+    e ~~> a : a very long facilitating label that will not fit on one line`));
+  const band = lay.edges.find((e) => e.geo.kind === 'band');
+  assert.ok(band, 'has a band edge');
+  assert.ok(band.geo.label.lines.length > 1, 'wraps onto multiple lines');
+  assert.ok(band.geo.label.plateW > 0 && band.geo.label.plateH > 0, 'plate has a size');
+});
+
+test('labelPos=above works for collaboration and facilitating, with a leader', () => {
+  const collab = layout(parse('teamTopology\nstream a\nstream b\na <--> b : pairing [labelPos=above]'));
+  const [{ geo: collabGeo }] = collab.edges;
+  assert.ok(collabGeo.leader, 'collaboration above has a leader');
+  const shapeTop = Math.min(...collabGeo.points.map((p) => p.y));
+  assert.ok(collabGeo.label.y + collabGeo.label.plateH / 2 <= shapeTop, 'plate sits above the shape');
+
+  const facil = layout(parse('teamTopology\nstream a\nenabling e\ne ~~> a : coaching [labelPos=above]'));
+  const patch = facil.edges.find((e) => e.geo.kind === 'patch');
+  assert.ok(patch.geo.leader, 'facilitating above has a leader');
+  assert.ok(patch.geo.label.y + patch.geo.label.plateH / 2 <= patch.geo.rect.y, 'plate sits above the patch');
+});
+
+test('unknown labelPos is a ParseError for non-xaas modes too', () => {
+  assert.throws(
+    () => parse('teamTopology\nstream a\nstream b\na <--> b : x [labelPos=weird]'),
+    (e) => e instanceof ParseError && /labelPos/.test(e.message),
+  );
+});
+
+test('frame gap growth stays xaas-only: a labelled collaboration between sibling frames does not widen the gap', () => {
+  const withCollab = layout(parse(`teamTopology
+    group g1 {
+      stream a
+    }
+    group g2 {
+      stream b
+    }
+    g1 <--> g2 : a moderately long collaboration label`));
+  const plain = layout(parse(`teamTopology
+    group g1 {
+      stream a
+    }
+    group g2 {
+      stream b
+    }`));
+  assert.equal(withCollab.boxes.g2.x - (withCollab.boxes.g1.x + withCollab.boxes.g1.w),
+    plain.boxes.g2.x - (plain.boxes.g1.x + plain.boxes.g1.w),
+    'gap between the frames is unchanged by a labelled collaboration edge');
+});
+
+// ── owner feedback on PR #28: enabling-label plate, on-shape collab text, subsystem overlap ──
+
+test('a rotated enabling label renders on an opaque plate in the enabling tint', () => {
+  const src = 'teamTopology\nstream a\nenabling superlong "SuperLongEnablingTeamName"\nsuperlong ~~> a';
+  const light = render(src, { theme: 'light' });
+  const dark = render(src, { theme: 'dark' });
+  assert.ok(light.includes(`fill="${THEMES.light.enabling.plate}"`), 'light enabling plate colour present');
+  assert.ok(dark.includes(`fill="${THEMES.dark.enabling.plate}"`), 'dark enabling plate colour present');
+});
+
+test('an upright enabling label gets the same plate as the rotated one', () => {
+  // "UX Research" wraps to two short lines and so is drawn upright inside the bar,
+  // over the dots of the facilitating patches crossing it (examples/org-groups.tt)
+  const src = 'teamTopology\nstream a\nstream b\nenabling ux "UX Research"\nux ~~> a, b';
+  const lay = layout(parse(src));
+  assert.equal(lay.boxes.ux.rotate, false, 'the label fits across the bar');
+  for (const theme of ['light', 'dark']) {
+    // the bar's shape and its label are drawn in separate passes; the label lands in
+    // the overlay group, above the facilitating dots
+    const svg = render(src, { theme });
+    const bar = svg.split('class="tt-overlay-labels"')[1].split('data-id="ux"')[1];
+    const plate = new RegExp(`<rect[^>]*fill="${THEMES[theme].enabling.plate}"`);
+    assert.match(bar, plate, `${theme}: upright bar label sits on an enabling-tinted plate`);
+    assert.ok(bar.search(plate) < bar.indexOf('<text'), `${theme}: the plate is drawn under the label text`);
+  }
+});
+
+test('a collaboration bridge to a sibling frame slides clear of the enabling bar label it grows over', () => {
+  const lay = layout(parse(readFileSync(join(examplesDir, 'org-groups.tt'), 'utf8')));
+  const bridges = lay.edges.filter((e) => e.geo.kind === 'bridge');
+  assert.ok(bridges.length >= 2, 'org-groups has bridges from enabling bars to sibling groups');
+  for (const { inter, geo } of bridges) {
+    const shape = geoBBox(geo);
+    for (const id of [inter.from, inter.to]) {
+      const box = lay.boxes[id];
+      if (box.kind !== 'en') continue;
+      assert.ok(!overlaps(shape, teamLabelBBox(box)), `bridge ${inter.from}<->${inter.to} covers the ${id} bar label`);
+      // and it still bridges: the shape stays within the bar it starts from
+      assert.ok(shape.y >= box.y && shape.y + shape.h <= box.y + box.h, 'the shape stays alongside the bar');
+    }
+  }
+});
+
+// Approximates the bounding box of a team's own rendered label text, from layout()
+// output fields only (kind, rotate, lines, fs, labelZone, note, x/y/w/h) — mirrors
+// teamSVG's textBlock/rotate placement closely enough to catch real overlaps.
+function teamLabelBBox(box) {
+  if (!box.node) return null;
+  if (box.kind === 'frame') return frameLabelBBox(box);
+  if (box.kind === 'en' && box.rotate) {
+    const fs = box.fs + 1;
+    const tw = textWidth(box.node.label, fs) + 12;
+    const th = fs + 6;
+    return { x: box.x + box.w / 2 - th / 2, y: box.y + box.h / 2 - tw / 2, w: th, h: tw };
+  }
+  const lines = box.lines && box.lines.length ? box.lines : [box.node.label];
+  const lh = box.fs * 1.25;
+  const textH = lines.length * lh;
+  const textW = Math.max(...lines.map((ln) => textWidth(ln, box.fs)));
+  const cx = box.labelZone ? (box.labelZone[0] + box.labelZone[1]) / 2 : box.x + box.w / 2;
+  const noteH = box.note && box.note.length ? 11 * 1.25 + 2 : 0;
+  const cy = box.y + box.h / 2 - noteH / 2;
+  const pad = 4;
+  return { x: cx - textW / 2 - pad, y: cy - textH / 2 - pad, w: textW + pad * 2, h: textH + pad * 2 };
+}
+
+function geoBBox(geo) {
+  if (geo.rect) return geo.rect;
+  const xs = geo.points.map((p) => p.x), ys = geo.points.map((p) => p.y);
+  const x0 = Math.min(...xs), y0 = Math.min(...ys);
+  return { x: x0, y: y0, w: Math.max(...xs) - x0, h: Math.max(...ys) - y0 };
+}
+
+test('an interaction shape never covers a team label (examples/ecommerce.tt and a subsystem+collaboration fixture)', () => {
+  const cases = [
+    ['examples/ecommerce.tt', readFileSync(join(examplesDir, 'ecommerce.tt'), 'utf8')],
+    ['examples/group-interactions.tt', readFileSync(join(examplesDir, 'group-interactions.tt'), 'utf8')],
+    // the collaboration is [soon] because a pair holds one current mode at a time;
+    // [soon] changes only dash and opacity, so the geometry under test is unchanged
+    ['subsystem fixture', `teamTopology
+      stream search "Search & Discovery"
+      subsystem ranking "Ranking Engine" [note="ML relevance model"]
+      ranking --> search : Ranking API
+      search <--> ranking : new signals [soon]`],
+  ];
+  for (const [name, src] of cases) {
+    const lay = layout(parse(src));
+    // An enabling bar's own label sitting under the facilitating patch that crosses
+    // the bar is a deliberate, separately-tested exception (#28 gives every bar
+    // label its own opaque plate drawn above the dots, rotated or upright, rather
+    // than moving the patch away from it).
+    const labelBoxes = Object.values(lay.boxes)
+      .filter((b) => b.kind !== 'en')
+      .map(teamLabelBBox).filter(Boolean);
+    for (const { geo } of lay.edges) {
+      const gbox = geoBBox(geo);
+      for (const lbox of labelBoxes) {
+        assert.ok(!overlaps(gbox, lbox), `${name}: an interaction shape overlaps a team label`);
+      }
+    }
+  }
 });

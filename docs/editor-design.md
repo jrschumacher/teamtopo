@@ -13,7 +13,9 @@ no theme toggle. The editor's header carries the brand, the document title (read
 from the source's `title` directive), a save-state pill, and popovers for Examples (new
 documents only), History and Share, ending in a primary Save button. The workspace below splits
 into a source pane (line gutter, syntax-highlighted overlay, a plain textarea underneath with a
-transparent fill and an accent caret) and a right pane with a Diagram / Team APIs tab bar.
+transparent fill and an accent caret) and a right pane with a Diagram / Team APIs tab bar. A
+draggable divider sets the split, the header's layout switch collapses either side, and the
+diagram pane is a zoom/pan viewport over the rendered SVG.
 
 The viewer reuses the same header shell — brand, title, History, a view-only Share popover —
 with none of the editor's controls (no state pill, no Examples, no tab bar, no Save).
@@ -44,6 +46,13 @@ with none of the editor's controls (no state pill, no Examples, no tab bar, no S
     every open popover on click; Escape closes them too. Exactly one popover is open at a time
     (`lib/popover.ts#setupPopovers`).
   - Copy buttons show "Copied" for 1.4 s (`COPY_FEEDBACK_MS` in `editor.ts`) before reverting.
+- Editor only: the workspace layout switch `.ed-panes` (`role=group`, label "Workspace
+  layout") of `#pane-editor` / `#pane-split` / `#pane-renderer` (`.ed-pane-btn
+  [aria-pressed]`, 16×12 glyph plus an `.ed-pane-name` shown only at narrow widths,
+  labelled "Editor only" / "Split view" / "Diagram only" — the same pressed-toggle pattern
+  as `#fit`). It lives in the header rather than in either pane, so the restore control is
+  reachable in every mode; below `56rem` it leaves the header's horizontal scroll for a
+  fixed bar at the bottom of the viewport, where it is the primary control.
 - Editor only: `#save` (`.ed-btn.ed-btn-primary`), disabled while saving or unchanged.
 - Viewer only: `#open-editor` when `doc.canEdit && doc.links.edit`.
 - `#banner` (stale-409 reload/save-anyway flow) sits under the header; `button.link` for its
@@ -63,15 +72,50 @@ with none of the editor's controls (no state pill, no Examples, no tab bar, no S
 - Tab in `#src` inserts two spaces at the caret; Shift+Tab removes up to two leading spaces
   from the current line. Neither moves focus out of the textarea.
 
+### Workspace panes (editor only)
+
+- `#work` (`.ed-work`) carries `data-pane-mode` (`split` | `editor` | `renderer`) and the
+  `--ed-split` custom property — the source pane's share of the workspace, written by
+  `editor.ts` and read by `.ed-pane-source`'s `flex-basis`. The mode collapses one side;
+  hiding a pane that holds focus moves focus to the layout button that was pressed.
+- `#split` (`.ed-split[role=separator]`, `tabindex=0`) sits between the panes: drag to
+  resize, double-click or Enter to reset to 40%, arrows to nudge (Shift for a bigger step),
+  Home/End for the extremes. `aria-valuenow` is the source pane's percentage and
+  `aria-valuemin`/`aria-valuemax` are the bounds actually reachable at the current width —
+  both panes keep 260px.
+- **Narrow viewports show one pane at a time.** Below `56rem` (`NARROW_QUERY` in
+  `editor.ts`, kept in sync with the media query) there is no room for two usable panes, so
+  the workspace never splits: it shows the source or the diagram and the switch becomes a
+  two-way toggle with `#pane-split` `hidden`. `visibleMode()` keeps the two apart —
+  `mode` is the wide layout, `narrowMode` the single pane — so a split survives a trip
+  through a phone-width window and comes back with the width, and choosing one pane on a
+  wide screen is the pane a narrow one then opens on.
+- Pane mode, the narrow pane, split ratio, zoom and fit are stored under
+  `teamtopo.workspace` (`lib/workspace.ts`); every read and write is guarded, and the
+  workspace falls back to split view at 40% / 100% / fit when storage is missing, blocked
+  or corrupt.
+
 ### Right pane (editor only)
 
 - `.ed-tabbar[role=tablist]` > `#tab-diagram` / `#tab-api` (`.ed-tab[role=tab]
   [aria-selected]`), `#export-svg` ("Export SVG", downloads `<title>.svg`), `#export-md`
   ("Markdown", downloads `<title>-team-apis.md`, every team's Team API joined with `---`),
-  `#fit` (existing behaviour: toggles `aria-pressed` and the `.fit` class on `#canvas`).
+  and the `.ed-zoom` group (`role=group`, "Diagram zoom and fit"): `#zoom-out`,
+  `#zoom-reset` (its `#zoom-level` span is the live percentage; pressing it returns to
+  100%), `#zoom-in`, `#fit` (`aria-pressed` — on means the zoom follows the viewport).
 - `#panel-diagram` (`.ed-panel[role=tabpanel]`, `hidden` when the API tab is active) >
-  `#canvas` (`.ed-canvas.fit`) and a foot with `#render-status` ("rendered in N ms") and
-  `#dims`.
+  `#canvas` (`.ed-canvas.ed-canvas-zoom`, `role=group`, `tabindex=0`) and a foot with
+  `#render-status` ("rendered in N ms") and `#dims` (the *unscaled* diagram size).
+- The canvas is the diagram's viewport. Zoom scales the SVG element's `width`/`height`
+  while its `viewBox` stays as rendered, so the browser redraws the vectors at every scale
+  instead of stretching pixels; panning is the canvas' own scroll position. Buttons and the
+  `+`/`-` keys step a fixed ladder (0.25…4), `0` resets to 100%, `f` fits, ctrl/⌘-wheel
+  (and trackpad pinch) zooms around the pointer, and dragging pans — a drag that moved more
+  than 4px does not open the team page under it. Any manual zoom releases fit; pressing Fit
+  again re-fits. Fit is recomputed whenever the viewport changes (divider drag, pane mode,
+  tab switch, window resize), so no transition leaves a stale or clipped layout.
+- The viewer's canvas is unchanged: it keeps `.ed-canvas.fit` (CSS-only width fitting) and
+  has none of the editor's viewport controls.
 - `#panel-api` (hidden when the Diagram tab is active) > `#api-grid` (`.ed-api-grid`) of
   `.ed-api-card` — an `<a>` to `teamLink()` when a doc is open, else a `<div>` — each with a
   `.ed-api-chip` in the team's colour (`stream`/`enabling`/`subsystem`/`platform`), an `<h3>`
