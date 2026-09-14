@@ -73,6 +73,11 @@ team, worst first; propose structural changes as `docs/org-target.tt`.
   `a ~~> b : coaching [soon, duration="6 weeks"]`. Quote a label containing `[`.
 - Every id used must be declared somewhere; no self-interaction; no interaction with a
   containing block.
+- A real team is declared separately: `team <id> "Label"` plus `<id> owns a, b`. An owned
+  node is work, not a team — its Team API moves to the team, its `api` block is an error,
+  and a team id may not be an interaction endpoint (`references/syntax.md`). Only for the
+  one-team-many-streams mismatch: an unowned node is already a team, so never declare a
+  `team` per node.
 - Declaration order is the layout order. Declare enabling and subsystem teams in the
   same block as the lanes they touch (`references/layout.md`).
 

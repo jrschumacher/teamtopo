@@ -524,3 +524,27 @@
 		margin-top: 0;
 	}
 }
+
+.tm-other-owned {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 4px 8px 4px 26px;
+	color: var(--muted);
+	font-size: 12px;
+}
+
+.tm-other-load {
+	margin-left: auto;
+	color: var(--muted);
+	font-size: 11px;
+}
+
+.tm-chip.team {
+	background: var(--muted);
+	border: 1px solid var(--muted);
+}
+
+.tm-type-pill.team {
+	color: var(--muted);
+}

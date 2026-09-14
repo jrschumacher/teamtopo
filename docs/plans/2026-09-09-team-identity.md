@@ -56,7 +56,7 @@ Freezes today's output so every later task proves it did not change a team-free 
 - Consumes: nothing.
 - Produces: two tests other tasks must keep green — `every example renders byte-identically to its committed svg` and `teamApis markdown is stable for every example`. The second writes `src/teamtopo.api.golden.json`, a committed map of `{ "<example>.tt": "<concatenated markdown>" }` generated once by the step below.
 
-- [ ] **Step 1: Write the failing SVG corpus test**
+- [x] **Step 1: Write the failing SVG corpus test**
 
 Append to `src/teamtopo.test.js`:
 
@@ -74,12 +74,12 @@ test('every example renders byte-identically to its committed svg', () => {
 });
 ```
 
-- [ ] **Step 2: Run it and confirm it passes today**
+- [x] **Step 2: Run it and confirm it passes today**
 
 Run: `npm test 2>&1 | tail -n 20`
 Expected: PASS. If it fails, the committed SVGs are stale — run `npm run examples`, inspect `git diff examples/`, and commit the regeneration as a separate `chore:` commit *before* continuing. Do not weaken the assertion.
 
-- [ ] **Step 3: Generate the Team API golden file**
+- [x] **Step 3: Generate the Team API golden file**
 
 Run this once, from the repo root:
 
@@ -96,7 +96,7 @@ writeFileSync('src/teamtopo.api.golden.json', JSON.stringify(out, null, 2) + '\n
 "
 ```
 
-- [ ] **Step 4: Write the Team API corpus test**
+- [x] **Step 4: Write the Team API corpus test**
 
 Append to `src/teamtopo.test.js` (the `teamApis` import already exists further down the file; move this test below that import, or add `teamApis` to the top import — either is fine, keep one import per symbol):
 
@@ -115,12 +115,12 @@ test('teamApis markdown is stable for every example', () => {
 
 Note the pinned `opts.date` — without it the golden rots at midnight.
 
-- [ ] **Step 5: Run both tests**
+- [x] **Step 5: Run both tests**
 
 Run: `npm test 2>&1 | tail -n 20`
 Expected: PASS, both.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/teamtopo.test.js src/teamtopo.api.golden.json
@@ -162,7 +162,7 @@ EOF
     - `"alpha" is not a team; declare it with "team alpha \"...\"" before an owns line`
     - `owns names an unknown team "foo"`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `src/teamtopo.test.js`:
 
@@ -259,12 +259,12 @@ test('apiFields is parsed into the model and otherwise unused', () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `node --test src/teamtopo.test.js 2>&1 | tail -n 20`
 Expected: FAIL — `m.orgTeams` is undefined, and the `team`/`owns` sources throw `cannot understand`.
 
-- [ ] **Step 3: Add the regexes**
+- [x] **Step 3: Add the regexes**
 
 In `src/teamtopo.js`, after `const RE_API_FIELD = ...` (line 74):
 
@@ -275,7 +275,7 @@ const RE_APIFIELDS_OPEN = /^apifields\s*\{$/i;
 const RE_APIFIELD_LINE = /^([A-Za-z_][\w-]*)\s*(?::\s*(.*))?$/;
 ```
 
-- [ ] **Step 4: Initialise the new model keys and the new collectors**
+- [x] **Step 4: Initialise the new model keys and the new collectors**
 
 Replace `src/teamtopo.js:114-117` with:
 
@@ -292,7 +292,7 @@ Replace `src/teamtopo.js:114-117` with:
   let sawHeader = false;
 ```
 
-- [ ] **Step 5: Parse the `apiFields` block**
+- [x] **Step 5: Parse the `apiFields` block**
 
 In the loop, between `const line = stripComment(...)` and `if (!line) continue;` (currently `src/teamtopo.js:124-125`), insert:
 
@@ -314,7 +314,7 @@ And in the directives section, beside the `legend` directive (`src/teamtopo.js:1
     if (RE_APIFIELDS_OPEN.test(line)) { fieldsBlock = true; fieldsGroup = 0; continue; }
 ```
 
-- [ ] **Step 6: Parse `owns` and `team`, before the node branch**
+- [x] **Step 6: Parse `owns` and `team`, before the node branch**
 
 Insert immediately **before** `// node declaration` / `if ((m = RE_NODE.exec(line)))` (`src/teamtopo.js:177-178`):
 
@@ -349,7 +349,7 @@ Insert immediately **before** `// node declaration` / `if ((m = RE_NODE.exec(lin
     }
 ```
 
-- [ ] **Step 7: Resolve ownership and compute `load`, before the api pass**
+- [x] **Step 7: Resolve ownership and compute `load`, before the api pass**
 
 Insert immediately **before** `for (const a of apis) {` (`src/teamtopo.js:225`):
 
@@ -374,7 +374,7 @@ Insert immediately **before** `for (const a of apis) {` (`src/teamtopo.js:225`):
   }
 ```
 
-- [ ] **Step 8: Give every node an `owners` array**
+- [x] **Step 8: Give every node an `owners` array**
 
 At `src/teamtopo.js:208`, add `owners: []` to the node literal:
 
@@ -382,7 +382,7 @@ At `src/teamtopo.js:208`, add `owners: []` to the node literal:
       const node = { id, type, label, attrs, api: null, owners: [], children: [], parent: parent ? parent.id : null, line: lineNo };
 ```
 
-- [ ] **Step 9: Reject an `api` block on an owned node**
+- [x] **Step 9: Reject an `api` block on an owned node**
 
 Replace the api-resolution loop body (`src/teamtopo.js:225-229`) with:
 
@@ -398,7 +398,7 @@ Replace the api-resolution loop body (`src/teamtopo.js:225-229`) with:
   }
 ```
 
-- [ ] **Step 10: Reject a team id as an interaction endpoint**
+- [x] **Step 10: Reject a team id as an interaction endpoint**
 
 Replace the endpoint check in the interaction validation loop (`src/teamtopo.js:233-235`) with:
 
@@ -410,12 +410,12 @@ Replace the endpoint check in the interaction validation loop (`src/teamtopo.js:
     }
 ```
 
-- [ ] **Step 11: Run the tests**
+- [x] **Step 11: Run the tests**
 
 Run: `npm test 2>&1 | tail -n 20`
 Expected: PASS — the new tests and Task 1's two corpus tests.
 
-- [ ] **Step 12: Commit**
+- [x] **Step 12: Commit**
 
 ```bash
 git add src/teamtopo.js src/teamtopo.test.js
@@ -447,7 +447,7 @@ EOF
 - Consumes: `model.orgTeams[].load`, `.owns`, `.ownsLine` from Task 2.
 - Produces: `model.diagnostics: { level: 'warning', code: string, line: number, message: string }[]` — always an array, `[]` when clean. One entry per over-loaded team, code `team-multi-stream`, `line` = that team's **last** `owns` line, message final-count. Task 4 reads `load`, not this array; the CLI prints it to stderr and `--json` carries it.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `src/teamtopo.test.js`:
 
@@ -486,12 +486,12 @@ test('diagnostics is always an array and never throws', () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `node --test src/teamtopo.test.js 2>&1 | tail -n 20`
 Expected: FAIL — `m.diagnostics` is `[]` where a warning is expected.
 
-- [ ] **Step 3: Add the post-pass**
+- [x] **Step 3: Add the post-pass**
 
 In `src/teamtopo.js`, immediately before `return model;` at the end of `parse`:
 
@@ -510,12 +510,12 @@ In `src/teamtopo.js`, immediately before `return model;` at the end of `parse`:
   }
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `npm test 2>&1 | tail -n 20`
 Expected: PASS.
 
-- [ ] **Step 5: Print diagnostics from the CLI, on stderr only**
+- [x] **Step 5: Print diagnostics from the CLI, on stderr only**
 
 In `src/cli.js`, add above the final `try {` block (after the `source` read):
 
@@ -552,7 +552,7 @@ try {
 } catch (e) {
 ```
 
-- [ ] **Step 6: Verify the CLI split by hand**
+- [x] **Step 6: Verify the CLI split by hand**
 
 ```bash
 printf 'teamTopology\nstream a\nstream b\nteam t "T"\nt owns a, b\n' > /tmp/tt-diag.tt
@@ -562,7 +562,7 @@ node src/cli.js --json /tmp/tt-diag.tt 2>/dev/null | grep -c '"team-multi-stream
 ```
 Expected: an `<svg ...` prefix; one `warning:` line; `1`.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/teamtopo.js src/teamtopo.test.js src/cli.js
@@ -596,7 +596,7 @@ EOF
   - New exported constant `TYPE_KEYWORDS: Record<TeamType, string>` = `{ stream: 'stream-aligned', enabling: 'enabling', subsystem: 'complicated-subsystem', platform: 'platform', group: 'group' }`, used for the `Owns N:` list.
   - Team document shape, in order: `# Team API: <label>`, date, `* Team name and focus`, `* Team type: <deduped union of API_TYPE_NAMES in owns order, or "Team">`, `* Owns <nodes>: <id> (<keyword>), …`, `* Streams: <streams>`, the load note when `streams > 1`, then the existing template lines, then `### Teams we currently interact with`, `### Internal`, `### Teams we expect to interact with soon`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `src/teamtopo.test.js`:
 
@@ -697,12 +697,12 @@ test('the platform line appears only when every owned node is in the same platfo
 });
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `node --test src/teamtopo.test.js 2>&1 | tail -n 25`
 Expected: FAIL — `teamApis` still lists `desktop`/`sharepoint`/`gateway`, and `teamApi(model, 'alpha')` throws `unknown team "alpha"`… it does not throw (alpha is in the index) but produces `API_TYPE_NAMES[undefined]`.
 
-- [ ] **Step 3: Add the type-keyword map and the counterpart helper**
+- [x] **Step 3: Add the type-keyword map and the counterpart helper**
 
 In `src/teamtopo.js`, below `const API_TYPE_NAMES = ...` (line 922):
 
@@ -729,7 +729,7 @@ function apiRowSet(model, ours, inter) {
 }
 ```
 
-- [ ] **Step 4: Add the team document generator**
+- [x] **Step 4: Add the team document generator**
 
 In `src/teamtopo.js`, immediately above `export function teamApi(...)` (line 966):
 
@@ -807,7 +807,7 @@ function orgTeamApi(model, team, opts) {
 }
 ```
 
-- [ ] **Step 5: Route `teamApi` and rebuild `teamApis`**
+- [x] **Step 5: Route `teamApi` and rebuild `teamApis`**
 
 Rename the existing `export function teamApi(input, id, opts = {})` to `function nodeApi(model, node, opts)` — take the two lines that resolve `model` and `node` out of its body (it now receives them) and leave the rest untouched. Then add, in its place:
 
@@ -838,12 +838,12 @@ export function teamApis(input, opts = {}) {
 
 Add `TYPE_KEYWORDS` to the default export at `src/teamtopo.js:1034`.
 
-- [ ] **Step 6: Run the tests**
+- [x] **Step 6: Run the tests**
 
 Run: `npm test 2>&1 | tail -n 25`
 Expected: PASS — including Task 1's `teamApis markdown is stable for every example` golden, because no example declares a team.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/teamtopo.js src/teamtopo.test.js
@@ -878,7 +878,7 @@ EOF
   - `app/src/views/team.ts` exports `export function isOrgTeam(e: Entry): e is OrgTeam` and `export function ownerRedirectTarget(model: Model, teamId: string): string | null` — returns the owning team's id when `teamId` names an owned node, else `null`.
   - The route table is unchanged; `/d/:id/team/:streamId` still matches and the view redirects.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `app/src/router.test.ts`, inside the existing `describe('matchRoute', …)`:
 
@@ -934,12 +934,12 @@ describe('team identity', () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `cd app && npx vitest run src/views/team.test.ts src/router.test.ts 2>&1 | tail -n 20`
 Expected: FAIL — `isOrgTeam`/`ownerRedirectTarget` are not exported.
 
-- [ ] **Step 3: Update the type declarations**
+- [x] **Step 3: Update the type declarations**
 
 In `app/src/lib/teamtopo.d.ts`, add `owners: string[];` to `Node`, and add above `interface Model`:
 
@@ -991,7 +991,7 @@ and change `Model` to:
 
 Also add `export const TYPE_KEYWORDS: Record<TeamType, string>;` beside the other exported constants.
 
-- [ ] **Step 4: Add the guard and the redirect resolver, and drop the unsound cast**
+- [x] **Step 4: Add the guard and the redirect resolver, and drop the unsound cast**
 
 In `app/src/views/team.ts`, add near the top (below the imports), and add `Entry`, `OrgTeam` to the `@lib/teamtopo` import:
 
@@ -1034,12 +1034,12 @@ Replace the cast at `app/src/views/team.ts:361`:
 
 and fix the resulting type errors by widening the helpers that receive it — `heroHtml`, `sectionsHtml`, `unmappedFields` and `asideHtml` take `Entry` instead of `Node`. Inside them, reach for `node.type` only behind `isOrgTeam(node) ? … : node.type`; a team renders `TYPE_LABEL` as `'Team'` and `chipHtml('team', …)`.
 
-- [ ] **Step 5: Run the tests and the type check**
+- [x] **Step 5: Run the tests and the type check**
 
 Run: `cd app && npx vitest run src/views/team.test.ts src/router.test.ts 2>&1 | tail -n 20 && npm run typecheck && npm run lint`
 Expected: PASS, no `tsc` errors, lint clean.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add app/src/lib/teamtopo.d.ts app/src/views/team.ts app/src/views/team.test.ts app/src/router.test.ts
@@ -1069,7 +1069,7 @@ EOF
 - Consumes: `isOrgTeam` (Task 5), `model.orgTeams`, `orgTeams[].owns`, `orgTeams[].load`, `node.owners`.
 - Produces: the sidebar list order — every `orgTeams` entry as a link, each followed by its owned nodes as non-link rows with class `tm-other-owned`, then every non-group node with empty `owners` as a link. No other module depends on this.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to the `describe('team identity', …)` block in `app/src/views/team.test.ts`:
 
@@ -1089,12 +1089,12 @@ Append to the `describe('team identity', …)` block in `app/src/views/team.test
 	});
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `cd app && npx vitest run src/views/team.test.ts 2>&1 | tail -n 20`
 Expected: FAIL — the sidebar still lists `model.teams` flat.
 
-- [ ] **Step 3: Rewrite the sidebar list**
+- [x] **Step 3: Rewrite the sidebar list**
 
 In `app/src/views/team.ts`, add beside `teamRowHtml`:
 
@@ -1145,7 +1145,7 @@ Give `teamRowHtml` the extra parameter — `function teamRowHtml(doc: OpenedDoc,
 
 Use `isOrgTeam(t) ? 'team' : t.type` for the `chipHtml` call inside it.
 
-- [ ] **Step 4: Add the indent style**
+- [x] **Step 4: Add the indent style**
 
 Append to `app/src/views/team.css`:
 
@@ -1166,12 +1166,12 @@ Append to `app/src/views/team.css`:
 }
 ```
 
-- [ ] **Step 5: Run the tests, typecheck and lint**
+- [x] **Step 5: Run the tests, typecheck and lint**
 
 Run: `cd app && npm test 2>&1 | tail -n 20 && npm run typecheck && npm run lint`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add app/src/views/team.ts app/src/views/team.css app/src/views/team.test.ts
@@ -1209,7 +1209,7 @@ EOF
   - `chipCode(team)` — first two characters of the id, uppercased, with a `2`/`3`… suffix on collision.
   - Cap: `chipsEnabled(model)` is `model.orgTeams.length > 0 && model.orgTeams.length <= 20`; past 20 no chips are drawn and the band shows one note.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `src/teamtopo.test.js`:
 
@@ -1282,12 +1282,12 @@ test('a team owning no stream shows its node count in the legend', () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `node --test src/teamtopo.test.js 2>&1 | tail -n 25`
 Expected: FAIL on every assertion that looks for `tt-chips` or `tt-team-legend`; the first test (`a team-free diagram gets no chips`) passes already and must keep passing.
 
-- [ ] **Step 3: Add the constants**
+- [x] **Step 3: Add the constants**
 
 In `src/teamtopo.js`, add to the `L` object (line 315-321): `chipW: 26, chipH: 14, chipGap: 4, teamLegendH: 30,` and below it:
 
@@ -1332,7 +1332,7 @@ function loadLabel(team, model) {
 }
 ```
 
-- [ ] **Step 4: Reserve chip width in `structure()`**
+- [x] **Step 4: Reserve chip width in `structure()`**
 
 Replace the `labelW` computation at `src/teamtopo.js:378-380` with:
 
@@ -1342,7 +1342,7 @@ Replace the `labelW` computation at `src/teamtopo.js:378-380` with:
     ...plats.map((n) => textWidth(n.label, L.fs.platform) + 48 + chipStripW(n, model)));
 ```
 
-- [ ] **Step 5: Draw the chips from `teamSVG`**
+- [x] **Step 5: Draw the chips from `teamSVG`**
 
 Add below `teamSVG` in `src/teamtopo.js`:
 
@@ -1385,7 +1385,7 @@ Call it from `teamSVG` — give `teamSVG` a `model` parameter (`function teamSVG
   return el('g', { class: `tt-node tt-${node.type}`, 'data-id': node.id }, parts);
 ```
 
-- [ ] **Step 6: Add the legend band to `layout()` and `render()`**
+- [x] **Step 6: Add the legend band to `layout()` and `render()`**
 
 In `layout()`, after `const showLegend = ...` (`src/teamtopo.js:501`) add:
 
@@ -1443,12 +1443,12 @@ In `render`, add to the `body` array after the `lay.legend` entry (`src/teamtopo
     lay.teamLegend ? teamLegendSVG(lay.teamLegend, model, T) : '',
 ```
 
-- [ ] **Step 7: Run the tests**
+- [x] **Step 7: Run the tests**
 
 Run: `npm test 2>&1 | tail -n 25`
 Expected: PASS, **including Task 1's byte-equality corpus test** — no example declares a team, so `chipStripW` returns 0, `showTeams` is false, and every committed SVG is unchanged. If the corpus test fails, a width or height term is being added unconditionally: fix that, do not regenerate the goldens.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add src/teamtopo.js src/teamtopo.test.js
@@ -1482,7 +1482,7 @@ EOF
 - Consumes: the full syntax from Tasks 2-7.
 - Produces: no code interface. The new example flows into Task 1's two corpus tests automatically, so the Team API golden must be regenerated in this task (the only sanctioned regeneration in this plan, because a genuinely new file is being added).
 
-- [ ] **Step 1: Extend the skill fence test**
+- [x] **Step 1: Extend the skill fence test**
 
 In `src/skill.test.js`, replace the body of the first test's `forEach` callback with:
 
@@ -1501,12 +1501,12 @@ In `src/skill.test.js`, replace the body of the first test's `forEach` callback 
     });
 ```
 
-- [ ] **Step 2: Run it**
+- [x] **Step 2: Run it**
 
 Run: `node --test src/skill.test.js 2>&1 | tail -n 10`
 Expected: PASS — all 18 existing fences declare no team.
 
-- [ ] **Step 3: Write the new example**
+- [x] **Step 3: Write the new example**
 
 Create `examples/team-ownership.tt`:
 
@@ -1540,7 +1540,7 @@ teamTopology
   }
 ```
 
-- [ ] **Step 4: Render it and regenerate the Team API golden**
+- [x] **Step 4: Render it and regenerate the Team API golden**
 
 ```bash
 npm run examples
@@ -1559,7 +1559,7 @@ git diff --stat examples/
 
 Expected in `git diff --stat`: **only** `examples/team-ownership.svg` as a new file. If any pre-existing `.svg` changed, a layout term is being applied to team-free documents — stop and fix Task 7, do not commit the diff.
 
-- [ ] **Step 5: Document the syntax in the README**
+- [x] **Step 5: Document the syntax in the README**
 
 In `README.md`, after the Teams table and its bullet list (around line 75), add:
 
@@ -1596,7 +1596,7 @@ In the Team API section (around line 190), add to the "Where it comes from" tabl
 | Internal | interactions between two nodes the same team owns |
 ```
 
-- [ ] **Step 6: Document it in the Skill**
+- [x] **Step 6: Document it in the Skill**
 
 In `skills/teamtopo/references/syntax.md`, after the "Team declarations" section, add a `## Real teams` section with the same rules and this fence (the fence test will parse it):
 
@@ -1626,12 +1626,12 @@ In `skills/teamtopo/references/modeling.md`, add one row to the mapping table:
 | One team staffing several streams | `team` + `owns` | Model the streams as they are and declare the team over them — the warning is the point, not a problem to model away. |
 ```
 
-- [ ] **Step 7: Run everything**
+- [x] **Step 7: Run everything**
 
 Run: `npm test 2>&1 | tail -n 25 && cd app && npm test 2>&1 | tail -n 10 && npm run typecheck && npm run lint`
 Expected: PASS everywhere.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add README.md skills/teamtopo/references/syntax.md skills/teamtopo/references/modeling.md examples/team-ownership.tt examples/team-ownership.svg src/skill.test.js src/teamtopo.api.golden.json

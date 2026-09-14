@@ -7,7 +7,7 @@
  * byte-for-byte with everything outside the block. It calls into `@lib/teamtopo`'s
  * `parse()` for team lookups and field-value resolution rather than duplicating that.
  */
-import { parse, TEAM_API_FIELDS, type Node } from '@lib/teamtopo';
+import { parse, TEAM_API_FIELDS, type Entry } from '@lib/teamtopo';
 
 export class UnknownTeamError extends Error {
 	readonly teamId: string;
@@ -59,8 +59,8 @@ function canonicalKeyFor(rawName: string): string | null {
 	return spec ? spec.key : null;
 }
 
-/** Mirrors the library's private apiField(): first alias present on the node wins. */
-function fieldValue(node: Node, canonicalKey: string): string {
+/** Mirrors the library's private apiField(): first alias present on the entry wins. */
+function fieldValue(node: Entry, canonicalKey: string): string {
 	const spec = TEAM_API_FIELDS.find((f) => f.key === canonicalKey);
 	if (!spec || !node.api) return '';
 	for (const alias of spec.aliases) {

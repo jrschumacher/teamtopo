@@ -72,6 +72,10 @@ const RE_INTERACTION = new RegExp(
   `^(${ID}(?:\\s*,\\s*${ID})*)\\s*(<-->|<->|-->|<--|~~>|<~~)\\s*(${ID}(?:\\s*,\\s*${ID})*)\\s*(?::\\s*("(?:[^"\\\\]|\\\\.)*"|[^\\[]*?))?\\s*(?:\\[([^\\]]*)\\])?\\s*$`);
 const RE_API_OPEN = new RegExp(`^api\\s+(${ID})\\s*\\{$`, 'i');
 const RE_API_FIELD = /^([^:]+?)\s*:\s*(.*)$/;
+const RE_TEAM = new RegExp(`^team\\s+(${ID})(.*)$`, 'i');
+const RE_OWNS = new RegExp(`^(${ID})\\s+owns\\s+(${ID}(?:\\s*,\\s*${ID})*)\\s*$`, 'i');
+const RE_APIFIELDS_OPEN = /^apifields\s*\{$/i;
+const RE_APIFIELD_LINE = /^([A-Za-z_][\w-]*)\s*(?::\s*(.*))?$/;
 
 function stripComment(line, slashes = true) {
   let inQuote = false;
@@ -101,20 +105,30 @@ function parseAttrs(src) {
  * Parse diagram source into a model:
  * {
  *   title, flow, legend,
- *   nodes:        top-level node tree (each node: id, type, label, attrs, api, children, parent, line)
+ *   nodes:        top-level node tree (each node: id, type, label, attrs, api, owners, children, parent, line)
  *   teams:        flat list of every node (containers included), declaration order
+ *   orgTeams:     real teams, declaration order: { isTeam, id, label, attrs, api, owns, load, ownsLine, line }
  *   interactions: [{ mode, from, to, label, attrs, soon, duration, line }]
- *   index:        id → node
+ *   apiFields:    document-level Team API schema: [{ key, choices, group }]
+ *   diagnostics:  non-fatal findings: [{ level, code, line, message }] — always an array
+ *   index:        id → node | team (a team has isTeam === true)
  * }
+ * A node whose `owners` list is non-empty is not a team: it is work owned by the teams
+ * named there, and its Team API lives on the owning team.
  * For `xaas`, `from` is the provider and `to` the consumer.
  * For `facilitating`, `from` is the facilitator.
  */
 export function parse(source) {
   if (typeof source !== 'string') throw new TypeError('parse() expects a string');
-  const model = { title: '', flow: null, legend: false, nodes: [], teams: [], interactions: [], index: {} };
-  const stack = [];   // open containers
-  const apis = [];    // { id, fields, line }
-  let api = null;     // open api block
+  const model = {
+    title: '', flow: null, legend: false, nodes: [], teams: [], orgTeams: [],
+    interactions: [], apiFields: [], diagnostics: [], index: {},
+  };
+  const stack = [];     // open containers
+  const apis = [];      // { id, fields, line }
+  const ownsLines = []; // { team, ids, line }
+  let api = null;       // open api block
+  let fieldsBlock = false, fieldsGroup = 0;
   let sawHeader = false;
 
   const lines = source.split(/\r?\n/);
@@ -122,6 +136,19 @@ export function parse(source) {
     const lineNo = i + 1;
     // inside an api block only %% starts a comment, so URLs survive
     const line = stripComment(lines[i], !api).trim();
+
+    // a document-level apiFields schema: field names in render order, blank lines separating
+    // groups, an optional "key: a | b | c" choice list. Parsed here, rendered by nothing yet.
+    if (fieldsBlock) {
+      if (!line) { fieldsGroup++; continue; }
+      if (line === '}') { fieldsBlock = false; continue; }
+      const fm = RE_APIFIELD_LINE.exec(line);
+      if (!fm) throw new ParseError(`expected a field name inside the apiFields block`, lineNo);
+      const choices = fm[2] ? fm[2].split('|').map((s) => s.trim()).filter(Boolean) : [];
+      model.apiFields.push({ key: fm[1], choices, group: fieldsGroup });
+      continue;
+    }
+
     if (!line) continue;
 
     if (api) {
@@ -143,6 +170,7 @@ export function parse(source) {
     if ((m = /^title\s+(.+)$/i.exec(line))) { model.title = stripQuotes(m[1]); continue; }
     if ((m = /^flow(?:\s+(.+))?$/i.exec(line))) { model.flow = m[1] ? stripQuotes(m[1]) : 'Flow of change'; continue; }
     if (/^legend$/i.test(line)) { model.legend = true; continue; }
+    if (RE_APIFIELDS_OPEN.test(line)) { fieldsBlock = true; fieldsGroup = 0; continue; }
 
     if (line === '}') {
       if (!stack.length) throw new ParseError('unexpected "}" — no open block', lineNo);
@@ -165,12 +193,45 @@ export function parse(source) {
       const label = m[4] ? stripQuotes(m[4]) : '';
       const attrs = m[5] ? parseAttrs(m[5]) : {};
       const soon = 'soon' in attrs || 'expected' in attrs;
+      if (attrs.labelPos !== undefined && attrs.labelPos !== 'gap' && attrs.labelPos !== 'above') {
+        throw new ParseError(`invalid labelPos "${attrs.labelPos}" (expected "gap" or "above")`, lineNo);
+      }
+      const labelPos = attrs.labelPos || 'gap';
       for (const l of left) {
         for (const r of right) {
           const [from, to] = op.leftIsFrom ? [l, r] : [r, l];
-          model.interactions.push({ mode: op.mode, from, to, label, attrs, soon, duration: attrs.duration || '', line: lineNo });
+          model.interactions.push({ mode: op.mode, from, to, label, attrs, soon, duration: attrs.duration || '', labelPos, line: lineNo });
         }
       }
+      continue;
+    }
+
+    // ownership, tried BEFORE RE_NODE: that regex has no word boundary after the keyword, so
+    // "sales owns x" would match the "sa" alias and die as "sa needs an identifier". The guard
+    // that keeps "stream owns \"Owns\"" a node declaration is the left-hand side instead —
+    // ownership only matches when the LHS is not an exact type keyword or alias.
+    if ((m = RE_OWNS.exec(line)) && !(m[1].toLowerCase() in TYPE_ALIASES)) {
+      ownsLines.push({ team: m[1], ids: m[2].split(',').map((s) => s.trim()), line: lineNo });
+      continue;
+    }
+
+    // team declaration: a real team, which owns streams and capabilities rather than being one
+    if ((m = RE_TEAM.exec(line))) {
+      const id = m[1];
+      if (model.index[id]) throw new ParseError(`duplicate identifier "${id}" (first declared on line ${model.index[id].line})`, lineNo);
+      let rest = m[2], label = id, attrs = {}, q;
+      if ((q = RE_QUOTED.exec(rest))) { label = unescape(q[1]); rest = rest.slice(q[0].length); }
+      else {
+        const cut = rest.search(/\[/);
+        const raw = (cut === -1 ? rest : rest.slice(0, cut)).trim();
+        if (raw) label = raw;
+        rest = cut === -1 ? '' : rest.slice(cut);
+      }
+      if ((q = RE_ATTRS.exec(rest))) { attrs = parseAttrs(q[1]); rest = rest.slice(q[0].length); }
+      if (rest.trim()) throw new ParseError(`unexpected "${rest.trim()}" after team declaration`, lineNo);
+      const team = { isTeam: true, id, label, attrs, api: null, owns: [], load: { streams: 0, nodes: 0 }, ownsLine: lineNo, line: lineNo };
+      model.orgTeams.push(team);
+      model.index[id] = team;
       continue;
     }
 
@@ -205,7 +266,7 @@ export function parse(source) {
       }
 
       const parent = stack.length ? stack[stack.length - 1] : null;
-      const node = { id, type, label, attrs, api: null, children: [], parent: parent ? parent.id : null, line: lineNo };
+      const node = { id, type, label, attrs, api: null, owners: [], children: [], parent: parent ? parent.id : null, line: lineNo };
       (parent ? parent.children : model.nodes).push(node);
       model.teams.push(node);
       model.index[id] = node;
@@ -218,24 +279,80 @@ export function parse(source) {
 
   if (!sawHeader) throw new ParseError('diagram must start with "teamTopology"', lines.length || 1);
   if (api) throw new ParseError(`api block for "${api.id}" opened on line ${api.line} is never closed with "}"`, lines.length);
+  if (fieldsBlock) throw new ParseError('the apiFields block is never closed with "}"', lines.length);
   if (stack.length) {
     const open = stack[stack.length - 1];
     throw new ParseError(`block for "${open.id}" opened on line ${open.line} is never closed with "}"`, lines.length);
   }
+  // resolve ownership once the whole file is read, so an owns line may name streams declared
+  // after it, or nested inside a group or platform block
+  for (const o of ownsLines) {
+    const team = model.index[o.team];
+    if (!team || !team.isTeam) throw new ParseError(`"${o.team}" is not a team; declare it with "team ${o.team} \\"...\\"" before an owns line`, o.line);
+    for (const id of o.ids) {
+      const node = model.index[id];
+      if (!node || node.isTeam) throw new ParseError(`owns names an unknown team "${id}"`, o.line);
+      if (node.children.length) throw new ParseError(`"${id}" is a container; a team can only own leaf teams, not a "{ ... }" block`, o.line);
+      if (!team.owns.includes(id)) team.owns.push(id);
+      if (!node.owners.includes(team.id)) node.owners.push(team.id);
+    }
+    team.ownsLine = o.line;
+  }
+  // the single source for the cognitive-load numbers: the diagnostic, the legend and the
+  // Team API all read this, none of them recomputes it
+  for (const t of model.orgTeams) {
+    const owned = t.owns.map((id) => model.index[id]);
+    t.load = {
+      streams: owned.filter((n) => n.type === 'stream').length,
+      subsystems: owned.filter((n) => n.type === 'subsystem').length,
+      nodes: t.owns.length,
+    };
+  }
+
   for (const a of apis) {
-    const node = model.index[a.id];
-    if (!node) throw new ParseError(`api block for unknown team "${a.id}"`, a.line);
-    node.api = { ...(node.api || {}), ...a.fields };
+    const target = model.index[a.id];
+    if (!target) throw new ParseError(`api block for unknown team "${a.id}"`, a.line);
+    if (!target.isTeam && target.owners.length) {
+      const owner = target.owners[0];
+      throw new ParseError(`api ${a.id} belongs to team ${owner}, which owns ${a.id}; move these fields into "api ${owner}"`, a.line);
+    }
+    target.api = { ...(target.api || {}), ...a.fields };
   }
 
   // validate interactions
   for (const it of model.interactions) {
     for (const end of ['from', 'to']) {
-      if (!model.index[it[end]]) throw new ParseError(`unknown team "${it[end]}"`, it.line);
+      const entry = model.index[it[end]];
+      if (!entry) throw new ParseError(`unknown team "${it[end]}"`, it.line);
+      if (entry.isTeam) throw new ParseError(`"${it[end]}" is a team, not a node; use one of the nodes it owns (${entry.owns.join(', ') || 'none yet'})`, it.line);
     }
     if (it.from === it.to) throw new ParseError(`"${it.from}" cannot interact with itself`, it.line);
     if (isAncestor(model, it.from, it.to) || isAncestor(model, it.to, it.from)) {
       throw new ParseError(`"${it.from}" and "${it.to}" are nested; a team cannot interact with its own container`, it.line);
+    }
+  }
+
+  // Non-fatal diagnostics, computed after every owns line is resolved so each team warns once,
+  // on its last owns line, with the final count. ParseError stays the only fatal path.
+  const ownedOfType = (t, type) => t.owns.filter((id) => model.index[id].type === type);
+  for (const t of model.orgTeams) {
+    if (t.load.streams > 1) {
+      model.diagnostics.push({
+        level: 'warning',
+        code: 'team-multi-stream',
+        line: t.ownsLine,
+        message: `team ${t.id} is aligned to ${t.load.streams} streams: ${ownedOfType(t, 'stream').join(', ')}; a team aligned to more than one stream carries extra cognitive load`,
+      });
+    }
+    // a complicated-subsystem team exists because one deep specialism is already a full
+    // load, so several of them in one team is the same finding as several streams
+    if (t.load.subsystems > 1) {
+      model.diagnostics.push({
+        level: 'warning',
+        code: 'team-multi-subsystem',
+        line: t.ownsLine,
+        message: `team ${t.id} owns ${t.load.subsystems} complicated subsystems: ${ownedOfType(t, 'subsystem').join(', ')}; each carries its own deep specialism, so one team owning several carries extra cognitive load`,
+      });
     }
   }
   return model;
@@ -326,11 +443,183 @@ const L = {
   subW: 112, subH: 56, enW: 68, wedgeW: 64, slotGap: 22, labelMin: 170,
   pad: 24, frameTop: 26, frameBottom: 36, bandGap: 44, sideGap: 32, minW: 240,
   margin: 32, lineH: 1.25, noteFs: 11, titleH: 40, flowH: 46, legendH: 64, labelFs: 11,
-  railH: 26, railGap: 10, markerW: 46, markerH: 9, markerRise: 3,
+  leaderGap: 6, topClear: 8, railH: 26, railGap: 10, tipClear: 26, wedgeInset: 8,
+  chipW: 26, chipH: 14, chipGap: 4, teamLegendH: 30,
+  markerW: 46, markerH: 9, markerRise: 3,
   fs: { stream: 14, platform: 14, subsystem: 12, enabling: 12, group: 13 },
 };
 
+// ── team ownership chips ──
+// A document that declares no team reserves no width and draws nothing, so its geometry
+// is byte-identical to the pre-feature renderer; one that declares a team re-flows.
+
+const CHIP_CAP = 20;      // more teams than this and the chip layer is noise
+const CHIP_MAX_PER_NODE = 3;
+
+function chipsEnabled(model) {
+  return model.orgTeams.length > 0 && model.orgTeams.length <= CHIP_CAP;
+}
+
+/** Deterministic 8-hue rotation by declaration index — no theme variant needed. */
+function chipColor(i) {
+  return `hsl(${(i * 45) % 360} 62% 45%)`;
+}
+
+/** Two-character code per team, disambiguated with a digit on collision. */
+function chipCodes(model) {
+  const codes = new Map(), used = new Map();
+  for (const t of model.orgTeams) {
+    const base = t.id.slice(0, 2).toUpperCase();
+    const n = (used.get(base) || 0) + 1;
+    used.set(base, n);
+    codes.set(t.id, n === 1 ? base : `${base}${n}`);
+  }
+  return codes;
+}
+
+/** Width a node's chip strip reserves in the layout. Zero when unowned or suppressed. */
+function chipStripW(node, model) {
+  if (!node.owners || !node.owners.length || !chipsEnabled(model)) return 0;
+  const n = Math.min(node.owners.length, CHIP_MAX_PER_NODE + 1);
+  return n * (L.chipW + L.chipGap) + 8;
+}
+
+/** "3 streams", or the node count and type when a team owns no stream. Several complicated
+ *  subsystems ride alongside the stream count, so that load is not hidden behind it. */
+function loadLabel(team, model) {
+  const subs = team.load.subsystems > 1 ? `${team.load.subsystems} subsystems` : '';
+  if (team.load.streams > 0) {
+    const streams = `${team.load.streams} stream${team.load.streams === 1 ? '' : 's'}`;
+    return subs ? `${streams}, ${subs}` : streams;
+  }
+  if (team.load.nodes === 0) return '';
+  const first = model.index[team.owns[0]];
+  return `${team.load.nodes} ${first.type}${team.load.nodes === 1 ? '' : 's'}`;
+}
+
+/** Width the team legend band needs, so the canvas grows around it like the type legend. */
+function teamLegendWidth(model) {
+  if (!model.orgTeams.length) return 0;
+  if (!chipsEnabled(model)) {
+    return textWidth(`${model.orgTeams.length} teams — ownership shown in the Team APIs`, 11);
+  }
+  return model.orgTeams.reduce((w, t) => {
+    const load = loadLabel(t, model);
+    return w + L.chipW + 8 + textWidth(load ? `${t.label} (${load})` : t.label, 11) + 22;
+  }, 0) - 22;
+}
+
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+/**
+ * Wrap a wedge/edge label to maxWidth and measure the block it forms, so the
+ * plate that gets drawn behind it (see plateLabelSVG) matches the geometry
+ * used to size gaps, headroom and canvas growth.
+ */
+function wrapBlock(text, maxWidth) {
+  const lines = wrapText(text, maxWidth, L.labelFs);
+  const blockW = Math.max(...lines.map((ln) => textWidth(ln, L.labelFs)));
+  const blockH = lines.length * L.labelFs * L.lineH;
+  return { lines, blockW, blockH };
+}
+
+/** Max wrap width for a labelled edge parked above a pair of sibling frames. */
+function aboveLabelMaxWidth(wA, wB) {
+  return clamp(Math.max(wA, wB) * 0.6, 90, 220);
+}
+
+// #23: the label plate on a wedge between two sibling frames rides the wide end,
+// keeping L.tipClear of bare taper ahead of it, so the wedge still reads as
+// pointing at the consumer. Centring the plate in the gap (as this first did) left
+// only a sliver of the point showing. The three functions below keep the gap the
+// frames leave, the width the label wraps to, and the plate's position consistent:
+// gapMax caps how far apart two frames get pushed, and the wrap width is derived
+// from the gap actually granted, so the plate never eats into the point.
+const WEDGE = { gapMax: 220, platePad: 16 };
+
+/** Widest text block a wedge of length `len` can carry with its point still showing. */
+function wedgeLabelTextMax(len) {
+  return clamp(len - L.wedgeInset - L.tipClear - WEDGE.platePad, 90, WEDGE.gapMax - L.wedgeInset - L.tipClear - WEDGE.platePad);
+}
+
+/** Gap between two sibling frames that fits a wedge label plate plus a visible point. */
+function wedgeLabelSpan(plateW) {
+  return clamp(plateW + L.wedgeInset + L.tipClear, L.sideGap, WEDGE.gapMax);
+}
+
+/**
+ * Where a plate of width `plateW` sits along a wedge of length `len`, measured from
+ * the wide end: on the shoulder when the point still gets its clearance, centred
+ * when the wedge is too short for that (a single word wider than the gap cap).
+ */
+function wedgeLabelAlong(len, plateW) {
+  const shoulder = L.wedgeInset + plateW / 2;
+  return len - L.tipClear - plateW / 2 >= shoulder ? shoulder : len / 2;
+}
+
+/**
+ * #28: build a wrapped label plate parked above a shape, with a leader line
+ * down to it — the labelPos="above" positioning shared by every interaction
+ * mode (xaas wedges build their own variant inline, reaching past `topY`
+ * into the wedge itself; every other mode anchors the leader at `topY`).
+ */
+function aboveLabel(text, midX, topY, maxWidth, anchorY = topY) {
+  const { lines, blockW, blockH } = wrapBlock(text, maxWidth);
+  const plateW = blockW + 16, plateH = blockH + 8;
+  const bottomY = topY - L.leaderGap;
+  const label = { x: midX, y: bottomY - plateH / 2, text, lines, plateW, plateH };
+  const leader = { x: midX, y1: bottomY, y2: anchorY };
+  return { label, leader };
+}
+
+/**
+ * #28: approximate the bounding box of a team's own rendered label text, from
+ * boxes[] fields only (kind, rotate, lines, fs, labelZone, note, x/y/w/h) —
+ * mirrors teamSVG's textBlock/rotate placement. Used so an interaction shape
+ * (bridge, wedge, patch, band) never gets placed on top of a team's label.
+ */
+function teamLabelBBox(box) {
+  if (!box || !box.node) return null;
+  if (box.kind === 'frame') {
+    // a frame's label is an opaque patch centred on its bottom border (frameSVG)
+    const tw = textWidth(box.node.label, L.fs.group) + 16;
+    return { x: box.x + box.w / 2 - tw / 2, y: box.y + box.h - 10, w: tw, h: 20 };
+  }
+  if (box.kind === 'en' && box.rotate) {
+    const fs = box.fs + 1;
+    const tw = textWidth(box.node.label, fs) + 12, th = fs + 6;
+    return { x: box.x + box.w / 2 - th / 2, y: box.y + box.h / 2 - tw / 2, w: th, h: tw };
+  }
+  const lines = box.lines && box.lines.length ? box.lines : [box.node.label];
+  const lh = box.fs * L.lineH;
+  const textH = lines.length * lh;
+  const textW = Math.max(...lines.map((ln) => textWidth(ln, box.fs)));
+  const cx = box.labelZone ? (box.labelZone[0] + box.labelZone[1]) / 2 : box.x + box.w / 2;
+  const noteH = box.note && box.note.length ? L.noteFs * L.lineH + 2 : 0;
+  const cy = box.y + box.h / 2 - noteH / 2;
+  const pad = 4;
+  return { x: cx - textW / 2 - pad, y: cy - textH / 2 - pad, w: textW + pad * 2, h: textH + pad * 2 };
+}
+
+/**
+ * Slide a shape of height `h` (centred at `cy`, spanning `shapeW` across `cx`)
+ * up or down until it clears the rendered team labels of `P` and `Q`, staying
+ * inside the vertical band both boxes share so it still bridges them. Returns the
+ * original centre when nothing collides, or when no clear offset exists.
+ */
+function slideClear(cy, h, shapeW, cx, P, Q) {
+  const boxes = [P, Q];
+  const labels = boxes.map(teamLabelBBox)
+    .filter((b) => b && overlap1d(b.x, b.x + b.w, cx - shapeW / 2, cx + shapeW / 2) > 0);
+  const hit = (c) => labels.some((b) => c - h / 2 < b.y + b.h && c + h / 2 > b.y);
+  if (!hit(cy)) return cy;
+  const lo = Math.max(...boxes.map((b) => b.y)) + h / 2;
+  const hi = Math.min(...boxes.map((b) => b.y + b.h)) - h / 2;
+  const candidates = labels.flatMap((b) => [b.y + b.h + h / 2 + 4, b.y - h / 2 - 4]);
+  return candidates
+    .filter((c) => c >= lo && c <= hi && !hit(c))
+    .sort((a, b) => Math.abs(a - cy) - Math.abs(b - cy))[0] ?? cy;
+}
 
 function walk(node, fn) {
   fn(node);
@@ -415,11 +704,26 @@ function structure(children, model, forcedW = 0) {
   const leftW = slotsWidth(wedgeSlots), rightW = slotsWidth(rightSlots) + (rightSlots.length ? 24 : 0);
   const hasStack = lanes.length || plats.length;
   const labelW = Math.max(L.labelMin,
-    ...lanes.map((n) => textWidth(n.label, L.fs.stream) + 48),
-    ...plats.map((n) => textWidth(n.label, L.fs.platform) + 48));
+    ...lanes.map((n) => textWidth(n.label, L.fs.stream) + 48 + chipStripW(n, model)),
+    ...plats.map((n) => textWidth(n.label, L.fs.platform) + 48 + chipStripW(n, model)));
 
   const topLays = topFrames.map((c) => frame(c, model));
-  const topBandW = topLays.reduce((a, l) => a + l.w, 0) + Math.max(0, topLays.length - 1) * L.sideGap;
+  // #23 treatment A (default): a labelled xaas edge directly between two sibling
+  // top-level frames widens just its own gap to fit the wrapped label plate,
+  // instead of the flat sideGap. A labelPos="above" edge keeps the gap narrow —
+  // its label is parked above the frames instead (see frame() and layout()).
+  const xaasLabelGap = (idA, idB) => {
+    const it = model.interactions.find((i) => i.mode === 'xaas' && i.label && (i.labelPos || 'gap') === 'gap' &&
+      ((i.from === idA && i.to === idB) || (i.from === idB && i.to === idA)));
+    if (!it) return L.sideGap;
+    // wrap to the widest block the capped gap could ever carry; the wedge then
+    // re-wraps to the gap actually granted, which yields the same lines unless the
+    // cap bound, in which case it wraps tighter and still fits (see wedgeLabelTextMax)
+    const { blockW } = wrapBlock(it.label, wedgeLabelTextMax(WEDGE.gapMax));
+    return wedgeLabelSpan(blockW + WEDGE.platePad);
+  };
+  const topGaps = topLays.slice(0, -1).map((l, i) => xaasLabelGap(l.node.id, topLays[i + 1].node.id));
+  const topBandW = topLays.reduce((a, l) => a + l.w, 0) + topGaps.reduce((a, g) => a + g, 0);
   let botLays = botFrames.map((c) => frame(c, model));
   // slot columns always get their own room beside a band of child frames
   const innerW = Math.max(forcedW, hasStack ? leftW + labelW + rightW : 0, topBandW + (topLays.length ? leftW + rightW : 0),
@@ -439,11 +743,11 @@ function structure(children, model, forcedW = 0) {
     let bx = bandX0;
     const bandH = Math.max(...topLays.map((l) => l.h));
     const frameSpan = new Map();   // frame id -> [x0, x1], to size a rail that spans a subset of frames
-    for (const l of topLays) {
+    topLays.forEach((l, i) => {
       items.push({ kind: 'frame', node: l.node, x: bx, y, w: l.w, h: l.h, inner: l.inner });
       frameSpan.set(l.node.id, [bx, bx + l.w]);
-      bx += l.w + L.sideGap;
-    }
+      bx += l.w + (topGaps[i] ?? L.sideGap);
+    });
     y += bandH;
     // one shared rail row per shared team, below the frame band; width spans from the
     // leftmost to the rightmost frame it reaches into (untargeted frames in between are
@@ -499,9 +803,23 @@ function structure(children, model, forcedW = 0) {
 function frame(node, model, forcedW = 0) {
   const inner = structure(node.children, model, forcedW);
   const w = Math.max(inner.w + 2 * L.pad, textWidth(node.label, L.fs.group) + 80);
+  // #23 treatment B: a labelled xaas edge directly between two of this frame's own
+  // child frames, with labelPos="above", parks its label above them (see layout()) —
+  // grow this frame's own top margin so the plate clears its dashed border.
+  const kids = inner.items.filter((it) => it.kind === 'frame');
+  let headroom = 0;
+  for (const it of model.interactions) {
+    if (it.mode !== 'xaas' || !it.label || (it.labelPos || 'gap') !== 'above') continue;
+    const A = kids.find((k) => k.node.id === it.from);
+    const B = kids.find((k) => k.node.id === it.to);
+    if (!A || !B) continue;
+    const { blockH } = wrapBlock(it.label, aboveLabelMaxWidth(A.w, B.w));
+    headroom = Math.max(headroom, blockH + 8 + L.leaderGap + L.topClear);
+  }
+  const frameTop = headroom ? L.frameTop + headroom : L.frameTop;
   inner.ox = (w - inner.w) / 2;
-  inner.oy = L.frameTop;
-  return { node, w, h: L.frameTop + inner.h + L.frameBottom, inner };
+  inner.oy = frameTop;
+  return { node, w, h: frameTop + inner.h + L.frameBottom, inner };
 }
 
 // ── geometry helpers ──
@@ -599,14 +917,18 @@ function markerGeo(target, inter, index = 0, count = 1) {
   const w = Math.max(18, Math.min(L.markerW, slotW - 16));
   const cx = (slot[0] + slot[1]) / 2;
   const y = target.y + target.h - L.markerRise;
-  // the label earns its place beside the tab only when tab and label together fit in the
+  // the label earns its place beside the tab only when tab and plate together fit in the
   // marker's own slice — then the pair is centred in it; otherwise the tab alone is centred
-  // and the tooltip carries the label rather than spilling over a neighbour or a frame edge
-  const tw = inter.label ? textWidth(inter.label, L.labelFs) : 0;
-  const withLabel = tw > 0 && w + 8 + tw <= slotW - 12;
-  const x = withLabel ? cx - (w + 8 + tw) / 2 : cx - w / 2;
+  // and the tooltip carries the label rather than spilling over a neighbour or a frame edge.
+  // One line only: the tab hangs in the gap below its team, with no room for a taller plate.
+  const plateW = inter.label ? textWidth(inter.label, L.labelFs) + 16 : 0;
+  const withLabel = plateW > 0 && w + 6 + plateW <= slotW - 12;
+  const x = withLabel ? cx - (w + 6 + plateW) / 2 : cx - w / 2;
   const rect = { x, y, w, h: L.markerH };
-  const label = withLabel ? { x: x + w + 8, y: y + L.markerH / 2, text: inter.label, anchor: 'start' } : null;
+  const label = withLabel ? {
+    x: x + w + 6 + plateW / 2, y: y + L.markerH / 2, text: inter.label,
+    lines: [inter.label], plateW, plateH: L.labelFs * L.lineH + 8,
+  } : null;
   return { kind: 'marker', rect, label };
 }
 
@@ -638,8 +960,10 @@ function facing(P, Q, xOverride) {
 export function layout(model, opts = {}) {
   const root = structure(model.nodes, model);
   const showLegend = opts.legend ?? model.legend;
+  // the team legend is gated on the document declaring a team, never on `legend`
+  const showTeams = model.orgTeams.length > 0;
   const top = L.margin + (model.title ? L.titleH : 0) + (model.flow ? L.flowH : 0);
-  const contentW = Math.max(root.w, showLegend ? legendWidth() : 0, model.title ? textWidth(model.title, 18) : 0, 120);
+  const contentW = Math.max(root.w, showLegend ? legendWidth() : 0, showTeams ? teamLegendWidth(model) : 0, model.title ? textWidth(model.title, 18) : 0, 120);
   const ox = L.margin + (contentW - root.w) / 2;
 
   // pass 1: structural boxes
@@ -710,13 +1034,10 @@ export function layout(model, opts = {}) {
   const edges = [];
   const corridors = [];   // x positions already used by vertical wedges, with their y ranges
   const solid = Object.values(boxes).filter((b) => b.kind !== 'frame');
-  // a rail is only one text line tall, so a wedge label parked right above or below one is
-  // still half covered by it — keep labels a line clear of rails, flush against anything else
+  // a rail is only one text line tall, so a wedge label parked right above or below one
+  // lands on it and its opaque plate hides the rail — keep labels a line clear of rails,
+  // flush against anything else
   const clear = (b) => (b.kind === 'rail' ? L.labelFs * L.lineH / 2 + 3 : 0);
-  const insideAny = (p, skip) => solid.some((b) => {
-    const m = clear(b);
-    return !skip.includes(b) && p.x > b.x - m && p.x < b.x + b.w + m && p.y > b.y - m && p.y < b.y + b.h + m;
-  });
   const handled = new Set();
   // a rail names the shared team once; each team it reaches into gets one marker on its
   // bottom edge, so several rails marking the same team can be spread side by side. Only
@@ -734,6 +1055,27 @@ export function layout(model, opts = {}) {
     const marks = markerOn.get(it.to);
     if (!marks.some((o) => o.from === it.from)) marks.push(it);
   }
+  // markers depend only on the team they sit on, so they are placed before the rest of the
+  // edges and their plates become obstacles for the labels that do hunt for a free spot
+  const markerGeos = new Map();
+  for (const [id, marks] of markerOn) {
+    marks.forEach((it, i) => markerGeos.set(it, markerGeo(boxes[id], it, i, marks.length)));
+  }
+  // a frame's name sits on its own opaque plate on the bottom edge (see frameSVG), and a
+  // marker's label on one of its own; a wedge label landing on either would cover it, so
+  // both count as occupied
+  const taken = Object.values(boxes).filter((b) => b.kind === 'frame').map((b) => {
+    const tw = textWidth(b.node.label, L.fs.group) + 16;
+    return { x: b.x + b.w / 2 - tw / 2, y: b.y + b.h - 10, w: tw, h: 20 };
+  });
+  for (const { label } of markerGeos.values()) {
+    if (label) taken.push({ x: label.x - label.plateW / 2, y: label.y - label.plateH / 2, w: label.plateW, h: label.plateH });
+  }
+  const insideAny = (p, skip) => taken.some((r) => p.x > r.x && p.x < r.x + r.w && p.y > r.y && p.y < r.y + r.h)
+    || solid.some((b) => {
+      const m = clear(b);
+      return !skip.includes(b) && p.x > b.x - m && p.x < b.x + b.w + m && p.y > b.y - m && p.y < b.y + b.h + m;
+    });
   for (const inter of model.interactions) {
     if (handled.has(inter)) continue;
     let P = boxes[inter.from], Q = boxes[inter.to];
@@ -741,10 +1083,9 @@ export function layout(model, opts = {}) {
     if (railCarries(inter)) {
       // the rail spans a targeted frame outright; a team inside one is marked instead
       if (Q.kind === 'frame') continue;
-      const marks = markerOn.get(inter.to);
-      const i = marks.indexOf(inter);
-      if (i === -1) continue;   // a repeated line: one marker per rail and team
-      edges.push({ inter, geo: markerGeo(Q, inter, i, marks.length) });
+      const geo = markerGeos.get(inter);
+      if (!geo) continue;   // a repeated line: one marker per rail and team
+      edges.push({ inter, geo });
       continue;
     }
     if (inter.mode === 'xaas') {
@@ -763,7 +1104,15 @@ export function layout(model, opts = {}) {
         continue;
       }
       const slot = slots.find((s) => s.kind === 'wedge' && s.its.includes(inter));
-      const group = slot ? slot.its.filter((i) => boxes[i.to]) : [inter];
+      // #23: a fan-out from one provider to several targets with the same label text
+      // renders once, even when the targets aren't stack-siblings sharing a wedge slot
+      // (e.g. a nested provider fanning out to top-level consumers).
+      let group;
+      if (slot) group = slot.its.filter((i) => boxes[i.to]);
+      else if (inter.label) {
+        group = model.interactions.filter((i) => !handled.has(i) && i.mode === 'xaas' &&
+          i.from === inter.from && i.label === inter.label && boxes[i.to]);
+      } else group = [inter];
       for (const i of group) handled.add(i);
       // the wedge reaches the consumer farthest from the provider and covers the ones between
       const pc = center(P);
@@ -775,12 +1124,15 @@ export function layout(model, opts = {}) {
         const y0 = Math.min(P.y + P.h, Q.y + Q.h), y1 = Math.max(P.y, Q.y);
         if (x1 - x0 >= 40 && y1 > y0) {
           const mid = (x0 + x1) / 2;
-          const step = L.wedgeW * 0.75;
-          const clash = (x) => corridors.some((c) => Math.abs(c.x - x) < step && c.y1 > y0 && c.y0 < y1);
+          // #23: when the wedge carries a real label, size the corridor to the
+          // label's plate (not just the bare wedge) so two free wedges from the
+          // same crowded stretch don't get labels that collide.
+          const step = inter.label ? Math.max(L.wedgeW * 0.75, textWidth(inter.label, L.labelFs) + 28) : L.wedgeW * 0.75;
+          const clash = (x) => corridors.some((c) => Math.abs(c.x - x) < Math.max(c.step, step) && c.y1 > y0 && c.y0 < y1);
           const candidates = [mid];
           for (let d = step; mid + d <= x1 - 20 || mid - d >= x0 + 20; d += step) { candidates.push(mid + d, mid - d); }
           xOverride = candidates.find((x) => x >= x0 + 20 && x <= x1 - 20 && !clash(x)) ?? mid;
-          corridors.push({ x: xOverride, y0, y1 });
+          corridors.push({ x: xOverride, y0, y1, step });
         }
       }
       const f = facing(P, Q, xOverride);
@@ -799,42 +1151,157 @@ export function layout(model, opts = {}) {
         f.to,
       ];
       let label = null;
+      let leader = null;
       if (len >= 30) {
-        let along = Math.min(48, len * 0.3);
-        for (let a = along; a < len - 16; a += 16) {
-          if (!insideAny({ x: f.from.x + ux * a, y: f.from.y + uy * a }, [P, ...group.map((i) => boxes[i.to])])) { along = a; break; }
+        const text = inter.label || 'XaaS';
+        const labelPos = inter.labelPos || 'gap';
+        if (inter.label && labelPos === 'above' && P.kind === 'frame' && Q.kind === 'frame' && f.axis === 'h') {
+          // #23 treatment B: park the label above both frames, joined to the wedge
+          // by a short leader, instead of crowding the gap between them.
+          const { lines, blockW, blockH } = wrapBlock(text, aboveLabelMaxWidth(P.w, Q.w));
+          const plateW = blockW + 16, plateH = blockH + 8;
+          const midX = (f.from.x + f.to.x) / 2;
+          const bottomY = Math.min(P.y, Q.y) - L.leaderGap;
+          label = { x: midX, y: bottomY - plateH / 2, text, lines, plateW, plateH };
+          leader = { x: midX, y1: bottomY, y2: f.from.y };
+        } else {
+          // wrap to the room available along the wedge, on an opaque plate, so a
+          // long label breaks onto lines instead of overflowing.
+          const between = P.kind === 'frame' && Q.kind === 'frame';
+          const { lines, blockW, blockH } = wrapBlock(text, between ? wedgeLabelTextMax(len) : clamp(len - 20, 90, 220));
+          const plateW = blockW + WEDGE.platePad, plateH = blockH + 8;
+          let along;
+          if (between) {
+            // #23 treatment A: the gap between two sibling frames is sized to fit
+            // the plate plus a visible point (see xaasLabelGap in structure()), so
+            // the plate rides the wide end rather than hunting for a clear spot.
+            along = wedgeLabelAlong(len, plateW);
+          } else {
+            along = Math.min(48, len * 0.3);
+            for (let a = along; a < len - 16; a += 16) {
+              if (!insideAny({ x: f.from.x + ux * a, y: f.from.y + uy * a }, [P, ...group.map((i) => boxes[i.to])])) { along = a; break; }
+            }
+            // the plate is a good deal taller than the probe point, so it can still land on
+            // a frame's name and hide it — slide it further along until it clears
+            const plateAt = (a) => ({ x: f.from.x + ux * a - plateW / 2, y: f.from.y + uy * a - plateH / 2, w: plateW, h: plateH });
+            if (taken.some((r) => intersect(plateAt(along), r))) {
+              for (let a = along + 16; a < len - 16; a += 16) {
+                if (!taken.some((r) => intersect(plateAt(a), r))) { along = a; break; }
+              }
+            }
+          }
+          label = { x: f.from.x + ux * along, y: f.from.y + uy * along, text, lines, plateW, plateH };
         }
-        label = { x: f.from.x + ux * along, y: f.from.y + uy * along, text: inter.label || 'XaaS' };
       }
-      edges.push({ inter, inters: group, geo: { kind: 'wedge', points, label, axis: f.axis } });
+      edges.push({ inter, inters: group, geo: { kind: 'wedge', points, label, leader, axis: f.axis } });
     } else if (inter.mode === 'collaboration' && intersect(P, Q)) {
       const small = P.w * P.h <= Q.w * Q.h ? P : Q;
       const text = inter.label || 'Collaboration';
-      const w = Math.max(small.w - 12, textWidth(text, L.labelFs) + 30), h = 30, k = 10;
-      const cx = small.x + small.w / 2, cy = small.y + small.h;
+      const above = inter.label && (inter.labelPos || 'gap') === 'above';
+      const k = 10;
+      let w, h;
+      if (above) { w = Math.max(small.w - 12, 60); h = 30; } else {
+        const { blockW, blockH } = wrapBlock(text, clamp(small.w - 32, 90, 220));
+        w = Math.max(small.w - 12, blockW + 30);
+        h = Math.max(30, blockH + 16);
+      }
+      let cx = small.x + small.w / 2, cy = small.y + small.h;
+      // #28: an embedded subsystem's octagon carries its own label — the bridge
+      // must never cover it (or the lane's label it also touches). Try clear of
+      // the octagon: below it inside the lane, then beside it, before falling
+      // back to the original position.
+      const sub = P.kind === 'sub' ? P : Q.kind === 'sub' ? Q : null;
+      if (sub) {
+        const other = sub === P ? Q : P;
+        const subLabel = teamLabelBBox(sub), otherLabel = teamLabelBBox(other);
+        const gap = 6;
+        const candidates = [
+          { x: sub.x + sub.w / 2, y: sub.y + sub.h + h / 2 + gap },
+          { x: sub.x + sub.w + w / 2 + gap, y: sub.y + sub.h / 2 },
+          { x: sub.x - w / 2 - gap, y: sub.y + sub.h / 2 },
+        ];
+        const clear = (c) => {
+          const bbox = { x: c.x - w / 2, y: c.y - h / 2, w, h };
+          return (!subLabel || !intersect(bbox, subLabel)) && (!otherLabel || !intersect(bbox, otherLabel));
+        };
+        const pick = candidates.find(clear) ?? candidates[0];
+        cx = pick.x; cy = pick.y;
+      }
+      let label, leader;
+      if (above) {
+        ({ label, leader } = aboveLabel(text, cx, cy - h / 2, aboveLabelMaxWidth(w, 0)));
+      } else {
+        const { lines } = wrapBlock(text, clamp(small.w - 32, 90, 220));
+        label = { x: cx, y: cy, text, lines, onShape: true };
+      }
       const points = [
         { x: cx - w / 2 + k, y: cy - h / 2 }, { x: cx + w / 2 + k, y: cy - h / 2 },
         { x: cx + w / 2 - k, y: cy + h / 2 }, { x: cx - w / 2 - k, y: cy + h / 2 },
       ];
-      edges.push({ inter, geo: { kind: 'bridge', points, label: { x: cx, y: cy, text } } });
+      edges.push({ inter, geo: { kind: 'bridge', points, label, leader } });
     } else if (inter.mode === 'collaboration') {
       const f = facing(P, Q);
       const cx = (f.from.x + f.to.x) / 2, cy = (f.from.y + f.to.y) / 2;
       const gap = Math.hypot(f.to.x - f.from.x, f.to.y - f.from.y);
       const text = inter.label || 'Collaboration';
-      const tw = textWidth(text, L.labelFs) + 24;
-      let w, h;
-      if (f.axis === 'h') { w = Math.max(gap + 12, tw); h = 40; } else { w = Math.max(120, tw); h = Math.max(gap + 24, 40); }
+      const above = inter.label && (inter.labelPos || 'gap') === 'above';
+      const minW = f.axis === 'h' ? gap + 12 : 120;
+      const minH = f.axis === 'h' ? 40 : Math.max(gap + 24, 40);
       const k = 14;
+      let w = minW, h = minH, cyShape = cy, label, leader;
+      if (above) {
+        ({ label, leader } = aboveLabel(text, cx, cy - h / 2, aboveLabelMaxWidth(w, 0)));
+      } else {
+        const { lines, blockW, blockH } = wrapBlock(text, clamp(minW - 24, 90, 220));
+        w = Math.max(minW, blockW + 30);
+        h = Math.max(minH, blockH + 16);
+        // #28: the shape straddles both P and Q — never let it grow into either
+        // one's own label. Shrink toward the available strip between their label
+        // bboxes (only meaningful for the common vertical-stack case).
+        if (f.axis === 'v') {
+          const aBox = teamLabelBBox(P), bBox = teamLabelBBox(Q);
+          if (aBox && bBox) {
+            const top = P.y < Q.y ? aBox : bBox, bottom = P.y < Q.y ? bBox : aBox;
+            const avail = bottom.y - (top.y + top.h) - 4;
+            if (avail > 20 && h > avail) h = avail;
+          }
+        } else {
+          // side by side, the shape cannot be narrower than its text, and a tall
+          // neighbour (an enabling bar reaching a sibling group, as in
+          // examples/org-groups.tt) carries its label right where the shape grows
+          // into it. Slide the shape along the overlap instead, minimum distance
+          // first, and keep it inside both boxes so it still reads as bridging them.
+          cyShape = slideClear(cyShape, h, w + 2 * k, cx, P, Q);
+        }
+        label = { x: cx, y: cyShape, text, lines, onShape: true };
+      }
       const points = [
-        { x: cx - w / 2 + k, y: cy - h / 2 }, { x: cx + w / 2 + k, y: cy - h / 2 },
-        { x: cx + w / 2 - k, y: cy + h / 2 }, { x: cx - w / 2 - k, y: cy + h / 2 },
+        { x: cx - w / 2 + k, y: cyShape - h / 2 }, { x: cx + w / 2 + k, y: cyShape - h / 2 },
+        { x: cx + w / 2 - k, y: cyShape + h / 2 }, { x: cx - w / 2 - k, y: cyShape + h / 2 },
       ];
-      edges.push({ inter, geo: { kind: 'bridge', points, label: { x: cx, y: cy, text } } });
+      edges.push({ inter, geo: { kind: 'bridge', points, label, leader } });
     } else {
       const r = intersect(P, Q);
       if (r) {
-        edges.push({ inter, geo: { kind: 'patch', rect: r, label: inter.label ? { x: r.x + r.w + 10, y: r.y + r.h / 2, text: inter.label, anchor: 'start' } : null } });
+        let label = null, leader = null;
+        if (inter.label) {
+          const above = (inter.labelPos || 'gap') === 'above';
+          if (above) {
+            // #28: anchor above the whole lane stack the enabling bar crosses, not
+            // just its own box or the narrow patch rect — an enabling bar can start
+            // partway down a stack (it only spans the lanes it facilitates), so a
+            // lane sitting above the bar's own top edge could still collide.
+            const enSlot = slots.find((s) => s.kind === 'en' && s.node.id === inter.from);
+            const topY = Math.min(enSlot?.lanesRange ? enSlot.lanesRange[0] : P.y, r.y);
+            ({ label, leader } = aboveLabel(inter.label, r.x + r.w / 2, topY, aboveLabelMaxWidth(r.w, 0), r.y + r.h / 2));
+          } else {
+            // #28: same wrap rule as xaas; the patch has no natural width constraint
+            // of its own (the label floats beside it), so wrap at the outer cap.
+            const { lines, blockW, blockH } = wrapBlock(inter.label, clamp(220, 90, 220));
+            label = { x: r.x + r.w + 10 + blockW / 2, y: r.y + r.h / 2, text: inter.label, lines, plateW: blockW + 16, plateH: blockH + 8 };
+          }
+        }
+        edges.push({ inter, geo: { kind: 'patch', rect: r, label, leader } });
       } else {
         const f = facing(P, Q);
         const dx = f.to.x - f.from.x, dy = f.to.y - f.from.y, len = Math.hypot(dx, dy);
@@ -844,8 +1311,21 @@ export function layout(model, opts = {}) {
           { x: f.from.x + nx * t, y: f.from.y + ny * t }, { x: f.to.x + nx * t, y: f.to.y + ny * t },
           { x: f.to.x - nx * t, y: f.to.y - ny * t }, { x: f.from.x - nx * t, y: f.from.y - ny * t },
         ];
-        const label = inter.label ? { x: (f.from.x + f.to.x) / 2 + nx * 24, y: (f.from.y + f.to.y) / 2 + ny * 24, text: inter.label } : null;
-        edges.push({ inter, geo: { kind: 'band', points, label } });
+        let label = null, leader = null;
+        if (inter.label) {
+          const above = (inter.labelPos || 'gap') === 'above';
+          if (above) {
+            const topY = Math.min(...points.map((p) => p.y));
+            ({ label, leader } = aboveLabel(inter.label, (f.from.x + f.to.x) / 2, topY, aboveLabelMaxWidth(len, 0)));
+          } else {
+            const { lines, blockW, blockH } = wrapBlock(inter.label, clamp(len - 20, 90, 220));
+            label = {
+              x: (f.from.x + f.to.x) / 2 + nx * 24, y: (f.from.y + f.to.y) / 2 + ny * 24,
+              text: inter.label, lines, plateW: blockW + 16, plateH: blockH + 8,
+            };
+          }
+        }
+        edges.push({ inter, geo: { kind: 'band', points, label, leader } });
       }
     }
   }
@@ -857,7 +1337,21 @@ export function layout(model, opts = {}) {
   for (const { geo } of edges) {
     for (const p of geo.points || []) grow(p.x, p.y);
     if (geo.rect) { grow(geo.rect.x, geo.rect.y); grow(geo.rect.x + geo.rect.w, geo.rect.y + geo.rect.h); }
-    if (geo.label) { const hw = textWidth(geo.label.text, L.labelFs) / 2 + 6; grow(geo.label.x - hw, geo.label.y - 10); grow(geo.label.x + hw, geo.label.y + 10); }
+    if (geo.label) {
+      if (geo.label.plateW != null) {
+        const w = geo.label.plateW, h = geo.label.plateH;
+        grow(geo.label.x - w / 2, geo.label.y - h / 2); grow(geo.label.x + w / 2, geo.label.y + h / 2);
+      } else {
+        // #28: on-shape labels (e.g. collaboration labelPos=gap) have no plate —
+        // measure the wrapped lines directly. The shape itself is already sized
+        // to contain them, so this mostly just keeps growth calc accurate.
+        const lines = geo.label.lines || [geo.label.text];
+        const hw = Math.max(...lines.map((ln) => textWidth(ln, L.labelFs))) / 2 + 6;
+        const hh = (lines.length * L.labelFs * L.lineH) / 2 + 6;
+        grow(geo.label.x - hw, geo.label.y - hh); grow(geo.label.x + hw, geo.label.y + hh);
+      }
+    }
+    if (geo.leader) { grow(geo.leader.x, geo.leader.y1); grow(geo.leader.x, geo.leader.y2); }
   }
   const padL = Math.max(0, ox - minX), padT = Math.max(0, top - minY);
   if (padL || padT) {
@@ -867,19 +1361,21 @@ export function layout(model, opts = {}) {
       for (const p of geo.points || []) shift(p);
       if (geo.rect) shift(geo.rect);
       if (geo.label) shift(geo.label);
+      if (geo.leader) { geo.leader.x += padL; geo.leader.y1 += padT; geo.leader.y2 += padT; }
     }
     maxX += padL; maxY += padT;
   }
   const finalContentW = Math.max(contentW, maxX - L.margin);
   const contentH = maxY - top;
   const width = finalContentW + 2 * L.margin;
-  const height = top + contentH + L.margin + (showLegend ? L.legendH : 0);
+  const height = top + contentH + L.margin + (showLegend ? L.legendH : 0) + (showTeams ? L.teamLegendH : 0);
   return {
     width, height, boxes, edges,
     content: { x: L.margin, y: top, w: finalContentW, h: contentH },
     title: model.title ? { x: L.margin, y: L.margin + 18 } : null,
     flow: model.flow ? { x: L.margin, y: L.margin + (model.title ? L.titleH : 0), w: finalContentW, label: model.flow } : null,
-    legend: showLegend ? { x: L.margin, y: height - L.legendH + 8, w: finalContentW } : null,
+    legend: showLegend ? { x: L.margin, y: height - (showTeams ? L.teamLegendH : 0) - L.legendH + 8, w: finalContentW } : null,
+    teamLegend: showTeams ? { x: L.margin, y: height - L.teamLegendH + 8, w: finalContentW } : null,
   };
 }
 
@@ -890,25 +1386,25 @@ export const THEMES = {
     bg: '#ffffff', text: '#1f2430', muted: '#6b7280', title: '#111827',
     flow: '#e5e7eb', flowText: '#4b5563', halo: '#ffffff',
     stream:    { fill: '#FFE9A8', stroke: '#E8C453', text: '#3b2f00' },
-    enabling:  { fill: '#C4B1E0', stroke: '#8E6BBF', text: '#2a1a55' },
+    enabling:  { fill: '#C4B1E0', stroke: '#8E6BBF', text: '#2a1a55', plate: '#C4B1E0' },
     subsystem: { fill: '#F6C79B', stroke: '#DE9A5C', text: '#4a2200' },
     platform:  { fill: '#BBD9F3', stroke: '#6FA6DD', text: '#0f2f55' },
     frame:     { fill: 'none', stroke: '#5B8FD6', text: '#3b76c4', platformFill: 'rgba(187,217,243,0.18)' },
-    collab:    { fill: 'rgba(196,177,224,0.85)', stroke: '#A58DCB', text: '#2a1a55' },
-    xaas:      { fill: 'rgba(120,124,132,0.32)', stroke: 'rgba(90,94,102,0.35)', text: '#3f4652' },
-    facil:     { dot: '#6B4FA8', fill: 'rgba(107,79,168,0.25)', text: '#4c3a85' },
+    collab:    { fill: 'rgba(196,177,224,0.85)', stroke: '#A58DCB', text: '#2a1a55', plate: '#cdbde5' },
+    xaas:      { fill: 'rgba(120,124,132,0.32)', stroke: 'rgba(90,94,102,0.35)', text: '#3f4652', plate: '#c6c8cb' },
+    facil:     { dot: '#6B4FA8', fill: 'rgba(107,79,168,0.25)', text: '#4c3a85', plate: '#cdc3e1' },
   },
   dark: {
     bg: '#0f172a', text: '#e5e7eb', muted: '#94a3b8', title: '#f8fafc',
     flow: '#1e293b', flowText: '#94a3b8', halo: '#0f172a',
     stream:    { fill: '#B8912A', stroke: '#FFD166', text: '#1a1400' },
-    enabling:  { fill: '#7C5CBF', stroke: '#C9BAEA', text: '#f3eefc' },
+    enabling:  { fill: '#7C5CBF', stroke: '#C9BAEA', text: '#f3eefc', plate: '#6647a8' },
     subsystem: { fill: '#C2661E', stroke: '#F8B98A', text: '#1f0e00' },
     platform:  { fill: '#2F6DB5', stroke: '#A9CCEF', text: '#eef5fc' },
     frame:     { fill: 'none', stroke: '#6FA3DC', text: '#9cc4ef', platformFill: 'rgba(47,109,181,0.18)' },
-    collab:    { fill: 'rgba(124,92,191,0.8)', stroke: '#C9BAEA', text: '#f3eefc' },
-    xaas:      { fill: 'rgba(203,213,225,0.28)', stroke: 'rgba(203,213,225,0.35)', text: '#e2e8f0' },
-    facil:     { dot: '#E0D4F5', fill: 'rgba(224,212,245,0.28)', text: '#d9ccf5' },
+    collab:    { fill: 'rgba(124,92,191,0.98)', stroke: '#C9BAEA', text: '#f6f2ff', plate: '#7a5bbc' },
+    xaas:      { fill: 'rgba(203,213,225,0.28)', stroke: 'rgba(203,213,225,0.35)', text: '#e2e8f0', plate: '#444c5d' },
+    facil:     { dot: '#E0D4F5', fill: 'rgba(224,212,245,0.28)', text: '#d9ccf5', plate: '#4a4c63' },
   },
 };
 
@@ -955,7 +1451,7 @@ function frameSVG(box, T) {
   ]);
 }
 
-function teamSVG(box, T, part = 'all', prefix = 'tt') {
+function teamSVG(box, T, model, part = 'all', prefix = 'tt') {
   const { x, y, w, h, node } = box;
   const c = T[node.type === 'group' ? 'stream' : node.type];
   // a rail's label is often ellipsised, so its tooltip carries the full name too
@@ -981,34 +1477,109 @@ function teamSVG(box, T, part = 'all', prefix = 'tt') {
   if (part === 'shape') {
     // label drawn separately
   } else if (box.rotate) {
-    parts.push(el('text', {
-      x: 0, y: 0, 'text-anchor': 'middle', 'font-size': L.fs.enabling + 1, 'font-weight': 600, fill: c.text,
-      transform: `translate(${num(x + w / 2 + 5)} ${num(y + h / 2)}) rotate(90)`,
-    }, esc(node.label)));
+    // #28: an enabling bar's rotated label can sit over the dotted facilitating
+    // pattern crossing it — give it an opaque plate in the enabling tint (rotated
+    // along with the text) so it stays legible over the dots.
+    const fs = L.fs.enabling + 1;
+    const tw = textWidth(node.label, fs) + 12, th = fs + 6;
+    parts.push(el('g', { transform: `translate(${num(x + w / 2 + 5)} ${num(y + h / 2)}) rotate(90)` }, [
+      el('rect', { x: -tw / 2, y: -th * 0.65, width: tw, height: th, rx: 3, fill: c.plate }),
+      el('text', { x: 0, y: 0, 'text-anchor': 'middle', 'font-size': fs, 'font-weight': 600, fill: c.text }, esc(node.label)),
+    ]));
   } else if (box.kind === 'rail') {
     const cy = y + h / 2;
+    // an enabling rail's label sits directly on the facilitating dot pattern, so it gets
+    // the same opaque enabling-tinted plate as the rotated bar label above. A subsystem
+    // rail is a solid octagon, so its label needs no plate — like any other team box.
     if (node.type !== 'subsystem') {
-      // the label sits directly on the facilitating dot pattern, so give it an opaque
-      // plate to stay legible (same treatment as wedge labels use for frame fills)
       const plateW = textWidth(box.lines[0], box.fs) + 16;
       const plateH = box.fs * L.lineH + 8;
-      parts.push(el('rect', { x: cx - plateW / 2, y: cy - plateH / 2, width: plateW, height: plateH, rx: 4, fill: T.bg }));
+      parts.push(el('rect', { x: cx - plateW / 2, y: cy - plateH / 2, width: plateW, height: plateH, rx: 4, fill: c.plate }));
     }
     parts.push(textBlock(box.lines, cx, cy, box.fs, c.text, { 'font-weight': 600 }));
   } else {
     const noteH = box.note.length ? L.noteFs * L.lineH + 2 : 0;
+    if (box.kind === 'en') {
+      // #28: a bar label that fits across the bar is drawn upright rather than
+      // rotated, but sits over the same facilitating dots — so it gets the same
+      // opaque enabling-tinted plate the rotated label and the rail label get.
+      const plateW = Math.max(...box.lines.map((ln) => textWidth(ln, box.fs))) + 10;
+      const plateH = box.lines.length * box.fs * L.lineH + 6;
+      parts.push(el('rect', { x: cx - plateW / 2, y: y + h / 2 - noteH / 2 - plateH / 2, width: plateW, height: plateH, rx: 3, fill: c.plate }));
+    }
     parts.push(textBlock(box.lines, cx, y + h / 2 - noteH / 2, box.fs, c.text, { 'font-weight': 600 }));
     if (box.note.length) parts.push(el('text', { x: cx, y: y + h / 2 + (box.lines.length * box.fs * L.lineH) / 2 + 8, 'text-anchor': 'middle', 'font-size': L.noteFs, fill: c.text, opacity: 0.8 }, esc(box.note[0])));
   }
+  // chips ride with the shape, never with the separately drawn label pass, so an
+  // overlay node that is drawn twice still carries one set of chips
+  if (part !== 'label') parts.push(teamChipsSVG(box, model, T));
   return el('g', { class: `tt-node tt-${node.type}`, 'data-id': node.id }, parts);
 }
 
-function labelSVG(label, color, T, extra = {}) {
+/** The owner chips for one node, drawn in the box's top-right corner. */
+function teamChipsSVG(box, model, T) {
+  const { x, y, w, node } = box;
+  if (!node.owners || !node.owners.length || !chipsEnabled(model)) return '';
+  const codes = chipCodes(model);
+  const shown = node.owners.slice(0, CHIP_MAX_PER_NODE);
+  const extra = node.owners.length - shown.length;
+  const parts = [];
+  let cx = x + w - 8 - (shown.length + (extra ? 1 : 0)) * (L.chipW + L.chipGap) + L.chipGap;
+  for (const id of shown) {
+    const team = model.index[id];
+    const i = model.orgTeams.indexOf(team);
+    parts.push(el('g', { class: 'tt-chip' }, [
+      el('title', {}, esc(`${team.label} — ${loadLabel(team, model)}`)),
+      el('rect', { x: cx, y: y + 6, width: L.chipW, height: L.chipH, rx: 4, fill: chipColor(i) }),
+      el('text', { x: cx + L.chipW / 2, y: y + 6 + L.chipH - 4, 'text-anchor': 'middle', 'font-size': 9, 'font-weight': 700, fill: '#ffffff' }, esc(codes.get(id))),
+    ]));
+    cx += L.chipW + L.chipGap;
+  }
+  if (extra) {
+    const rest = node.owners.slice(CHIP_MAX_PER_NODE).map((id) => model.index[id].label).join(', ');
+    parts.push(el('g', { class: 'tt-chip-more' }, [
+      el('title', {}, esc(rest)),
+      el('rect', { x: cx, y: y + 6, width: L.chipW, height: L.chipH, rx: 4, fill: T.muted }),
+      el('text', { x: cx + L.chipW / 2, y: y + 6 + L.chipH - 4, 'text-anchor': 'middle', 'font-size': 9, 'font-weight': 700, fill: '#ffffff' }, `+${extra}`),
+    ]));
+  }
+  return el('g', { class: 'tt-chips' }, parts);
+}
+
+/**
+ * An edge label, possibly wrapped onto several lines, drawn on an opaque background
+ * plate coloured to match its interaction mode (#28), rather than a text-stroke
+ * halo — stays legible over frame fills, dashed borders and adjacent team labels.
+ * Every interaction mode's label gets this treatment.
+ */
+function plateLabelSVG(label, textColor, plateColor) {
   if (!label) return '';
-  return el('text', {
-    x: label.x, y: label.y + 4, 'text-anchor': label.anchor || 'middle', 'font-size': L.labelFs, 'font-weight': 500, fill: color,
-    stroke: T.halo, 'stroke-width': 3, 'paint-order': 'stroke', 'stroke-linejoin': 'round', ...extra,
-  }, esc(label.text));
+  const lines = label.lines && label.lines.length ? label.lines : [label.text];
+  const lh = L.labelFs * L.lineH;
+  const blockH = lines.length * lh;
+  const w = label.plateW ?? (Math.max(...lines.map((ln) => textWidth(ln, L.labelFs))) + 16);
+  const h = label.plateH ?? (blockH + 8);
+  const y0 = label.y - blockH / 2 + lh * 0.78;
+  return el('g', { class: 'tt-edge-label' }, [
+    el('rect', { x: label.x - w / 2, y: label.y - h / 2, width: w, height: h, rx: 4, fill: plateColor }),
+    el('text', { x: label.x, y: y0, 'text-anchor': 'middle', 'font-size': L.labelFs, 'font-weight': 500, fill: textColor },
+      lines.map((ln, i) => el('tspan', { x: label.x, dy: i === 0 ? 0 : lh }, esc(ln)))),
+  ]);
+}
+
+/**
+ * #28: a wrapped label drawn directly on its shape's own fill — no background
+ * plate — for the labelPos="gap" collaboration case, where a plate over the
+ * parallelogram reads as a sticker. The shape itself is sized to fit the text.
+ */
+function shapeLabelSVG(label, textColor) {
+  if (!label) return '';
+  const lines = label.lines && label.lines.length ? label.lines : [label.text];
+  const lh = L.labelFs * L.lineH;
+  const blockH = lines.length * lh;
+  const y0 = label.y - blockH / 2 + lh * 0.78;
+  return el('text', { x: label.x, y: y0, 'text-anchor': 'middle', 'font-size': L.labelFs, 'font-weight': 500, fill: textColor },
+    lines.map((ln, i) => el('tspan', { x: label.x, dy: i === 0 ? 0 : lh }, esc(ln))));
 }
 
 function edgeSVG({ inter, inters, geo }, lay, T, prefix) {
@@ -1020,19 +1591,23 @@ function edgeSVG({ inter, inters, geo }, lay, T, prefix) {
   switch (geo.kind) {
     case 'wedge':
       parts.push(el('polygon', { points: pts(geo.points), fill: T.xaas.fill, stroke: inter.soon ? T.xaas.text : T.xaas.stroke, 'stroke-width': 1, 'stroke-linejoin': 'round', ...soon }));
-      parts.push(labelSVG(geo.label, T.xaas.text, T, { stroke: 'none' }));
+      if (geo.leader) parts.push(el('line', { x1: geo.leader.x, y1: geo.leader.y1, x2: geo.leader.x, y2: geo.leader.y2, stroke: T.xaas.stroke, 'stroke-width': 1.5, 'stroke-dasharray': '3 3' }));
+      parts.push(plateLabelSVG(geo.label, T.xaas.text, T.xaas.plate));
       break;
     case 'bridge':
       parts.push(el('polygon', { points: pts(geo.points), fill: T.collab.fill, stroke: T.collab.stroke, 'stroke-width': 1.5, 'stroke-linejoin': 'round', ...soon }));
-      parts.push(labelSVG(geo.label, T.collab.text, T, { stroke: 'none' }));
+      if (geo.leader) parts.push(el('line', { x1: geo.leader.x, y1: geo.leader.y1, x2: geo.leader.x, y2: geo.leader.y2, stroke: T.collab.stroke, 'stroke-width': 1.5, 'stroke-dasharray': '3 3' }));
+      parts.push(geo.label && geo.label.onShape ? shapeLabelSVG(geo.label, T.collab.text) : plateLabelSVG(geo.label, T.collab.text, T.collab.plate));
       break;
     case 'patch':
       parts.push(el('rect', { x: geo.rect.x, y: geo.rect.y, width: geo.rect.w, height: geo.rect.h, fill: `url(#${prefix}-dots)`, stroke: inter.soon ? T.facil.dot : null, ...soon }));
-      parts.push(labelSVG(geo.label, T.facil.text, T));
+      if (geo.leader) parts.push(el('line', { x1: geo.leader.x, y1: geo.leader.y1, x2: geo.leader.x, y2: geo.leader.y2, stroke: T.facil.dot, 'stroke-width': 1.5, 'stroke-dasharray': '3 3' }));
+      parts.push(plateLabelSVG(geo.label, T.facil.text, T.facil.plate));
       break;
     case 'band':
       parts.push(el('polygon', { points: pts(geo.points), fill: `url(#${prefix}-dots)`, stroke: T.facil.dot, 'stroke-width': 1, 'stroke-dasharray': '2 3', opacity: inter.soon ? 0.55 : null }));
-      parts.push(labelSVG(geo.label, T.facil.text, T));
+      if (geo.leader) parts.push(el('line', { x1: geo.leader.x, y1: geo.leader.y1, x2: geo.leader.x, y2: geo.leader.y2, stroke: T.facil.dot, 'stroke-width': 1.5, 'stroke-dasharray': '3 3' }));
+      parts.push(plateLabelSVG(geo.label, T.facil.text, T.facil.plate));
       break;
     case 'marker': {
       // a tab on the target's bottom edge, in the mode's own idiom: the facilitating hatch
@@ -1043,7 +1618,7 @@ function edgeSVG({ inter, inters, geo }, lay, T, prefix) {
         fill: facil ? `url(#${prefix}-dots)` : T.xaas.fill, stroke: facil ? T.facil.dot : T.xaas.stroke,
         'stroke-width': 1, 'stroke-dasharray': facil ? '2 3' : null, opacity: inter.soon ? 0.55 : null,
       }));
-      parts.push(labelSVG(geo.label, facil ? T.facil.text : T.xaas.text, T));
+      parts.push(plateLabelSVG(geo.label, facil ? T.facil.text : T.xaas.text, facil ? T.facil.plate : T.xaas.plate));
       break;
     }
     case 'boundary':
@@ -1098,6 +1673,28 @@ function legendSVG(lg, T, prefix) {
   return el('g', { class: 'tt-legend' }, parts);
 }
 
+/** Colour + code → team name and load, one row per team, below the type legend. */
+function teamLegendSVG(tl, model, T) {
+  const y = tl.y + 10;
+  if (!chipsEnabled(model)) {
+    return el('g', { class: 'tt-team-legend' }, [
+      el('text', { x: tl.x, y: y + 4, 'font-size': 11, fill: T.muted }, esc(`${model.orgTeams.length} teams — ownership shown in the Team APIs`)),
+    ]);
+  }
+  const codes = chipCodes(model);
+  const parts = [];
+  let x = tl.x;
+  model.orgTeams.forEach((t, i) => {
+    const load = loadLabel(t, model);
+    const label = load ? `${t.label} (${load})` : t.label;
+    parts.push(el('rect', { x, y: y - 7, width: L.chipW, height: L.chipH, rx: 4, fill: chipColor(i) }));
+    parts.push(el('text', { x: x + L.chipW / 2, y: y + 3, 'text-anchor': 'middle', 'font-size': 9, 'font-weight': 700, fill: '#ffffff' }, esc(codes.get(t.id))));
+    parts.push(el('text', { x: x + L.chipW + 8, y: y + 4, 'font-size': 11, fill: T.muted }, esc(label)));
+    x += L.chipW + 8 + textWidth(label, 11) + 22;
+  });
+  return el('g', { class: 'tt-team-legend' }, parts);
+}
+
 /**
  * Render diagram source (or a parsed model) to an SVG string.
  * opts: { theme: 'light'|'dark'|themeObject, legend: bool, idPrefix: string, fontFamily: string }
@@ -1126,13 +1723,14 @@ export function render(input, opts = {}) {
     lay.title ? el('text', { x: lay.title.x, y: lay.title.y, 'font-size': 18, 'font-weight': 700, fill: T.title }, esc(model.title)) : '',
     lay.flow ? flowSVG(lay.flow, T) : '',
     el('g', { class: 'tt-frames' }, frames.map((b) => frameSVG(b, T))),
-    el('g', { class: 'tt-lanes' }, [...byKind('plat'), ...byKind('lane')].map((b) => teamSVG(b, T))),
+    el('g', { class: 'tt-lanes' }, [...byKind('plat'), ...byKind('lane')].map((b) => teamSVG(b, T, model))),
     el('g', { class: 'tt-xaas' }, edgesOf('xaas')),
-    el('g', { class: 'tt-overlays' }, [...byKind('sub').map((b) => teamSVG(b, T)), ...byKind('en').map((b) => teamSVG(b, T, 'shape')), ...byKind('rail').map((b) => teamSVG(b, T, 'shape', prefix))]),
+    el('g', { class: 'tt-overlays' }, [...byKind('sub').map((b) => teamSVG(b, T, model)), ...byKind('en').map((b) => teamSVG(b, T, model, 'shape')), ...byKind('rail').map((b) => teamSVG(b, T, model, 'shape', prefix))]),
     el('g', { class: 'tt-facilitating' }, edgesOf('facilitating')),
-    el('g', { class: 'tt-overlay-labels' }, [...byKind('en').map((b) => teamSVG(b, T, 'label')), ...byKind('rail').map((b) => teamSVG(b, T, 'label'))]),
+    el('g', { class: 'tt-overlay-labels' }, [...byKind('en').map((b) => teamSVG(b, T, model, 'label')), ...byKind('rail').map((b) => teamSVG(b, T, model, 'label'))]),
     el('g', { class: 'tt-collaboration' }, edgesOf('collaboration')),
     lay.legend ? legendSVG(lay.legend, T, prefix) : '',
+    lay.teamLegend ? teamLegendSVG(lay.teamLegend, model, T) : '',
   ];
 
   return el('svg', {
@@ -1150,6 +1748,27 @@ export function render(input, opts = {}) {
 // comes from an `api <id> { field: value }` block and stays blank otherwise.
 
 const API_TYPE_NAMES = { stream: 'Stream-Aligned', enabling: 'Enabling', subsystem: 'Complicated Subsystem', platform: 'Platform', group: 'Group' };
+
+/** The syntax keyword for each node type, used in a team's "Owns N:" list. */
+export const TYPE_KEYWORDS = { stream: 'stream-aligned', enabling: 'enabling', subsystem: 'complicated-subsystem', platform: 'platform', group: 'group' };
+
+/** The entity a row should name: an owned node is reported as its owning team. */
+function counterpart(model, id) {
+  const node = model.index[id];
+  return node.owners && node.owners.length ? model.index[node.owners[0]] : node;
+}
+
+/** A Team API table row for a team whose own ids are `ours`. */
+function apiRowSet(model, ours, inter) {
+  const other = counterpart(model, ours.has(inter.from) ? inter.to : inter.from);
+  const focus = apiField(other, 'focus');
+  const weProvide = ours.has(inter.from);
+  let mode = MODES[inter.mode].name;
+  if (inter.mode === 'xaas') mode += weProvide ? ' (we provide)' : ' (we consume)';
+  if (inter.mode === 'facilitating') mode += weProvide ? ' (we facilitate)' : ' (they facilitate us)';
+  const cell = (v) => String(v || '').replace(/\|/g, '\\|');
+  return `| ${cell(other.label)}${focus ? ` / ${cell(focus)}` : ''} | ${mode} | ${cell(inter.label)} | ${cell(inter.duration)} |`;
+}
 
 /** Fields a team can set in its api block, with the spellings accepted for each. */
 export const TEAM_API_FIELDS = [
@@ -1175,7 +1794,7 @@ function apiField(node, key) {
 
 function apiRow(model, self, inter) {
   const otherId = inter.from === self.id ? inter.to : inter.from;
-  const other = model.index[otherId];
+  const other = counterpart(model, otherId);   // an owned counterpart is reported as its team (d11)
   const focus = apiField(other, 'focus');
   let mode = MODES[inter.mode].name;
   if (inter.mode === 'xaas') mode += inter.from === self.id ? ' (we provide)' : ' (we consume)';
@@ -1189,14 +1808,100 @@ function apiTable(rows) {
   return rows.length ? `${head}\n${rows.join('\n')}` : `${head}\n| . |  |  |  |`;
 }
 
+/** The Team API document for a real team, aggregating every node it owns. */
+function orgTeamApi(model, team, opts) {
+  const date = opts.date ?? new Date().toISOString().slice(0, 10);
+  const owned = team.owns.map((id) => model.index[id]);
+  const ours = new Set(team.owns);
+  const typeLine = [...new Set(owned.map((n) => API_TYPE_NAMES[n.type]))].join(', ') || 'Team';
+
+  const platformOf = (node) => {
+    let cur = node;
+    while (cur.parent) { cur = model.index[cur.parent]; if (cur.type === 'platform') return cur; }
+    return null;
+  };
+  const platforms = owned.map(platformOf);
+  const samePlatform = owned.length && platforms.every((p) => p && p === platforms[0]) ? platforms[0] : null;
+
+  const provided = model.interactions.filter((it) => it.mode === 'xaas' && ours.has(it.from) && !ours.has(it.to) && !it.soon);
+  const consumers = [...new Set(provided.map((it) => `${counterpart(model, it.to).label}${it.label ? ` (${it.label})` : ''}`))];
+  const serviceDetails = [consumers.length ? `to ${consumers.join(', ')}` : '', apiField(team, 'service')].filter(Boolean).join('; ');
+
+  const mine = model.interactions.filter((it) => ours.has(it.from) || ours.has(it.to));
+  const dedupe = (its) => [...new Set(its.map((it) => apiRowSet(model, ours, it)))];
+  const internal = dedupe(mine.filter((it) => ours.has(it.from) && ours.has(it.to)));
+  const external = mine.filter((it) => !(ours.has(it.from) && ours.has(it.to)));
+  const now = dedupe(external.filter((it) => !it.soon));
+  const soon = dedupe(external.filter((it) => it.soon));
+  const focus = apiField(team, 'focus');
+
+  const lines = [
+    `# Team API: ${team.label}`,
+    '',
+    `Date: ${date}`,
+    '',
+    `* Team name and focus: ${team.label}${focus ? ` — ${focus}` : ''}`,
+    `* Team type: ${typeLine}`,
+    `* Owns ${team.load.nodes}: ${owned.map((n) => `${n.id} (${TYPE_KEYWORDS[n.type]})`).join(', ')}`,
+    `* Streams: ${team.load.streams}`,
+  ];
+  if (team.load.subsystems) lines.push(`* Subsystems: ${team.load.subsystems}`);
+  if (team.load.streams > 1) {
+    lines.push('* A team aligned to more than one stream carries the cognitive load of all of them; the streams above are split candidates.');
+  }
+  if (team.load.subsystems > 1) {
+    lines.push('* A team owning more than one complicated subsystem carries each one\'s deep specialism; the subsystems above are split candidates.');
+  }
+  if (samePlatform) lines.push(`* Part of a Platform? (y/n) Details: y — part of ${samePlatform.label}`);
+  lines.push(
+    `* Do we provide a service to other teams? (y/n) Details: ${provided.length || apiField(team, 'service') ? 'y' : 'n'}${serviceDetails ? ` — ${serviceDetails}` : ''}`,
+    `* What kind of Service Level Expectations do other teams have of us? ${apiField(team, 'sle')}`.trimEnd(),
+    `* Software owned and evolved by this team: ${apiField(team, 'software')}`.trimEnd(),
+    `* Versioning approaches: ${apiField(team, 'versioning')}`.trimEnd(),
+    `* Wiki search terms: ${apiField(team, 'wiki')}`.trimEnd(),
+    `* Chat tool channels: ${apiField(team, 'chat')}`.trimEnd(),
+    `* Time of daily sync meeting: ${apiField(team, 'sync')}`.trimEnd(),
+    '',
+    '### What we\'re currently working on',
+    '',
+    `* Our services and systems: ${apiField(team, 'workingon')}`.trimEnd(),
+    `* Ways of working: ${apiField(team, 'waysofworking')}`.trimEnd(),
+    `* Wider cross-team or organisational improvements: ${apiField(team, 'improvements')}`.trimEnd(),
+    '',
+    '### Teams we currently interact with',
+    '',
+    apiTable(now),
+    '',
+    '### Internal',
+    '',
+    apiTable(internal),
+    '',
+    '### Teams we expect to interact with soon',
+    '',
+    apiTable(soon),
+    '',
+  );
+  return lines.join('\n');
+}
+
 /**
- * The Team API document for one team, as Markdown following the Team API template.
+ * The Team API document for one team. An owned node's id resolves to its owning team,
+ * so a CLI or a deep link that names a stream still gets a document.
  * opts: { date: string }
  */
 export function teamApi(input, id, opts = {}) {
   const model = typeof input === 'string' ? parse(input) : input;
-  const node = model.index[id];
-  if (!node) throw new Error(`unknown team "${id}"`);
+  let entry = model.index[id];
+  if (!entry) throw new Error(`unknown team "${id}"`);
+  if (!entry.isTeam && entry.owners.length) entry = model.index[entry.owners[0]];
+  return entry.isTeam ? orgTeamApi(model, entry, opts) : nodeApi(model, entry, opts);
+}
+
+/**
+ * The Team API document for one topology node no team owns, as Markdown following the
+ * Team API template.
+ */
+function nodeApi(model, node, opts) {
   const date = opts.date ?? new Date().toISOString().slice(0, 10);
   const yn = (cond) => (cond ? 'y' : 'n');
 
@@ -1249,10 +1954,17 @@ export function teamApi(input, id, opts = {}) {
   ].join('\n');
 }
 
-/** Team API documents for every team in the diagram (groups excluded): [{ id, label, markdown }]. */
+/**
+ * Team API documents for every real team, then every unowned node (groups excluded):
+ * [{ id, label, markdown }]. An owned node has no document of its own — its team has one.
+ */
 export function teamApis(input, opts = {}) {
   const model = typeof input === 'string' ? parse(input) : input;
-  return model.teams.filter((t) => t.type !== 'group').map((t) => ({ id: t.id, label: t.label, markdown: teamApi(model, t.id, opts) }));
+  const doc = (e) => ({ id: e.id, label: e.label, markdown: teamApi(model, e.id, opts) });
+  return [
+    ...model.orgTeams.map(doc),
+    ...model.teams.filter((t) => t.type !== 'group' && !t.owners.length).map(doc),
+  ];
 }
 
 function depth(model, node) {
@@ -1261,4 +1973,4 @@ function depth(model, node) {
   return d;
 }
 
-export default { parse, layout, render, teamApi, teamApis, textWidth, wrapText, textVerticalExtent, VERSION, THEMES, TEAM_TYPES, MODES, TEAM_API_FIELDS, ParseError };
+export default { parse, layout, render, teamApi, teamApis, textWidth, wrapText, textVerticalExtent, VERSION, THEMES, TEAM_TYPES, TYPE_KEYWORDS, MODES, TEAM_API_FIELDS, ParseError };

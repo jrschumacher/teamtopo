@@ -10,6 +10,8 @@ declare module '@lib/teamtopo' {
 		label: string;
 		attrs: Record<string, string>;
 		api: Record<string, string> | null;
+		/** Ids of the real teams that own this node. Empty when no team claims it. */
+		owners: string[];
 		children: Node[];
 		parent: string | null;
 		line: number;
@@ -27,14 +29,45 @@ declare module '@lib/teamtopo' {
 		line: number;
 	}
 
+	/** A real team: the thing a Team API belongs to. It owns nodes rather than being one. */
+	export interface OrgTeam {
+		isTeam: true;
+		id: string;
+		label: string;
+		attrs: Record<string, string>;
+		api: Record<string, string> | null;
+		owns: string[];
+		load: { streams: number; subsystems: number; nodes: number };
+		ownsLine: number;
+		line: number;
+	}
+
+	export interface Diagnostic {
+		level: 'warning';
+		code: string;
+		line: number;
+		message: string;
+	}
+
+	export interface ApiField {
+		key: string;
+		choices: string[];
+		group: number;
+	}
+
+	export type Entry = Node | OrgTeam;
+
 	export interface Model {
 		title: string;
 		flow: string | null;
 		legend: boolean;
 		nodes: Node[];
 		teams: Node[];
+		orgTeams: OrgTeam[];
 		interactions: Interaction[];
-		index: Record<string, Node>;
+		apiFields: ApiField[];
+		diagnostics: Diagnostic[];
+		index: Record<string, Entry>;
 	}
 
 	export interface Box {
@@ -65,6 +98,7 @@ declare module '@lib/teamtopo' {
 		title: { x: number; y: number } | null;
 		flow: { x: number; y: number; w: number; label: string } | null;
 		legend: { x: number; y: number; w: number } | null;
+		teamLegend: { x: number; y: number; w: number } | null;
 	}
 
 	export interface ThemeColors {
@@ -108,6 +142,7 @@ declare module '@lib/teamtopo' {
 
 	export const VERSION: string;
 	export const TEAM_TYPES: Record<TeamType, { name: string; rank: number | null }>;
+	export const TYPE_KEYWORDS: Record<TeamType, string>;
 	export const MODES: Record<Mode, { name: string }>;
 	export const THEMES: { light: Theme; dark: Theme };
 	export const TEAM_API_FIELDS: TeamApiField[];
