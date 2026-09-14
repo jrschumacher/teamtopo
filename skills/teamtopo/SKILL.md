@@ -73,6 +73,10 @@ team, worst first; propose structural changes as `docs/org-target.tt`.
   `a ~~> b : coaching [soon, duration="6 weeks"]`. Quote a label containing `[`.
 - Every id used must be declared somewhere; no self-interaction; no interaction with a
   containing block.
+- One interaction mode per pair: two teams have one interaction mode at a time, so a
+  second interaction between the same pair is a parse error, in either direction and
+  whatever the modes. The only legitimate second line is the mode expected next,
+  marked `[soon]` (`a <--> b : ...` plus `a --> b : ... [soon]`).
 - A real team is declared separately: `team <id> "Label"` plus `<id> owns a, b`. An owned
   node is work, not a team — its Team API moves to the team, its `api` block is an error,
   and a team id may not be an interaction endpoint (`references/syntax.md`). Only for the

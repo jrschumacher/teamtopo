@@ -193,7 +193,9 @@ Interaction modes are not permanent:
 - **X-as-a-Service is the steady state.** It is the only mode that scales.
 
 One file can hold as-is and to-be: current interactions are plain, expected ones carry
-`[soon]`, and durations say when the current ones end.
+`[soon]`, and durations say when the current ones end. This is the only way a pair of
+teams may appear twice — one current mode plus the one expected next; two current
+interactions between the same pair are a parse error.
 
 ```tt
 teamTopology

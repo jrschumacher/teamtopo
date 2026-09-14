@@ -105,9 +105,14 @@ teamTopology
 
   %% inferred from git history: ana (storefront) commits to services/payments/
   storefront <--> payments : payments integration [duration="confirm with the teams"]
-  %% inferred from git history: storefront imports payments-client, never edits it
-  payments --> storefront : payments API
+  %% storefront also imports payments-client without editing it: the mode this is
+  %% heading for, so [soon] rather than a second current interaction
+  payments --> storefront : payments API [soon]
 ```
+
+Two signals about the same pair are still one interaction. Draw the mode the history
+shows today, and if the other signal is where the pair is heading, add it as a `[soon]`
+line; the parser rejects two current interactions between the same two teams.
 
 ## 2. Modeling from a description
 
