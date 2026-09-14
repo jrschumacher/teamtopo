@@ -18,6 +18,13 @@ describe('matchRoute', () => {
 		});
 	});
 
+	it('matches a team route whose segment is an owned stream id', () => {
+		expect(matchRoute('/d/abc/team/desktop')).toEqual({
+			name: 'team',
+			params: { id: 'abc', teamId: 'desktop' }
+		});
+	});
+
 	it('tolerates a trailing slash and decodes segments', () => {
 		expect(matchRoute('/new/')).toEqual({ name: 'new', params: {} });
 		expect(matchRoute('/d/a%20b')).toEqual({ name: 'doc', params: { id: 'a b' } });

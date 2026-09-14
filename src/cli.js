@@ -35,12 +35,21 @@ try {
   process.exit(2);
 }
 
+/** Non-fatal diagnostics go to stderr, so stdout stays exactly the SVG, JSON or Markdown. */
+function warn(model) {
+  for (const d of model.diagnostics) {
+    process.stderr.write(`${file ?? 'stdin'}:${d.line}: ${d.level}: ${d.message}\n`);
+  }
+}
+
 try {
   if (json) {
     const model = parse(source);
+    warn(model);
     process.stdout.write(JSON.stringify(model, (k, v) => (k === 'index' ? undefined : v), 2) + '\n');
   } else if (api) {
     const model = parse(source);
+    warn(model);
     if (team) {
       if (!model.index[team]) { process.stderr.write(`unknown team "${team}"\n`); process.exit(1); }
       process.stdout.write(teamApi(model, team));
@@ -48,7 +57,9 @@ try {
       process.stdout.write(teamApis(model).map((t) => t.markdown).join('\n---\n\n'));
     }
   } else {
-    process.stdout.write(render(source, { theme }) + '\n');
+    const model = parse(source);
+    warn(model);
+    process.stdout.write(render(model, { theme }) + '\n');
   }
 } catch (e) {
   if (e instanceof ParseError) {

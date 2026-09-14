@@ -72,6 +72,10 @@ const RE_INTERACTION = new RegExp(
   `^(${ID}(?:\\s*,\\s*${ID})*)\\s*(<-->|<->|-->|<--|~~>|<~~)\\s*(${ID}(?:\\s*,\\s*${ID})*)\\s*(?::\\s*("(?:[^"\\\\]|\\\\.)*"|[^\\[]*?))?\\s*(?:\\[([^\\]]*)\\])?\\s*$`);
 const RE_API_OPEN = new RegExp(`^api\\s+(${ID})\\s*\\{$`, 'i');
 const RE_API_FIELD = /^([^:]+?)\s*:\s*(.*)$/;
+const RE_TEAM = new RegExp(`^team\\s+(${ID})(.*)$`, 'i');
+const RE_OWNS = new RegExp(`^(${ID})\\s+owns\\s+(${ID}(?:\\s*,\\s*${ID})*)\\s*$`, 'i');
+const RE_APIFIELDS_OPEN = /^apifields\s*\{$/i;
+const RE_APIFIELD_LINE = /^([A-Za-z_][\w-]*)\s*(?::\s*(.*))?$/;
 
 function stripComment(line, slashes = true) {
   let inQuote = false;
@@ -101,20 +105,30 @@ function parseAttrs(src) {
  * Parse diagram source into a model:
  * {
  *   title, flow, legend,
- *   nodes:        top-level node tree (each node: id, type, label, attrs, api, children, parent, line)
+ *   nodes:        top-level node tree (each node: id, type, label, attrs, api, owners, children, parent, line)
  *   teams:        flat list of every node (containers included), declaration order
+ *   orgTeams:     real teams, declaration order: { isTeam, id, label, attrs, api, owns, load, ownsLine, line }
  *   interactions: [{ mode, from, to, label, attrs, soon, duration, line }]
- *   index:        id → node
+ *   apiFields:    document-level Team API schema: [{ key, choices, group }]
+ *   diagnostics:  non-fatal findings: [{ level, code, line, message }] — always an array
+ *   index:        id → node | team (a team has isTeam === true)
  * }
+ * A node whose `owners` list is non-empty is not a team: it is work owned by the teams
+ * named there, and its Team API lives on the owning team.
  * For `xaas`, `from` is the provider and `to` the consumer.
  * For `facilitating`, `from` is the facilitator.
  */
 export function parse(source) {
   if (typeof source !== 'string') throw new TypeError('parse() expects a string');
-  const model = { title: '', flow: null, legend: false, nodes: [], teams: [], interactions: [], index: {} };
-  const stack = [];   // open containers
-  const apis = [];    // { id, fields, line }
-  let api = null;     // open api block
+  const model = {
+    title: '', flow: null, legend: false, nodes: [], teams: [], orgTeams: [],
+    interactions: [], apiFields: [], diagnostics: [], index: {},
+  };
+  const stack = [];     // open containers
+  const apis = [];      // { id, fields, line }
+  const ownsLines = []; // { team, ids, line }
+  let api = null;       // open api block
+  let fieldsBlock = false, fieldsGroup = 0;
   let sawHeader = false;
 
   const lines = source.split(/\r?\n/);
@@ -122,6 +136,19 @@ export function parse(source) {
     const lineNo = i + 1;
     // inside an api block only %% starts a comment, so URLs survive
     const line = stripComment(lines[i], !api).trim();
+
+    // a document-level apiFields schema: field names in render order, blank lines separating
+    // groups, an optional "key: a | b | c" choice list. Parsed here, rendered by nothing yet.
+    if (fieldsBlock) {
+      if (!line) { fieldsGroup++; continue; }
+      if (line === '}') { fieldsBlock = false; continue; }
+      const fm = RE_APIFIELD_LINE.exec(line);
+      if (!fm) throw new ParseError(`expected a field name inside the apiFields block`, lineNo);
+      const choices = fm[2] ? fm[2].split('|').map((s) => s.trim()).filter(Boolean) : [];
+      model.apiFields.push({ key: fm[1], choices, group: fieldsGroup });
+      continue;
+    }
+
     if (!line) continue;
 
     if (api) {
@@ -143,6 +170,7 @@ export function parse(source) {
     if ((m = /^title\s+(.+)$/i.exec(line))) { model.title = stripQuotes(m[1]); continue; }
     if ((m = /^flow(?:\s+(.+))?$/i.exec(line))) { model.flow = m[1] ? stripQuotes(m[1]) : 'Flow of change'; continue; }
     if (/^legend$/i.test(line)) { model.legend = true; continue; }
+    if (RE_APIFIELDS_OPEN.test(line)) { fieldsBlock = true; fieldsGroup = 0; continue; }
 
     if (line === '}') {
       if (!stack.length) throw new ParseError('unexpected "}" — no open block', lineNo);
@@ -178,6 +206,35 @@ export function parse(source) {
       continue;
     }
 
+    // ownership, tried BEFORE RE_NODE: that regex has no word boundary after the keyword, so
+    // "sales owns x" would match the "sa" alias and die as "sa needs an identifier". The guard
+    // that keeps "stream owns \"Owns\"" a node declaration is the left-hand side instead —
+    // ownership only matches when the LHS is not an exact type keyword or alias.
+    if ((m = RE_OWNS.exec(line)) && !(m[1].toLowerCase() in TYPE_ALIASES)) {
+      ownsLines.push({ team: m[1], ids: m[2].split(',').map((s) => s.trim()), line: lineNo });
+      continue;
+    }
+
+    // team declaration: a real team, which owns streams and capabilities rather than being one
+    if ((m = RE_TEAM.exec(line))) {
+      const id = m[1];
+      if (model.index[id]) throw new ParseError(`duplicate identifier "${id}" (first declared on line ${model.index[id].line})`, lineNo);
+      let rest = m[2], label = id, attrs = {}, q;
+      if ((q = RE_QUOTED.exec(rest))) { label = unescape(q[1]); rest = rest.slice(q[0].length); }
+      else {
+        const cut = rest.search(/\[/);
+        const raw = (cut === -1 ? rest : rest.slice(0, cut)).trim();
+        if (raw) label = raw;
+        rest = cut === -1 ? '' : rest.slice(cut);
+      }
+      if ((q = RE_ATTRS.exec(rest))) { attrs = parseAttrs(q[1]); rest = rest.slice(q[0].length); }
+      if (rest.trim()) throw new ParseError(`unexpected "${rest.trim()}" after team declaration`, lineNo);
+      const team = { isTeam: true, id, label, attrs, api: null, owns: [], load: { streams: 0, nodes: 0 }, ownsLine: lineNo, line: lineNo };
+      model.orgTeams.push(team);
+      model.index[id] = team;
+      continue;
+    }
+
     // node declaration
     if ((m = RE_NODE.exec(line))) {
       const type = TYPE_ALIASES[m[1].toLowerCase()];
@@ -209,7 +266,7 @@ export function parse(source) {
       }
 
       const parent = stack.length ? stack[stack.length - 1] : null;
-      const node = { id, type, label, attrs, api: null, children: [], parent: parent ? parent.id : null, line: lineNo };
+      const node = { id, type, label, attrs, api: null, owners: [], children: [], parent: parent ? parent.id : null, line: lineNo };
       (parent ? parent.children : model.nodes).push(node);
       model.teams.push(node);
       model.index[id] = node;
@@ -222,24 +279,80 @@ export function parse(source) {
 
   if (!sawHeader) throw new ParseError('diagram must start with "teamTopology"', lines.length || 1);
   if (api) throw new ParseError(`api block for "${api.id}" opened on line ${api.line} is never closed with "}"`, lines.length);
+  if (fieldsBlock) throw new ParseError('the apiFields block is never closed with "}"', lines.length);
   if (stack.length) {
     const open = stack[stack.length - 1];
     throw new ParseError(`block for "${open.id}" opened on line ${open.line} is never closed with "}"`, lines.length);
   }
+  // resolve ownership once the whole file is read, so an owns line may name streams declared
+  // after it, or nested inside a group or platform block
+  for (const o of ownsLines) {
+    const team = model.index[o.team];
+    if (!team || !team.isTeam) throw new ParseError(`"${o.team}" is not a team; declare it with "team ${o.team} \\"...\\"" before an owns line`, o.line);
+    for (const id of o.ids) {
+      const node = model.index[id];
+      if (!node || node.isTeam) throw new ParseError(`owns names an unknown team "${id}"`, o.line);
+      if (node.children.length) throw new ParseError(`"${id}" is a container; a team can only own leaf teams, not a "{ ... }" block`, o.line);
+      if (!team.owns.includes(id)) team.owns.push(id);
+      if (!node.owners.includes(team.id)) node.owners.push(team.id);
+    }
+    team.ownsLine = o.line;
+  }
+  // the single source for the cognitive-load numbers: the diagnostic, the legend and the
+  // Team API all read this, none of them recomputes it
+  for (const t of model.orgTeams) {
+    const owned = t.owns.map((id) => model.index[id]);
+    t.load = {
+      streams: owned.filter((n) => n.type === 'stream').length,
+      subsystems: owned.filter((n) => n.type === 'subsystem').length,
+      nodes: t.owns.length,
+    };
+  }
+
   for (const a of apis) {
-    const node = model.index[a.id];
-    if (!node) throw new ParseError(`api block for unknown team "${a.id}"`, a.line);
-    node.api = { ...(node.api || {}), ...a.fields };
+    const target = model.index[a.id];
+    if (!target) throw new ParseError(`api block for unknown team "${a.id}"`, a.line);
+    if (!target.isTeam && target.owners.length) {
+      const owner = target.owners[0];
+      throw new ParseError(`api ${a.id} belongs to team ${owner}, which owns ${a.id}; move these fields into "api ${owner}"`, a.line);
+    }
+    target.api = { ...(target.api || {}), ...a.fields };
   }
 
   // validate interactions
   for (const it of model.interactions) {
     for (const end of ['from', 'to']) {
-      if (!model.index[it[end]]) throw new ParseError(`unknown team "${it[end]}"`, it.line);
+      const entry = model.index[it[end]];
+      if (!entry) throw new ParseError(`unknown team "${it[end]}"`, it.line);
+      if (entry.isTeam) throw new ParseError(`"${it[end]}" is a team, not a node; use one of the nodes it owns (${entry.owns.join(', ') || 'none yet'})`, it.line);
     }
     if (it.from === it.to) throw new ParseError(`"${it.from}" cannot interact with itself`, it.line);
     if (isAncestor(model, it.from, it.to) || isAncestor(model, it.to, it.from)) {
       throw new ParseError(`"${it.from}" and "${it.to}" are nested; a team cannot interact with its own container`, it.line);
+    }
+  }
+
+  // Non-fatal diagnostics, computed after every owns line is resolved so each team warns once,
+  // on its last owns line, with the final count. ParseError stays the only fatal path.
+  const ownedOfType = (t, type) => t.owns.filter((id) => model.index[id].type === type);
+  for (const t of model.orgTeams) {
+    if (t.load.streams > 1) {
+      model.diagnostics.push({
+        level: 'warning',
+        code: 'team-multi-stream',
+        line: t.ownsLine,
+        message: `team ${t.id} is aligned to ${t.load.streams} streams: ${ownedOfType(t, 'stream').join(', ')}; a team aligned to more than one stream carries extra cognitive load`,
+      });
+    }
+    // a complicated-subsystem team exists because one deep specialism is already a full
+    // load, so several of them in one team is the same finding as several streams
+    if (t.load.subsystems > 1) {
+      model.diagnostics.push({
+        level: 'warning',
+        code: 'team-multi-subsystem',
+        line: t.ownsLine,
+        message: `team ${t.id} owns ${t.load.subsystems} complicated subsystems: ${ownedOfType(t, 'subsystem').join(', ')}; each carries its own deep specialism, so one team owning several carries extra cognitive load`,
+      });
     }
   }
   return model;
@@ -331,8 +444,69 @@ const L = {
   pad: 24, frameTop: 26, frameBottom: 36, bandGap: 44, sideGap: 32, minW: 240,
   margin: 32, lineH: 1.25, noteFs: 11, titleH: 40, flowH: 46, legendH: 64, labelFs: 11,
   leaderGap: 6, topClear: 8, railH: 26, railGap: 10, tipClear: 26, wedgeInset: 8,
+  chipW: 26, chipH: 14, chipGap: 4, teamLegendH: 30,
   fs: { stream: 14, platform: 14, subsystem: 12, enabling: 12, group: 13 },
 };
+
+// ── team ownership chips ──
+// A document that declares no team reserves no width and draws nothing, so its geometry
+// is byte-identical to the pre-feature renderer; one that declares a team re-flows.
+
+const CHIP_CAP = 20;      // more teams than this and the chip layer is noise
+const CHIP_MAX_PER_NODE = 3;
+
+function chipsEnabled(model) {
+  return model.orgTeams.length > 0 && model.orgTeams.length <= CHIP_CAP;
+}
+
+/** Deterministic 8-hue rotation by declaration index — no theme variant needed. */
+function chipColor(i) {
+  return `hsl(${(i * 45) % 360} 62% 45%)`;
+}
+
+/** Two-character code per team, disambiguated with a digit on collision. */
+function chipCodes(model) {
+  const codes = new Map(), used = new Map();
+  for (const t of model.orgTeams) {
+    const base = t.id.slice(0, 2).toUpperCase();
+    const n = (used.get(base) || 0) + 1;
+    used.set(base, n);
+    codes.set(t.id, n === 1 ? base : `${base}${n}`);
+  }
+  return codes;
+}
+
+/** Width a node's chip strip reserves in the layout. Zero when unowned or suppressed. */
+function chipStripW(node, model) {
+  if (!node.owners || !node.owners.length || !chipsEnabled(model)) return 0;
+  const n = Math.min(node.owners.length, CHIP_MAX_PER_NODE + 1);
+  return n * (L.chipW + L.chipGap) + 8;
+}
+
+/** "3 streams", or the node count and type when a team owns no stream. Several complicated
+ *  subsystems ride alongside the stream count, so that load is not hidden behind it. */
+function loadLabel(team, model) {
+  const subs = team.load.subsystems > 1 ? `${team.load.subsystems} subsystems` : '';
+  if (team.load.streams > 0) {
+    const streams = `${team.load.streams} stream${team.load.streams === 1 ? '' : 's'}`;
+    return subs ? `${streams}, ${subs}` : streams;
+  }
+  if (team.load.nodes === 0) return '';
+  const first = model.index[team.owns[0]];
+  return `${team.load.nodes} ${first.type}${team.load.nodes === 1 ? '' : 's'}`;
+}
+
+/** Width the team legend band needs, so the canvas grows around it like the type legend. */
+function teamLegendWidth(model) {
+  if (!model.orgTeams.length) return 0;
+  if (!chipsEnabled(model)) {
+    return textWidth(`${model.orgTeams.length} teams — ownership shown in the Team APIs`, 11);
+  }
+  return model.orgTeams.reduce((w, t) => {
+    const load = loadLabel(t, model);
+    return w + L.chipW + 8 + textWidth(load ? `${t.label} (${load})` : t.label, 11) + 22;
+  }, 0) - 22;
+}
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
@@ -511,8 +685,8 @@ function structure(children, model, forcedW = 0) {
   const leftW = slotsWidth(wedgeSlots), rightW = slotsWidth(rightSlots) + (rightSlots.length ? 24 : 0);
   const hasStack = lanes.length || plats.length;
   const labelW = Math.max(L.labelMin,
-    ...lanes.map((n) => textWidth(n.label, L.fs.stream) + 48),
-    ...plats.map((n) => textWidth(n.label, L.fs.platform) + 48));
+    ...lanes.map((n) => textWidth(n.label, L.fs.stream) + 48 + chipStripW(n, model)),
+    ...plats.map((n) => textWidth(n.label, L.fs.platform) + 48 + chipStripW(n, model)));
 
   const topLays = topFrames.map((c) => frame(c, model));
   // #23 treatment A (default): a labelled xaas edge directly between two sibling
@@ -740,8 +914,10 @@ function facing(P, Q, xOverride) {
 export function layout(model, opts = {}) {
   const root = structure(model.nodes, model);
   const showLegend = opts.legend ?? model.legend;
+  // the team legend is gated on the document declaring a team, never on `legend`
+  const showTeams = model.orgTeams.length > 0;
   const top = L.margin + (model.title ? L.titleH : 0) + (model.flow ? L.flowH : 0);
-  const contentW = Math.max(root.w, showLegend ? legendWidth() : 0, model.title ? textWidth(model.title, 18) : 0, 120);
+  const contentW = Math.max(root.w, showLegend ? legendWidth() : 0, showTeams ? teamLegendWidth(model) : 0, model.title ? textWidth(model.title, 18) : 0, 120);
   const ox = L.margin + (contentW - root.w) / 2;
 
   // pass 1: structural boxes
@@ -1089,13 +1265,14 @@ export function layout(model, opts = {}) {
   const finalContentW = Math.max(contentW, maxX - L.margin);
   const contentH = maxY - top;
   const width = finalContentW + 2 * L.margin;
-  const height = top + contentH + L.margin + (showLegend ? L.legendH : 0);
+  const height = top + contentH + L.margin + (showLegend ? L.legendH : 0) + (showTeams ? L.teamLegendH : 0);
   return {
     width, height, boxes, edges,
     content: { x: L.margin, y: top, w: finalContentW, h: contentH },
     title: model.title ? { x: L.margin, y: L.margin + 18 } : null,
     flow: model.flow ? { x: L.margin, y: L.margin + (model.title ? L.titleH : 0), w: finalContentW, label: model.flow } : null,
-    legend: showLegend ? { x: L.margin, y: height - L.legendH + 8, w: finalContentW } : null,
+    legend: showLegend ? { x: L.margin, y: height - (showTeams ? L.teamLegendH : 0) - L.legendH + 8, w: finalContentW } : null,
+    teamLegend: showTeams ? { x: L.margin, y: height - L.teamLegendH + 8, w: finalContentW } : null,
   };
 }
 
@@ -1171,7 +1348,7 @@ function frameSVG(box, T) {
   ]);
 }
 
-function teamSVG(box, T, part = 'all', prefix = 'tt') {
+function teamSVG(box, T, model, part = 'all', prefix = 'tt') {
   const { x, y, w, h, node } = box;
   const c = T[node.type === 'group' ? 'stream' : node.type];
   // a rail's label is often ellipsised, so its tooltip carries the full name too
@@ -1223,7 +1400,40 @@ function teamSVG(box, T, part = 'all', prefix = 'tt') {
     parts.push(textBlock(box.lines, cx, y + h / 2 - noteH / 2, box.fs, c.text, { 'font-weight': 600 }));
     if (box.note.length) parts.push(el('text', { x: cx, y: y + h / 2 + (box.lines.length * box.fs * L.lineH) / 2 + 8, 'text-anchor': 'middle', 'font-size': L.noteFs, fill: c.text, opacity: 0.8 }, esc(box.note[0])));
   }
+  // chips ride with the shape, never with the separately drawn label pass, so an
+  // overlay node that is drawn twice still carries one set of chips
+  if (part !== 'label') parts.push(teamChipsSVG(box, model, T));
   return el('g', { class: `tt-node tt-${node.type}`, 'data-id': node.id }, parts);
+}
+
+/** The owner chips for one node, drawn in the box's top-right corner. */
+function teamChipsSVG(box, model, T) {
+  const { x, y, w, node } = box;
+  if (!node.owners || !node.owners.length || !chipsEnabled(model)) return '';
+  const codes = chipCodes(model);
+  const shown = node.owners.slice(0, CHIP_MAX_PER_NODE);
+  const extra = node.owners.length - shown.length;
+  const parts = [];
+  let cx = x + w - 8 - (shown.length + (extra ? 1 : 0)) * (L.chipW + L.chipGap) + L.chipGap;
+  for (const id of shown) {
+    const team = model.index[id];
+    const i = model.orgTeams.indexOf(team);
+    parts.push(el('g', { class: 'tt-chip' }, [
+      el('title', {}, esc(`${team.label} — ${loadLabel(team, model)}`)),
+      el('rect', { x: cx, y: y + 6, width: L.chipW, height: L.chipH, rx: 4, fill: chipColor(i) }),
+      el('text', { x: cx + L.chipW / 2, y: y + 6 + L.chipH - 4, 'text-anchor': 'middle', 'font-size': 9, 'font-weight': 700, fill: '#ffffff' }, esc(codes.get(id))),
+    ]));
+    cx += L.chipW + L.chipGap;
+  }
+  if (extra) {
+    const rest = node.owners.slice(CHIP_MAX_PER_NODE).map((id) => model.index[id].label).join(', ');
+    parts.push(el('g', { class: 'tt-chip-more' }, [
+      el('title', {}, esc(rest)),
+      el('rect', { x: cx, y: y + 6, width: L.chipW, height: L.chipH, rx: 4, fill: T.muted }),
+      el('text', { x: cx + L.chipW / 2, y: y + 6 + L.chipH - 4, 'text-anchor': 'middle', 'font-size': 9, 'font-weight': 700, fill: '#ffffff' }, `+${extra}`),
+    ]));
+  }
+  return el('g', { class: 'tt-chips' }, parts);
 }
 
 /**
@@ -1341,6 +1551,28 @@ function legendSVG(lg, T, prefix) {
   return el('g', { class: 'tt-legend' }, parts);
 }
 
+/** Colour + code → team name and load, one row per team, below the type legend. */
+function teamLegendSVG(tl, model, T) {
+  const y = tl.y + 10;
+  if (!chipsEnabled(model)) {
+    return el('g', { class: 'tt-team-legend' }, [
+      el('text', { x: tl.x, y: y + 4, 'font-size': 11, fill: T.muted }, esc(`${model.orgTeams.length} teams — ownership shown in the Team APIs`)),
+    ]);
+  }
+  const codes = chipCodes(model);
+  const parts = [];
+  let x = tl.x;
+  model.orgTeams.forEach((t, i) => {
+    const load = loadLabel(t, model);
+    const label = load ? `${t.label} (${load})` : t.label;
+    parts.push(el('rect', { x, y: y - 7, width: L.chipW, height: L.chipH, rx: 4, fill: chipColor(i) }));
+    parts.push(el('text', { x: x + L.chipW / 2, y: y + 3, 'text-anchor': 'middle', 'font-size': 9, 'font-weight': 700, fill: '#ffffff' }, esc(codes.get(t.id))));
+    parts.push(el('text', { x: x + L.chipW + 8, y: y + 4, 'font-size': 11, fill: T.muted }, esc(label)));
+    x += L.chipW + 8 + textWidth(label, 11) + 22;
+  });
+  return el('g', { class: 'tt-team-legend' }, parts);
+}
+
 /**
  * Render diagram source (or a parsed model) to an SVG string.
  * opts: { theme: 'light'|'dark'|themeObject, legend: bool, idPrefix: string, fontFamily: string }
@@ -1369,13 +1601,14 @@ export function render(input, opts = {}) {
     lay.title ? el('text', { x: lay.title.x, y: lay.title.y, 'font-size': 18, 'font-weight': 700, fill: T.title }, esc(model.title)) : '',
     lay.flow ? flowSVG(lay.flow, T) : '',
     el('g', { class: 'tt-frames' }, frames.map((b) => frameSVG(b, T))),
-    el('g', { class: 'tt-lanes' }, [...byKind('plat'), ...byKind('lane')].map((b) => teamSVG(b, T))),
+    el('g', { class: 'tt-lanes' }, [...byKind('plat'), ...byKind('lane')].map((b) => teamSVG(b, T, model))),
     el('g', { class: 'tt-xaas' }, edgesOf('xaas')),
-    el('g', { class: 'tt-overlays' }, [...byKind('sub').map((b) => teamSVG(b, T)), ...byKind('en').map((b) => teamSVG(b, T, 'shape')), ...byKind('rail').map((b) => teamSVG(b, T, 'shape', prefix))]),
+    el('g', { class: 'tt-overlays' }, [...byKind('sub').map((b) => teamSVG(b, T, model)), ...byKind('en').map((b) => teamSVG(b, T, model, 'shape')), ...byKind('rail').map((b) => teamSVG(b, T, model, 'shape', prefix))]),
     el('g', { class: 'tt-facilitating' }, edgesOf('facilitating')),
-    el('g', { class: 'tt-overlay-labels' }, [...byKind('en').map((b) => teamSVG(b, T, 'label')), ...byKind('rail').map((b) => teamSVG(b, T, 'label'))]),
+    el('g', { class: 'tt-overlay-labels' }, [...byKind('en').map((b) => teamSVG(b, T, model, 'label')), ...byKind('rail').map((b) => teamSVG(b, T, model, 'label'))]),
     el('g', { class: 'tt-collaboration' }, edgesOf('collaboration')),
     lay.legend ? legendSVG(lay.legend, T, prefix) : '',
+    lay.teamLegend ? teamLegendSVG(lay.teamLegend, model, T) : '',
   ];
 
   return el('svg', {
@@ -1393,6 +1626,27 @@ export function render(input, opts = {}) {
 // comes from an `api <id> { field: value }` block and stays blank otherwise.
 
 const API_TYPE_NAMES = { stream: 'Stream-Aligned', enabling: 'Enabling', subsystem: 'Complicated Subsystem', platform: 'Platform', group: 'Group' };
+
+/** The syntax keyword for each node type, used in a team's "Owns N:" list. */
+export const TYPE_KEYWORDS = { stream: 'stream-aligned', enabling: 'enabling', subsystem: 'complicated-subsystem', platform: 'platform', group: 'group' };
+
+/** The entity a row should name: an owned node is reported as its owning team. */
+function counterpart(model, id) {
+  const node = model.index[id];
+  return node.owners && node.owners.length ? model.index[node.owners[0]] : node;
+}
+
+/** A Team API table row for a team whose own ids are `ours`. */
+function apiRowSet(model, ours, inter) {
+  const other = counterpart(model, ours.has(inter.from) ? inter.to : inter.from);
+  const focus = apiField(other, 'focus');
+  const weProvide = ours.has(inter.from);
+  let mode = MODES[inter.mode].name;
+  if (inter.mode === 'xaas') mode += weProvide ? ' (we provide)' : ' (we consume)';
+  if (inter.mode === 'facilitating') mode += weProvide ? ' (we facilitate)' : ' (they facilitate us)';
+  const cell = (v) => String(v || '').replace(/\|/g, '\\|');
+  return `| ${cell(other.label)}${focus ? ` / ${cell(focus)}` : ''} | ${mode} | ${cell(inter.label)} | ${cell(inter.duration)} |`;
+}
 
 /** Fields a team can set in its api block, with the spellings accepted for each. */
 export const TEAM_API_FIELDS = [
@@ -1418,7 +1672,7 @@ function apiField(node, key) {
 
 function apiRow(model, self, inter) {
   const otherId = inter.from === self.id ? inter.to : inter.from;
-  const other = model.index[otherId];
+  const other = counterpart(model, otherId);   // an owned counterpart is reported as its team (d11)
   const focus = apiField(other, 'focus');
   let mode = MODES[inter.mode].name;
   if (inter.mode === 'xaas') mode += inter.from === self.id ? ' (we provide)' : ' (we consume)';
@@ -1432,14 +1686,100 @@ function apiTable(rows) {
   return rows.length ? `${head}\n${rows.join('\n')}` : `${head}\n| . |  |  |  |`;
 }
 
+/** The Team API document for a real team, aggregating every node it owns. */
+function orgTeamApi(model, team, opts) {
+  const date = opts.date ?? new Date().toISOString().slice(0, 10);
+  const owned = team.owns.map((id) => model.index[id]);
+  const ours = new Set(team.owns);
+  const typeLine = [...new Set(owned.map((n) => API_TYPE_NAMES[n.type]))].join(', ') || 'Team';
+
+  const platformOf = (node) => {
+    let cur = node;
+    while (cur.parent) { cur = model.index[cur.parent]; if (cur.type === 'platform') return cur; }
+    return null;
+  };
+  const platforms = owned.map(platformOf);
+  const samePlatform = owned.length && platforms.every((p) => p && p === platforms[0]) ? platforms[0] : null;
+
+  const provided = model.interactions.filter((it) => it.mode === 'xaas' && ours.has(it.from) && !ours.has(it.to) && !it.soon);
+  const consumers = [...new Set(provided.map((it) => `${counterpart(model, it.to).label}${it.label ? ` (${it.label})` : ''}`))];
+  const serviceDetails = [consumers.length ? `to ${consumers.join(', ')}` : '', apiField(team, 'service')].filter(Boolean).join('; ');
+
+  const mine = model.interactions.filter((it) => ours.has(it.from) || ours.has(it.to));
+  const dedupe = (its) => [...new Set(its.map((it) => apiRowSet(model, ours, it)))];
+  const internal = dedupe(mine.filter((it) => ours.has(it.from) && ours.has(it.to)));
+  const external = mine.filter((it) => !(ours.has(it.from) && ours.has(it.to)));
+  const now = dedupe(external.filter((it) => !it.soon));
+  const soon = dedupe(external.filter((it) => it.soon));
+  const focus = apiField(team, 'focus');
+
+  const lines = [
+    `# Team API: ${team.label}`,
+    '',
+    `Date: ${date}`,
+    '',
+    `* Team name and focus: ${team.label}${focus ? ` — ${focus}` : ''}`,
+    `* Team type: ${typeLine}`,
+    `* Owns ${team.load.nodes}: ${owned.map((n) => `${n.id} (${TYPE_KEYWORDS[n.type]})`).join(', ')}`,
+    `* Streams: ${team.load.streams}`,
+  ];
+  if (team.load.subsystems) lines.push(`* Subsystems: ${team.load.subsystems}`);
+  if (team.load.streams > 1) {
+    lines.push('* A team aligned to more than one stream carries the cognitive load of all of them; the streams above are split candidates.');
+  }
+  if (team.load.subsystems > 1) {
+    lines.push('* A team owning more than one complicated subsystem carries each one\'s deep specialism; the subsystems above are split candidates.');
+  }
+  if (samePlatform) lines.push(`* Part of a Platform? (y/n) Details: y — part of ${samePlatform.label}`);
+  lines.push(
+    `* Do we provide a service to other teams? (y/n) Details: ${provided.length || apiField(team, 'service') ? 'y' : 'n'}${serviceDetails ? ` — ${serviceDetails}` : ''}`,
+    `* What kind of Service Level Expectations do other teams have of us? ${apiField(team, 'sle')}`.trimEnd(),
+    `* Software owned and evolved by this team: ${apiField(team, 'software')}`.trimEnd(),
+    `* Versioning approaches: ${apiField(team, 'versioning')}`.trimEnd(),
+    `* Wiki search terms: ${apiField(team, 'wiki')}`.trimEnd(),
+    `* Chat tool channels: ${apiField(team, 'chat')}`.trimEnd(),
+    `* Time of daily sync meeting: ${apiField(team, 'sync')}`.trimEnd(),
+    '',
+    '### What we\'re currently working on',
+    '',
+    `* Our services and systems: ${apiField(team, 'workingon')}`.trimEnd(),
+    `* Ways of working: ${apiField(team, 'waysofworking')}`.trimEnd(),
+    `* Wider cross-team or organisational improvements: ${apiField(team, 'improvements')}`.trimEnd(),
+    '',
+    '### Teams we currently interact with',
+    '',
+    apiTable(now),
+    '',
+    '### Internal',
+    '',
+    apiTable(internal),
+    '',
+    '### Teams we expect to interact with soon',
+    '',
+    apiTable(soon),
+    '',
+  );
+  return lines.join('\n');
+}
+
 /**
- * The Team API document for one team, as Markdown following the Team API template.
+ * The Team API document for one team. An owned node's id resolves to its owning team,
+ * so a CLI or a deep link that names a stream still gets a document.
  * opts: { date: string }
  */
 export function teamApi(input, id, opts = {}) {
   const model = typeof input === 'string' ? parse(input) : input;
-  const node = model.index[id];
-  if (!node) throw new Error(`unknown team "${id}"`);
+  let entry = model.index[id];
+  if (!entry) throw new Error(`unknown team "${id}"`);
+  if (!entry.isTeam && entry.owners.length) entry = model.index[entry.owners[0]];
+  return entry.isTeam ? orgTeamApi(model, entry, opts) : nodeApi(model, entry, opts);
+}
+
+/**
+ * The Team API document for one topology node no team owns, as Markdown following the
+ * Team API template.
+ */
+function nodeApi(model, node, opts) {
   const date = opts.date ?? new Date().toISOString().slice(0, 10);
   const yn = (cond) => (cond ? 'y' : 'n');
 
@@ -1492,10 +1832,17 @@ export function teamApi(input, id, opts = {}) {
   ].join('\n');
 }
 
-/** Team API documents for every team in the diagram (groups excluded): [{ id, label, markdown }]. */
+/**
+ * Team API documents for every real team, then every unowned node (groups excluded):
+ * [{ id, label, markdown }]. An owned node has no document of its own — its team has one.
+ */
 export function teamApis(input, opts = {}) {
   const model = typeof input === 'string' ? parse(input) : input;
-  return model.teams.filter((t) => t.type !== 'group').map((t) => ({ id: t.id, label: t.label, markdown: teamApi(model, t.id, opts) }));
+  const doc = (e) => ({ id: e.id, label: e.label, markdown: teamApi(model, e.id, opts) });
+  return [
+    ...model.orgTeams.map(doc),
+    ...model.teams.filter((t) => t.type !== 'group' && !t.owners.length).map(doc),
+  ];
 }
 
 function depth(model, node) {
@@ -1504,4 +1851,4 @@ function depth(model, node) {
   return d;
 }
 
-export default { parse, layout, render, teamApi, teamApis, textWidth, wrapText, textVerticalExtent, VERSION, THEMES, TEAM_TYPES, MODES, TEAM_API_FIELDS, ParseError };
+export default { parse, layout, render, teamApi, teamApis, textWidth, wrapText, textVerticalExtent, VERSION, THEMES, TEAM_TYPES, TYPE_KEYWORDS, MODES, TEAM_API_FIELDS, ParseError };

@@ -843,6 +843,379 @@ test('interactions expected soon render dashed and faded', () => {
   assert.ok(/<polygon[^>]*stroke-dasharray="5 4"[^>]*opacity="0.55"|<polygon[^>]*opacity="0.55"[^>]*stroke-dasharray="5 4"/.test(svg));
 });
 
+// ── backward-compatibility corpus ──
+
+test('every example renders byte-identically to its committed svg', () => {
+  const files = readdirSync(examplesDir).filter((f) => f.endsWith('.tt')).sort();
+  assert.ok(files.length >= 3);
+  for (const f of files) {
+    const source = readFileSync(join(examplesDir, f), 'utf8');
+    const expected = readFileSync(join(examplesDir, f.replace(/\.tt$/, '.svg')), 'utf8');
+    assert.equal(render(source) + '\n', expected, f);
+  }
+});
+
+test('teamApis markdown is stable for every example', () => {
+  const golden = JSON.parse(readFileSync(join(here, 'teamtopo.api.golden.json'), 'utf8'));
+  const files = readdirSync(examplesDir).filter((f) => f.endsWith('.tt')).sort();
+  assert.deepEqual(files, Object.keys(golden));
+  for (const f of files) {
+    const actual = teamApis(readFileSync(join(examplesDir, f), 'utf8'), { date: '2026-01-01' })
+      .map((t) => `${t.id}\n${t.markdown}`).join('\n---\n');
+    assert.equal(actual, golden[f], f);
+  }
+});
+
+// ── team identity ──
+
+const TEAM_SRC = `teamTopology
+  stream desktop "Desktop"
+  stream sharepoint "SharePoint Proxy"
+  subsystem crypto "Crypto"
+  team alpha "Alpha"
+  alpha owns desktop, sharepoint
+  api alpha {
+    focus: endpoint protection
+  }`;
+
+test('declares teams and resolves ownership', () => {
+  const m = parse(TEAM_SRC);
+  assert.equal(m.orgTeams.length, 1);
+  const alpha = m.orgTeams[0];
+  assert.equal(alpha.isTeam, true);
+  assert.equal(alpha.label, 'Alpha');
+  assert.deepEqual(alpha.owns, ['desktop', 'sharepoint']);
+  assert.deepEqual(alpha.load, { streams: 2, subsystems: 0, nodes: 2 });
+  assert.deepEqual(m.index.desktop.owners, ['alpha']);
+  assert.deepEqual(m.index.crypto.owners, []);
+  assert.equal(m.index.alpha.api.focus, 'endpoint protection');
+  assert.deepEqual(m.diagnostics.length >= 0, true);
+});
+
+test('owns accumulates across lines, deduped, and counts only streams', () => {
+  const m = parse(`teamTopology
+    stream desktop "Desktop"
+    subsystem crypto "Crypto"
+    team alpha "Alpha"
+    alpha owns desktop
+    alpha owns crypto, desktop`);
+  assert.deepEqual(m.orgTeams[0].owns, ['desktop', 'crypto']);
+  assert.deepEqual(m.orgTeams[0].load, { streams: 1, subsystems: 1, nodes: 2 });
+  assert.equal(m.orgTeams[0].ownsLine, 6);
+});
+
+test('a placeholder team with no owns line is valid', () => {
+  const m = parse('teamTopology\nteam alpha "Alpha"');
+  assert.deepEqual(m.orgTeams[0].owns, []);
+  assert.deepEqual(m.orgTeams[0].load, { streams: 0, subsystems: 0, nodes: 0 });
+});
+
+test('owns is matched before the node keywords and only for non-keyword ids', () => {
+  for (const id of ['sales', 'engineering', 'platform_core']) {
+    const m = parse(`teamTopology\nstream x "X"\nteam ${id} "T"\n${id} owns x`);
+    assert.deepEqual(m.orgTeams[0].owns, ['x'], id);
+  }
+  const m = parse('teamTopology\nstream owns "Owns"');
+  assert.equal(m.index.owns.type, 'stream');
+  assert.equal(m.orgTeams.length, 0);
+});
+
+test('team and owns keywords are case-insensitive', () => {
+  const m = parse('teamTopology\nstream x "X"\nTEAM alpha "Alpha"\nalpha OWNS x');
+  assert.deepEqual(m.orgTeams[0].owns, ['x']);
+});
+
+test('team identity errors', () => {
+  const cases = [
+    ['teamTopology\nstream x\nteam x "X"', /duplicate identifier "x"/, 3],
+    ['teamTopology\nteam a "A"\nteam a "A2"', /duplicate identifier "a"/, 3],
+    ['teamTopology\nstream x\na owns x', /"a" is not a team/, 3],
+    ['teamTopology\nteam a "A"\na owns nope', /owns names an unknown team "nope"/, 3],
+    ['teamTopology\ngroup g {\nstream x\n}\nteam a "A"\na owns g', /"g" is a container/, 6],
+    ['teamTopology\nstream x\nteam a "A"\na owns x\napi x {\n  focus: f\n}',
+      /api x belongs to team a, which owns x; move these fields into "api a"/, 5],
+    ['teamTopology\nstream x\nteam a "A"\na owns x\na --> x', /"a" is a team, not a node; use one of the nodes it owns \(x\)/, 5],
+  ];
+  for (const [src, re, line] of cases) {
+    assert.throws(() => parse(src), (e) => e instanceof ParseError && re.test(e.message) && e.line === line, src);
+  }
+});
+
+test('an unclosed apiFields block is a parse error', () => {
+  assert.throws(() => parse('teamTopology\napiFields {\n  focus'), (e) => e instanceof ParseError && /apiFields block is never closed/.test(e.message));
+});
+
+test('apiFields is parsed into the model and otherwise unused', () => {
+  const m = parse(`teamTopology
+  apiFields {
+    focus
+    tier: gold | silver | bronze
+
+    wiki
+  }
+  stream x "X"`);
+  assert.deepEqual(m.apiFields, [
+    { key: 'focus', choices: [], group: 0 },
+    { key: 'tier', choices: ['gold', 'silver', 'bronze'], group: 0 },
+    { key: 'wiki', choices: [], group: 1 },
+  ]);
+});
+
+// ── diagnostics ──
+
+test('a multi-stream team warns once, on its last owns line, with the final count', () => {
+  const m = parse(`teamTopology
+    stream desktop "Desktop"
+    stream sharepoint "SharePoint"
+    stream web "Web"
+    team alpha "Alpha"
+    alpha owns desktop
+    alpha owns sharepoint
+    alpha owns web`);
+  assert.equal(m.diagnostics.length, 1);
+  const d = m.diagnostics[0];
+  assert.equal(d.level, 'warning');
+  assert.equal(d.code, 'team-multi-stream');
+  assert.equal(d.line, 8);
+  assert.equal(d.message,
+    'team alpha is aligned to 3 streams: desktop, sharepoint, web; a team aligned to more than one stream carries extra cognitive load');
+});
+
+test('one stream, or a stream plus a subsystem, does not warn', () => {
+  const one = parse('teamTopology\nstream x\nteam a "A"\na owns x');
+  assert.deepEqual(one.diagnostics, []);
+  const mixed = parse('teamTopology\nstream x\nsubsystem y\nteam a "A"\na owns x, y');
+  assert.deepEqual(mixed.diagnostics, []);
+  assert.deepEqual(mixed.orgTeams[0].load, { streams: 1, subsystems: 1, nodes: 2 });
+});
+
+test('a team owning several complicated subsystems warns the same way', () => {
+  const m = parse(`teamTopology
+    subsystem pricing "Pricing"
+    subsystem billing "Billing"
+    stream web "Web"
+    team alpha "Alpha"
+    alpha owns pricing
+    alpha owns billing, web`);
+  assert.deepEqual(m.orgTeams[0].load, { streams: 1, subsystems: 2, nodes: 3 });
+  assert.deepEqual(m.diagnostics.map((d) => d.code), ['team-multi-subsystem']);
+  const d = m.diagnostics[0];
+  assert.equal(d.level, 'warning');
+  assert.equal(d.line, 7);
+  assert.equal(d.message,
+    'team alpha owns 2 complicated subsystems: pricing, billing; each carries its own deep specialism, so one team owning several carries extra cognitive load');
+});
+
+test('one subsystem does not warn, and both rules can fire for one team', () => {
+  assert.deepEqual(parse('teamTopology\nsubsystem y\nteam a "A"\na owns y').diagnostics, []);
+  const both = parse(`teamTopology
+    stream w "W"
+    stream x "X"
+    subsystem y "Y"
+    subsystem z "Z"
+    team a "A"
+    a owns w, x, y, z`);
+  assert.deepEqual(both.diagnostics.map((d) => d.code), ['team-multi-stream', 'team-multi-subsystem']);
+});
+
+test('the team document counts subsystems and adds their split-candidate note', () => {
+  const md = teamApi(`teamTopology
+    subsystem pricing "Pricing"
+    subsystem billing "Billing"
+    team a "A"
+    a owns pricing, billing`, 'a', { date: '2026-01-01' });
+  assert.match(md, /^\* Streams: 0$/m);
+  assert.match(md, /^\* Subsystems: 2$/m);
+  assert.match(md, /each one's deep specialism; the subsystems above are split candidates/);
+  // a team with no subsystem keeps the document it had
+  const plain = teamApi('teamTopology\nstream x "X"\nteam a "A"\na owns x', 'a', { date: '2026-01-01' });
+  assert.ok(!/Subsystems:/.test(plain));
+});
+
+test('the legend shows a subsystem load riding alongside the stream count', () => {
+  const svg = render(`teamTopology
+    stream w "W"
+    subsystem y "Y"
+    subsystem z "Z"
+    team a "A"
+    a owns w, y, z`);
+  assert.match(svg, />A \(1 stream, 2 subsystems\)</);
+});
+
+test('diagnostics is always an array and never throws', () => {
+  assert.deepEqual(parse('teamTopology\nstream x').diagnostics, []);
+  assert.deepEqual(parse('teamTopology').diagnostics, []);
+});
+
+// ── team api bound to a team ──
+
+const OWNED_SRC = `teamTopology
+  stream desktop "Desktop"
+  stream sharepoint "SharePoint Proxy"
+  platform infra "Infra"
+  stream gateway "Gateway"
+  team alpha "Alpha"
+  team bravo "Bravo"
+  alpha owns desktop, sharepoint
+  bravo owns gateway
+  desktop <--> sharepoint : shared installer
+  infra --> desktop : CI
+  infra --> sharepoint : CI
+  gateway <--> desktop : token exchange
+  api alpha {
+    focus: endpoint protection
+  }
+  api bravo {
+    focus: north-south traffic
+  }`;
+
+test('teamApis emits one document per team plus one per unowned node', () => {
+  const ids = teamApis(OWNED_SRC, { date: '2026-01-01' }).map((t) => t.id);
+  assert.deepEqual(ids, ['alpha', 'bravo', 'infra']);
+});
+
+test('teamApi resolves an owned node id to its owning team', () => {
+  const model = parse(OWNED_SRC);
+  assert.equal(teamApi(model, 'desktop', { date: '2026-01-01' }), teamApi(model, 'alpha', { date: '2026-01-01' }));
+});
+
+test('the team document lists ownership, the stream count and the load note', () => {
+  const md = teamApi(OWNED_SRC, 'alpha', { date: '2026-01-01' });
+  assert.match(md, /^# Team API: Alpha$/m);
+  assert.match(md, /^\* Team type: Stream-Aligned$/m);
+  assert.match(md, /^\* Owns 2: desktop \(stream-aligned\), sharepoint \(stream-aligned\)$/m);
+  assert.match(md, /^\* Streams: 2$/m);
+  assert.match(md, /cognitive load of all of them; the streams above are split candidates/);
+});
+
+test('a single-node team pluralises Owns and omits the load note', () => {
+  const md = teamApi(OWNED_SRC, 'bravo', { date: '2026-01-01' });
+  assert.match(md, /^\* Owns 1: gateway \(stream-aligned\)$/m);
+  assert.match(md, /^\* Streams: 1$/m);
+  assert.ok(!/split candidates/.test(md));
+});
+
+test('an interaction inside one team is Internal, and rows resolve to the owning team', () => {
+  const md = teamApi(OWNED_SRC, 'alpha', { date: '2026-01-01' });
+  const internal = md.slice(md.indexOf('### Internal'));
+  assert.match(internal, /shared installer/);
+  const current = md.slice(md.indexOf('### Teams we currently interact with'), md.indexOf('### Internal'));
+  assert.ok(!/shared installer/.test(current));
+  // gateway is owned by Bravo, so the row names Bravo and Bravo's focus
+  assert.match(current, /\| Bravo \/ north-south traffic \|/);
+  // two owned nodes consuming the same service from Infra collapse to one row
+  assert.equal(current.split('\n').filter((l) => l.includes('| Infra |')).length, 1);
+});
+
+test('an unowned node reports an owned counterpart as its owning team', () => {
+  const md = teamApi(OWNED_SRC, 'infra', { date: '2026-01-01' });
+  assert.match(md, /\| Alpha \/ endpoint protection \|/);
+  assert.ok(!/\| Desktop \|/.test(md));
+});
+
+test('a team owning a stream and a subsystem unions both type names', () => {
+  const md = teamApi(`teamTopology
+    stream x "X"
+    subsystem y "Y"
+    team a "A"
+    a owns x, y`, 'a', { date: '2026-01-01' });
+  assert.match(md, /^\* Team type: Stream-Aligned, Complicated Subsystem$/m);
+});
+
+test('a placeholder team gets a document with no platform line', () => {
+  const md = teamApi('teamTopology\nteam a "A"', 'a', { date: '2026-01-01' });
+  assert.match(md, /^\* Team type: Team$/m);
+  assert.match(md, /^\* Owns 0: $/m);
+  assert.ok(!/Part of a Platform/.test(md));
+});
+
+test('the platform line appears only when every owned node is in the same platform', () => {
+  const same = teamApi(`teamTopology
+    platform p "P" {
+      stream a "A"
+      stream b "B"
+    }
+    team t "T"
+    t owns a, b`, 't', { date: '2026-01-01' });
+  assert.match(same, /Part of a Platform\? \(y\/n\) Details: y — part of P/);
+  const split = teamApi(`teamTopology
+    platform p "P" {
+      stream a "A"
+    }
+    stream b "B"
+    team t "T"
+    t owns a, b`, 't', { date: '2026-01-01' });
+  assert.ok(!/Part of a Platform/.test(split));
+});
+
+// ── team chips and legend ──
+
+const CHIP_SRC = `teamTopology
+  stream desktop "Desktop"
+  stream sharepoint "SharePoint"
+  stream gateway "Gateway"
+  team alpha "Alpha"
+  team bravo "Bravo"
+  alpha owns desktop, sharepoint
+  bravo owns gateway, desktop`;
+
+test('a team-free diagram gets no chips and no team legend', () => {
+  const svg = render('teamTopology\nstream a "A"');
+  assert.ok(!svg.includes('tt-chips'));
+  assert.ok(!svg.includes('tt-team-legend'));
+});
+
+test('each owned node gets a chip and the legend names every team once', () => {
+  const svg = render(CHIP_SRC);
+  assert.equal((svg.match(/class="tt-chips"/g) || []).length, 3);
+  assert.equal((svg.match(/class="tt-team-legend"/g) || []).length, 1);
+  assert.equal((svg.match(/>Alpha \(2 streams\)</g) || []).length, 1);
+  assert.equal((svg.match(/>Bravo \(2 streams\)</g) || []).length, 1);
+});
+
+test('chip colours are deterministic across renders', () => {
+  assert.equal(render(CHIP_SRC), render(CHIP_SRC));
+});
+
+test('a node owned by two teams carries two chips', () => {
+  const svg = render(CHIP_SRC);
+  const from = svg.indexOf('data-id="desktop"');
+  const next = svg.indexOf('data-id=', from + 10);
+  const desktop = svg.slice(from, next === -1 ? undefined : next);
+  assert.equal((desktop.match(/class="tt-chip"/g) || []).length, 2);
+});
+
+test('more than three owners collapse to three chips and a +N', () => {
+  const src = ['teamTopology', 'stream x "X"',
+    ...['a', 'b', 'c', 'd'].map((t) => `team ${t} "T${t}"`),
+    ...['a', 'b', 'c', 'd'].map((t) => `${t} owns x`)].join('\n');
+  const svg = render(src);
+  assert.equal((svg.match(/class="tt-chip"/g) || []).length, 3);
+  assert.match(svg, />\+1</);
+});
+
+test('past twenty teams the chip layer is suppressed with a note', () => {
+  const ids = Array.from({ length: 21 }, (_, i) => `t${i}`);
+  const src = ['teamTopology', ...ids.map((t) => `stream s${t} "S"`),
+    ...ids.map((t) => `team ${t} "T"`), ...ids.map((t) => `${t} owns s${t}`)].join('\n');
+  const svg = render(src);
+  assert.ok(!svg.includes('class="tt-chip"'));
+  assert.match(svg, /21 teams — ownership shown in the Team APIs/);
+});
+
+test('the team legend is independent of the type legend', () => {
+  const withTeams = render(CHIP_SRC, { legend: false });
+  assert.ok(withTeams.includes('tt-team-legend'));
+  assert.ok(!withTeams.includes('class="tt-legend"'));
+  const both = render(`${CHIP_SRC}\n  legend`);
+  assert.ok(both.includes('tt-team-legend') && both.includes('class="tt-legend"'));
+});
+
+test('a team owning no stream shows its node count in the legend', () => {
+  const svg = render('teamTopology\nsubsystem y "Y"\nteam a "A"\na owns y');
+  assert.match(svg, />A \(1 subsystem\)</);
+});
+
 // ── #28: labels for every interaction mode (plates, mode colour, labelPos) ──
 
 // WCAG relative luminance / contrast ratio — implemented here only; no new dependency.
