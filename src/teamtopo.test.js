@@ -42,25 +42,74 @@ test('parses attributes', () => {
 });
 
 test('maps operators to interaction modes and roles', () => {
+  // one pair per interaction: a pair may hold only one current mode
   const m = parse(`teamTopology
     stream a
     stream b
+    stream c
+    stream d
     platform p
+    platform q
     enabling e
+    enabling f
     p --> a : api
-    a <-- p
+    b <-- q
     a <--> b
-    b <-> a
+    c <-> d
     e ~~> a
-    a <~~ e`);
+    b <~~ f`);
   assert.deepEqual(m.interactions.map((i) => [i.mode, i.from, i.to, i.label]), [
     ['xaas', 'p', 'a', 'api'],
-    ['xaas', 'p', 'a', ''],
+    ['xaas', 'q', 'b', ''],
     ['collaboration', 'a', 'b', ''],
-    ['collaboration', 'b', 'a', ''],
+    ['collaboration', 'c', 'd', ''],
     ['facilitating', 'e', 'a', ''],
-    ['facilitating', 'e', 'a', ''],
+    ['facilitating', 'f', 'b', ''],
   ]);
+});
+
+test('rejects a second current interaction between the same pair, in either direction', () => {
+  const src = `teamTopology
+    stream a
+    stream b
+    a <--> b : experiment design
+    a --> b : event pipeline`;
+  assert.throws(() => parse(src), (e) => e instanceof ParseError
+    && e.line === 5
+    && /"a" and "b" already interact \(Collaboration on line 4\)/.test(e.message)
+    && /one interaction mode at a time/.test(e.message), src);
+
+  // direction does not matter: b --> a is the same pair as a <--> b
+  assert.throws(() => parse('teamTopology\nstream a\nstream b\na <--> b\nb --> a'),
+    (e) => e instanceof ParseError && e.line === 5 && /already interact \(Collaboration on line 4\)/.test(e.message));
+
+  // nor does the mode: the same mode twice is still two interactions
+  assert.throws(() => parse('teamTopology\nstream a\nplatform p\np --> a\na <-- p'),
+    (e) => e instanceof ParseError && e.line === 5 && /already interact \(X-as-a-Service on line 4\)/.test(e.message));
+
+  // a list that names the same pair twice reports the line it is on
+  assert.throws(() => parse('teamTopology\nstream a\nstream b\na, a <--> b'),
+    (e) => e instanceof ParseError && e.line === 4 && /already interact \(Collaboration earlier on this line\)/.test(e.message));
+});
+
+test('accepts one current plus one [soon] interaction between the same pair', () => {
+  const m = parse(`teamTopology
+    stream search
+    subsystem ranking
+    search <--> ranking : new signals [duration="8 weeks"]
+    ranking --> search : Ranking API [soon]`);
+  assert.deepEqual(m.interactions.map((i) => [i.mode, i.from, i.to, i.soon]), [
+    ['collaboration', 'search', 'ranking', false],
+    ['xaas', 'ranking', 'search', true],
+  ]);
+  // ... but not two expected ones
+  assert.throws(() => parse(`teamTopology
+    stream a
+    stream b
+    a <--> b [soon]
+    a --> b [expected]`), (e) => e instanceof ParseError
+      && e.line === 5
+      && /already have an interaction expected soon \(Collaboration on line 4\)/.test(e.message));
 });
 
 test('expands comma lists on both sides of an interaction', () => {
@@ -118,6 +167,7 @@ test('reports errors with line numbers', () => {
     ['teamTopology\nstream a\na --> b', /unknown team "b"/, 3],
     ['teamTopology\nstream a\na --> a', /cannot interact with itself/, 3],
     ['teamTopology\nplatform p {\nstream a\n}\np --> a', /nested/, 5],
+    ['teamTopology\nstream a\nstream b\na <--> b\nb --> a', /already interact/, 5],
     ['teamTopology\nstream a {\n}', /only "platform" and "group"/, 2],
     ['teamTopology\nplatform p {\nstream a', /never closed/, 3],
     ['teamTopology\n}', /unexpected "}"/, 2],
@@ -1609,11 +1659,13 @@ test('an interaction shape never covers a team label (examples/ecommerce.tt and 
   const cases = [
     ['examples/ecommerce.tt', readFileSync(join(examplesDir, 'ecommerce.tt'), 'utf8')],
     ['examples/group-interactions.tt', readFileSync(join(examplesDir, 'group-interactions.tt'), 'utf8')],
+    // the collaboration is [soon] because a pair holds one current mode at a time;
+    // [soon] changes only dash and opacity, so the geometry under test is unchanged
     ['subsystem fixture', `teamTopology
       stream search "Search & Discovery"
       subsystem ranking "Ranking Engine" [note="ML relevance model"]
       ranking --> search : Ranking API
-      search <--> ranking : new signals`],
+      search <--> ranking : new signals [soon]`],
   ];
   for (const [name, src] of cases) {
     const lay = layout(parse(src));
