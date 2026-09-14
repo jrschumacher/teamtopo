@@ -169,6 +169,17 @@ crossing rather than as the two frames touching. Boundaries nothing crosses stay
 at the flat 32px, and a boundary a shape merely passes over on its way to a
 farther frame is not widened.
 
+**One interaction mode per pair.** Two teams have one interaction mode at a time —
+collaboration is meant to evolve into X-as-a-Service, not to run alongside it. A second
+interaction between the same two teams is a parse error naming both lines, whichever way
+round each is written (`a <--> b` and `b --> a` are the same pair). The one exception is
+today's mode plus the one expected next, which is exactly one `[soon]` line:
+
+```
+search  <--> ranking : new signals [duration="8 weeks"]
+ranking --> search   : Ranking API [soon]
+```
+
 ### Directives
 
 | Directive | Effect |

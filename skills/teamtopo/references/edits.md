@@ -111,7 +111,15 @@ security ~~> catalog    : threat modelling [soon, duration="6 weeks"]
 ```
 
 Drawn dashed and faded; listed under "Teams we expect to interact with soon" in both
-teams' Team API documents. When the interaction starts, remove `[soon]`.
+teams' Team API documents. When the interaction starts, remove `[soon]` — and delete the
+line it replaces, since a pair may hold only one current interaction.
+
+A `[soon]` line is also the only way to show a pair's next mode beside its current one:
+
+```
+search  <--> ranking : new signals [duration="8 weeks"]
+ranking --> search   : Ranking API [soon]
+```
 
 ## Change an interaction mode
 

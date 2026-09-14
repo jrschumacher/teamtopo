@@ -21,8 +21,9 @@ teamTopology
   %% Interactions
   infra    --> checkout, search, accounts : Kubernetes & CI [duration=ongoing]
   payments --> checkout                   : Payments API
+  %% One interaction mode per pair: the collaboration that designed the ranking
+  %% signals ended when the API landed, so it is not a second line here
   ranking  --> search                     : Ranking API
-  search   <--> ranking                   : new signals
   devex    ~~> checkout, accounts         : CI pipelines [duration="until Q3"]
 
   %% Expected soon: drawn dashed, listed under "teams we expect to interact with soon"
