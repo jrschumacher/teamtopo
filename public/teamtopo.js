@@ -462,6 +462,7 @@ const L = {
   margin: 32, lineH: 1.25, noteFs: 11, titleH: 40, flowH: 46, legendH: 64, labelFs: 11,
   leaderGap: 6, topClear: 8, railH: 26, railGap: 10, tipClear: 26, wedgeInset: 8,
   chipW: 26, chipH: 14, chipGap: 4, teamLegendH: 30,
+  markerW: 46, markerH: 9, markerRise: 3,
   fs: { stream: 14, platform: 14, subsystem: 12, enabling: 12, group: 13 },
 };
 
@@ -670,16 +671,34 @@ function structure(children, model, forcedW = 0) {
   const topFrames = frames.filter((c) => rankOf(c) < 2);
   const botFrames = frames.filter((c) => rankOf(c) === 2);
 
-  // an enabling team that facilitates two or more sibling top-level frames is drawn as
-  // one shared horizontal rail spanning them, instead of a right-hand column with one
-  // patch/band per relationship (issue #22). Every other enabling team (a single target,
-  // or targets inside a lane) keeps the column treatment below.
-  const frameIds = new Set(topFrames.map((f) => f.id));
-  const railEnab = topFrames.length > 1 ? enab.filter((n) => {
-    const targets = new Set(model.interactions.filter((it) => it.mode === 'facilitating' && it.from === n.id).map((it) => it.to));
-    return [...targets].filter((t) => frameIds.has(t)).length >= 2;
-  }) : [];
+  // anything shared across two or more sibling top-level frames is drawn as one shared
+  // horizontal rail below them (issues #22, #37): an enabling team facilitating them, and
+  // a complicated subsystem they consume. The targets may be the frames themselves or
+  // specific teams inside them — a rail spans the frames that contain its targets, and
+  // targeted teams get a marker where the rail reaches them (see `layout()`), instead of
+  // a column with one patch/band/wedge per relationship. Everything else (a single
+  // target, or targets inside one frame) keeps the column treatment below.
+  const frameOf = new Map();   // node id → the sibling top-level frame that contains it
+  for (const f of topFrames) walk(f, (n) => frameOf.set(n.id, f.id));
+  const railSpan = (node, mode) => {
+    const ids = [];
+    for (const it of model.interactions) {
+      if (it.mode !== mode || it.from !== node.id) continue;
+      const f = frameOf.get(it.to);
+      if (f && !ids.includes(f)) ids.push(f);
+    }
+    return ids;
+  };
+  const railed = (nodes, mode) => (topFrames.length > 1 ? nodes.filter((n) => railSpan(n, mode).length >= 2) : []);
+  const railEnab = railed(enab, 'facilitating');
+  const railSubs = railed(subs, 'xaas');
   const barEnab = enab.filter((n) => !railEnab.includes(n));
+  const barSubs = subs.filter((n) => !railSubs.includes(n));
+  // subsystem rails sit closest to the frames they serve, enabling rails below them
+  const railRows = [
+    ...railSubs.map((node) => ({ node, mode: 'xaas' })),
+    ...railEnab.map((node) => ({ node, mode: 'facilitating' })),
+  ];
 
   // vertical elements get their own x slot: wedges to the left of the lane labels,
   // subsystems and enabling bars to the right
@@ -695,7 +714,7 @@ function structure(children, model, forcedW = 0) {
   // a wedge that covers several teams gets a wider base
   const wedgeSlots = [...wedgeGroups.values()].map((its) => ({ kind: 'wedge', its, w: L.wedgeW + Math.min(3, its.length - 1) * 28 }));
   const rightSlots = [
-    ...subs.map((node) => ({ kind: 'sub', node, w: L.subW })),
+    ...barSubs.map((node) => ({ kind: 'sub', node, w: L.subW })),
     ...barEnab.map((node) => ({ kind: 'en', node, w: L.enW })),
   ];
   const slotsWidth = (arr) => arr.reduce((a, s) => a + s.w + L.slotGap, 0);
@@ -747,23 +766,20 @@ function structure(children, model, forcedW = 0) {
       bx += l.w + (topGaps[i] ?? L.sideGap);
     });
     y += bandH;
-    // one shared rail row per facilitating enabling team, below the frame band; width
-    // spans from the leftmost to the rightmost frame it targets (untargeted frames in
-    // between are simply covered), height is fixed so canvas growth stays bounded.
-    for (const n of railEnab) {
-      const targets = model.interactions
-        .filter((it) => it.mode === 'facilitating' && it.from === n.id)
-        .map((it) => it.to)
-        .filter((t) => frameSpan.has(t));
-      const x0 = Math.min(...targets.map((t) => frameSpan.get(t)[0]));
-      const x1 = Math.max(...targets.map((t) => frameSpan.get(t)[1]));
+    // one shared rail row per shared team, below the frame band; width spans from the
+    // leftmost to the rightmost frame it reaches into (untargeted frames in between are
+    // simply covered), height is fixed so canvas growth stays bounded.
+    for (const r of railRows) {
+      const frames = railSpan(r.node, r.mode).filter((t) => frameSpan.has(t));
+      const x0 = Math.min(...frames.map((t) => frameSpan.get(t)[0]));
+      const x1 = Math.max(...frames.map((t) => frameSpan.get(t)[1]));
       y += L.railGap;
-      items.push({ kind: 'rail', node: n, x: x0, y, w: x1 - x0, h: L.railH });
+      items.push({ kind: 'rail', node: r.node, x: x0, y, w: x1 - x0, h: L.railH });
       y += L.railH;
     }
     if (lanes.length || plats.length || botLays.length) y += L.bandGap;
   }
-  const lanesTop = y + (subs.length ? L.subH / 2 + 8 : barEnab.length ? 20 : 2);
+  const lanesTop = y + (barSubs.length ? L.subH / 2 + 8 : barEnab.length ? 20 : 2);
   y = lanesTop;
   // all lanes in a frame share one label column: clear of wedge columns when a wedge
   // crosses any lane, clear of the subsystem/enabling columns, centred when there is room
@@ -903,6 +919,36 @@ function boundaryGeo(P, Q, inter) {
   return { kind: 'boundary', marker, label };
 }
 
+/**
+ * Marker geometry for one relationship a rail carries into a specific team inside a frame
+ * (issue #37): a small tab on the team's bottom edge, where the rail below reaches it,
+ * instead of a band or wedge painted across the team and its label. `index` and `count`
+ * spread the markers when several rails reach the same team. Returns
+ *   { kind: 'marker', rect: {x,y,w,h}, label: null | { x, y, text, anchor } }
+ */
+function markerGeo(target, inter, index = 0, count = 1) {
+  // each marker owns an equal slice of the target's width, so several rails reaching the
+  // same team neither overlap nor run their labels into one another
+  const slotW = target.w / count;
+  const slot = [target.x + index * slotW, target.x + (index + 1) * slotW];
+  const w = Math.max(18, Math.min(L.markerW, slotW - 16));
+  const cx = (slot[0] + slot[1]) / 2;
+  const y = target.y + target.h - L.markerRise;
+  // the label earns its place beside the tab only when tab and plate together fit in the
+  // marker's own slice — then the pair is centred in it; otherwise the tab alone is centred
+  // and the tooltip carries the label rather than spilling over a neighbour or a frame edge.
+  // One line only: the tab hangs in the gap below its team, with no room for a taller plate.
+  const plateW = inter.label ? textWidth(inter.label, L.labelFs) + 16 : 0;
+  const withLabel = plateW > 0 && w + 6 + plateW <= slotW - 12;
+  const x = withLabel ? cx - (w + 6 + plateW) / 2 : cx - w / 2;
+  const rect = { x, y, w, h: L.markerH };
+  const label = withLabel ? {
+    x: x + w + 6 + plateW / 2, y: y + L.markerH / 2, text: inter.label,
+    lines: [inter.label], plateW, plateH: L.labelFs * L.lineH + 8,
+  } : null;
+  return { kind: 'marker', rect, label };
+}
+
 /** Base point on P and apex on Q for a wedge or bridge between two boxes, preferring axis-aligned placement. */
 function facing(P, Q, xOverride) {
   const xo = overlap1d(P.x, P.x + P.w, Q.x, Q.x + Q.w);
@@ -948,9 +994,10 @@ export function layout(model, opts = {}) {
         boxes[n.id] = { x, y, w: it.w, h: it.h, node: n, kind: 'frame', lines: [n.label], note: n.attrs.note ? [n.attrs.note] : [], fs: L.fs.group };
         place(it.inner, x + it.inner.ox, y + it.inner.oy);
       } else if (it.kind === 'rail') {
+        const fs = L.fs[it.node.type];
         boxes[it.node.id] = {
-          x, y, w: it.w, h: it.h, node: it.node, kind: 'rail', fs: L.fs.enabling,
-          lines: [ellipsize(it.node.label, it.w - 16, L.fs.enabling)], note: [],
+          x, y, w: it.w, h: it.h, node: it.node, kind: 'rail', fs,
+          lines: [ellipsize(it.node.label, it.w - 16, fs)], note: [],
         };
       } else {
         boxes[it.node.id] = {
@@ -1004,13 +1051,60 @@ export function layout(model, opts = {}) {
   const edges = [];
   const corridors = [];   // x positions already used by vertical wedges, with their y ranges
   const solid = Object.values(boxes).filter((b) => b.kind !== 'frame');
-  const insideAny = (p, skip) => solid.some((b) => !skip.includes(b) && p.x > b.x && p.x < b.x + b.w && p.y > b.y && p.y < b.y + b.h);
+  // a rail is only one text line tall, so a wedge label parked right above or below one
+  // lands on it and its opaque plate hides the rail — keep labels a line clear of rails,
+  // flush against anything else
+  const clear = (b) => (b.kind === 'rail' ? L.labelFs * L.lineH / 2 + 3 : 0);
   const handled = new Set();
+  // a rail names the shared team once; each team it reaches into gets one marker on its
+  // bottom edge, so several rails marking the same team can be spread side by side. Only
+  // the relationship the rail was built for is marked — anything else (a collaboration
+  // with a railed team, say) keeps its own geometry.
+  const railCarries = (it) => {
+    const P = boxes[it.from], Q = boxes[it.to];
+    if (!P || !Q || P.kind !== 'rail') return false;
+    return it.mode === (P.node.type === 'subsystem' ? 'xaas' : 'facilitating');
+  };
+  const markerOn = new Map();   // target id → one interaction per rail that marks it
+  for (const it of model.interactions) {
+    if (!railCarries(it) || boxes[it.to].kind === 'frame') continue;
+    if (!markerOn.has(it.to)) markerOn.set(it.to, []);
+    const marks = markerOn.get(it.to);
+    if (!marks.some((o) => o.from === it.from)) marks.push(it);
+  }
+  // markers depend only on the team they sit on, so they are placed before the rest of the
+  // edges and their plates become obstacles for the labels that do hunt for a free spot
+  const markerGeos = new Map();
+  for (const [id, marks] of markerOn) {
+    marks.forEach((it, i) => markerGeos.set(it, markerGeo(boxes[id], it, i, marks.length)));
+  }
+  // a frame's name sits on its own opaque plate on the bottom edge (see frameSVG), and a
+  // marker's label on one of its own; a wedge label landing on either would cover it, so
+  // both count as occupied
+  const taken = Object.values(boxes).filter((b) => b.kind === 'frame').map((b) => {
+    const tw = textWidth(b.node.label, L.fs.group) + 16;
+    return { x: b.x + b.w / 2 - tw / 2, y: b.y + b.h - 10, w: tw, h: 20 };
+  });
+  for (const { label } of markerGeos.values()) {
+    if (label) taken.push({ x: label.x - label.plateW / 2, y: label.y - label.plateH / 2, w: label.plateW, h: label.plateH });
+  }
+  const insideAny = (p, skip) => taken.some((r) => p.x > r.x && p.x < r.x + r.w && p.y > r.y && p.y < r.y + r.h)
+    || solid.some((b) => {
+      const m = clear(b);
+      return !skip.includes(b) && p.x > b.x - m && p.x < b.x + b.w + m && p.y > b.y - m && p.y < b.y + b.h + m;
+    });
   for (const inter of model.interactions) {
     if (handled.has(inter)) continue;
     let P = boxes[inter.from], Q = boxes[inter.to];
     if (!P || !Q) continue;
-    if (inter.mode === 'facilitating' && P.kind === 'rail') continue;   // the rail itself carries the relationship
+    if (railCarries(inter)) {
+      // the rail spans a targeted frame outright; a team inside one is marked instead
+      if (Q.kind === 'frame') continue;
+      const geo = markerGeos.get(inter);
+      if (!geo) continue;   // a repeated line: one marker per rail and team
+      edges.push({ inter, geo });
+      continue;
+    }
     if (inter.mode === 'xaas') {
       if (P.kind === 'sub' && P.embeddedOn === inter.to) continue;   // embedding is the relationship
       if (
@@ -1103,6 +1197,14 @@ export function layout(model, opts = {}) {
             along = Math.min(48, len * 0.3);
             for (let a = along; a < len - 16; a += 16) {
               if (!insideAny({ x: f.from.x + ux * a, y: f.from.y + uy * a }, [P, ...group.map((i) => boxes[i.to])])) { along = a; break; }
+            }
+            // the plate is a good deal taller than the probe point, so it can still land on
+            // a frame's name and hide it — slide it further along until it clears
+            const plateAt = (a) => ({ x: f.from.x + ux * a - plateW / 2, y: f.from.y + uy * a - plateH / 2, w: plateW, h: plateH });
+            if (taken.some((r) => intersect(plateAt(along), r))) {
+              for (let a = along + 16; a < len - 16; a += 16) {
+                if (!taken.some((r) => intersect(plateAt(a), r))) { along = a; break; }
+              }
             }
           }
           label = { x: f.from.x + ux * along, y: f.from.y + uy * along, text, lines, plateW, plateH };
@@ -1251,6 +1353,7 @@ export function layout(model, opts = {}) {
   for (const b of Object.values(boxes)) { grow(b.x, b.y); grow(b.x + b.w, b.y + b.h); }
   for (const { geo } of edges) {
     for (const p of geo.points || []) grow(p.x, p.y);
+    if (geo.rect) { grow(geo.rect.x, geo.rect.y); grow(geo.rect.x + geo.rect.w, geo.rect.y + geo.rect.h); }
     if (geo.label) {
       if (geo.label.plateW != null) {
         const w = geo.label.plateW, h = geo.label.plateH;
@@ -1377,8 +1480,12 @@ function teamSVG(box, T, model, part = 'all', prefix = 'tt') {
       parts.push(el('path', { d: octagonPath(x, y, w, h, 12), fill: c.fill, stroke: c.stroke, 'stroke-width': 2 }));
       break;
     case 'rail':
-      // enabling colour on the stroke, facilitating hatch as the fill, so the legend still explains both
-      parts.push(el('rect', { x, y, width: w, height: h, rx: 6, fill: `url(#${prefix}-dots)`, stroke: c.stroke, 'stroke-width': 2 }));
+      // a subsystem rail is the team's own octagon flattened out; an enabling rail takes the
+      // enabling colour on the stroke and the facilitating hatch as the fill, so the legend
+      // still explains both
+      parts.push(node.type === 'subsystem'
+        ? el('path', { d: octagonPath(x, y, w, h, 10), fill: c.fill, stroke: c.stroke, 'stroke-width': 2 })
+        : el('rect', { x, y, width: w, height: h, rx: 6, fill: `url(#${prefix}-dots)`, stroke: c.stroke, 'stroke-width': 2 }));
       break;
     default:
       parts.push(el('rect', { x, y, width: w, height: h, rx: box.kind === 'en' ? 10 : 8, fill: c.fill, stroke: c.stroke, 'stroke-width': 2 }));
@@ -1397,12 +1504,15 @@ function teamSVG(box, T, model, part = 'all', prefix = 'tt') {
       el('text', { x: 0, y: 0, 'text-anchor': 'middle', 'font-size': fs, 'font-weight': 600, fill: c.text }, esc(node.label)),
     ]));
   } else if (box.kind === 'rail') {
-    // a shared rail's label sits directly on the facilitating dot pattern, so it gets
-    // the same opaque enabling-tinted plate as the rotated bar label above
     const cy = y + h / 2;
-    const plateW = textWidth(box.lines[0], box.fs) + 16;
-    const plateH = box.fs * L.lineH + 8;
-    parts.push(el('rect', { x: cx - plateW / 2, y: cy - plateH / 2, width: plateW, height: plateH, rx: 4, fill: c.plate }));
+    // an enabling rail's label sits directly on the facilitating dot pattern, so it gets
+    // the same opaque enabling-tinted plate as the rotated bar label above. A subsystem
+    // rail is a solid octagon, so its label needs no plate — like any other team box.
+    if (node.type !== 'subsystem') {
+      const plateW = textWidth(box.lines[0], box.fs) + 16;
+      const plateH = box.fs * L.lineH + 8;
+      parts.push(el('rect', { x: cx - plateW / 2, y: cy - plateH / 2, width: plateW, height: plateH, rx: 4, fill: c.plate }));
+    }
     parts.push(textBlock(box.lines, cx, cy, box.fs, c.text, { 'font-weight': 600 }));
   } else {
     const noteH = box.note.length ? L.noteFs * L.lineH + 2 : 0;
@@ -1516,6 +1626,18 @@ function edgeSVG({ inter, inters, geo }, lay, T, prefix) {
       if (geo.leader) parts.push(el('line', { x1: geo.leader.x, y1: geo.leader.y1, x2: geo.leader.x, y2: geo.leader.y2, stroke: T.facil.dot, 'stroke-width': 1.5, 'stroke-dasharray': '3 3' }));
       parts.push(plateLabelSVG(geo.label, T.facil.text, T.facil.plate));
       break;
+    case 'marker': {
+      // a tab on the target's bottom edge, in the mode's own idiom: the facilitating hatch
+      // for an enabling rail, the X-as-a-Service grey for a subsystem rail
+      const facil = inter.mode === 'facilitating';
+      parts.push(el('rect', {
+        x: geo.rect.x, y: geo.rect.y, width: geo.rect.w, height: geo.rect.h, rx: 3,
+        fill: facil ? `url(#${prefix}-dots)` : T.xaas.fill, stroke: facil ? T.facil.dot : T.xaas.stroke,
+        'stroke-width': 1, 'stroke-dasharray': facil ? '2 3' : null, opacity: inter.soon ? 0.55 : null,
+      }));
+      parts.push(plateLabelSVG(geo.label, facil ? T.facil.text : T.xaas.text, facil ? T.facil.plate : T.xaas.plate));
+      break;
+    }
     case 'boundary':
       parts.push(el('polygon', { points: pts(geo.marker), fill: T.xaas.fill, stroke: inter.soon ? T.xaas.text : T.xaas.stroke, 'stroke-width': 1, 'stroke-linejoin': 'round', ...soon }));
       if (geo.label) {

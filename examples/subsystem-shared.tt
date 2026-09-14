@@ -1,0 +1,24 @@
+teamTopology
+  title Complicated subsystem shared across groups
+  legend
+
+  group growth "Growth" {
+    stream acquisition "Acquisition"
+    stream retention   "Retention"
+  }
+
+  group commerce "Commerce" {
+    stream checkout "Checkout"
+    stream catalog  "Catalog"
+  }
+
+  group support "Support" {
+    stream helpdesk  "Helpdesk"
+    stream community "Community"
+  }
+
+  subsystem analytics "Analytics Engine"
+
+  analytics --> acquisition : event API
+  analytics --> checkout    : event API
+  analytics --> helpdesk    : event API
