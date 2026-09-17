@@ -1663,8 +1663,8 @@ test('unknown labelPos is a ParseError for non-xaas modes too', () => {
   );
 });
 
-test('frame gap growth stays xaas-only: a labelled collaboration between sibling frames does not widen the gap', () => {
-  const withCollab = layout(parse(`teamTopology
+test('label-driven frame gap growth stays xaas-only: a collaboration label does not widen the gap past the crossed-boundary minimum', () => {
+  const withLabel = layout(parse(`teamTopology
     group g1 {
       stream a
     }
@@ -1672,16 +1672,134 @@ test('frame gap growth stays xaas-only: a labelled collaboration between sibling
       stream b
     }
     g1 <--> g2 : a moderately long collaboration label`));
-  const plain = layout(parse(`teamTopology
+  const bare = layout(parse(`teamTopology
     group g1 {
       stream a
     }
     group g2 {
       stream b
-    }`));
-  assert.equal(withCollab.boxes.g2.x - (withCollab.boxes.g1.x + withCollab.boxes.g1.w),
-    plain.boxes.g2.x - (plain.boxes.g1.x + plain.boxes.g1.w),
+    }
+    g1 <--> g2`));
+  // both cross the boundary, so both get the #39 minimum; only an xaas label buys more
+  assert.equal(withLabel.boxes.g2.x - (withLabel.boxes.g1.x + withLabel.boxes.g1.w),
+    bare.boxes.g2.x - (bare.boxes.g1.x + bare.boxes.g1.w),
     'gap between the frames is unchanged by a labelled collaboration edge');
+});
+
+// ── #39: a crossed sibling-group boundary gets a comfortable minimum gap ──
+
+const gapBetween = (lay, a, b) => lay.boxes[b].x - (lay.boxes[a].x + lay.boxes[a].w);
+
+// The alignment-vs-flow shape from the shape gallery (docs/shapes/alignment-vs-flow.tt on
+// spike/shape-gallery): a lane in one tribe flows into a lane in the sibling tribe, so the
+// wedge has only the gap between the two frames to live in.
+const ISSUE_39_REPRODUCER = `teamTopology
+  title Reporting lines vs flow direction disagree
+
+  group platform_tribe "Platform Tribe" {
+    stream identity "Identity"
+    stream mobile_shell "Mobile Shell (reports to Platform)"
+  }
+
+  group growth_tribe "Growth Tribe" {
+    stream onboarding "Onboarding"
+  }
+
+  identity --> mobile_shell
+  mobile_shell --> onboarding : flow continues`;
+
+test('#39 reproducer: a wedge from a lane to a lane in the sibling group gets the crossed-boundary minimum', () => {
+  const lay = layout(parse(ISSUE_39_REPRODUCER));
+  assert.ok(gapBetween(lay, 'platform_tribe', 'growth_tribe') >= 64,
+    `crossed boundary is at least 64px (got ${gapBetween(lay, 'platform_tribe', 'growth_tribe')})`);
+});
+
+test('#39: an unlabelled crossing widens the gap just as a labelled one does', () => {
+  const src = (edge) => `teamTopology
+    group g1 {
+      stream a
+    }
+    group g2 {
+      stream b
+    }
+    ${edge}`;
+  for (const edge of ['a --> b', 'a --> b : shared runtime', 'a --> b [labelPos=above]',
+    'g1 --> g2', 'a <--> b', 'a ~~> b']) {
+    const lay = layout(parse(src(edge)));
+    assert.ok(gapBetween(lay, 'g1', 'g2') >= 64, `"${edge}" widens the boundary it crosses (got ${gapBetween(lay, 'g1', 'g2')})`);
+  }
+});
+
+test('#39: an uncrossed boundary keeps the flat 32px sideGap', () => {
+  // interactions inside each group, and from a team outside both, cross no boundary
+  const lay = layout(parse(`teamTopology
+    group g1 {
+      stream a
+      stream a2
+      a --> a2
+    }
+    group g2 {
+      stream b
+    }
+    platform core
+    core --> a, b`));
+  assert.equal(gapBetween(lay, 'g1', 'g2'), 32);
+});
+
+test('#39: the minimum applies to the boundary an interaction ends at, not the ones it flies over', () => {
+  const lay = layout(parse(`teamTopology
+    group g1 {
+      stream a
+    }
+    group g2 {
+      stream b
+    }
+    group g3 {
+      stream c
+    }
+    a --> c`));
+  assert.equal(gapBetween(lay, 'g1', 'g2'), 32, 'g1|g2 is only flown over');
+  assert.equal(gapBetween(lay, 'g2', 'g3'), 32, 'g2|g3 is only flown over');
+});
+
+test('#39: a label that needs more room than the minimum still gets it, and the cap still holds', () => {
+  const wide = layout(parse(`teamTopology
+    group g1 {
+      stream a
+    }
+    group g2 {
+      stream b
+    }
+    g1 --> g2 : policy decisions, key access and audit events for every tenant`));
+  const gap = gapBetween(wide, 'g1', 'g2');
+  assert.ok(gap > 64, `a wrapped label still buys more than the minimum (got ${gap})`);
+  assert.ok(gap <= 220, 'and frame gap growth stays capped');
+});
+
+test('#39: nested sibling frames get the same treatment as top-level ones', () => {
+  const lay = layout(parse(`teamTopology
+    group outer {
+      group g1 {
+        stream a
+      }
+      group g2 {
+        stream b
+      }
+      a --> b
+    }`));
+  assert.ok(gapBetween(lay, 'g1', 'g2') >= 64,
+    `crossed boundary inside a frame widens too (got ${gapBetween(lay, 'g1', 'g2')})`);
+});
+
+test('#39: ecommerce and enabling-groups have no crossed boundary, so neither moves', () => {
+  for (const f of ['ecommerce.tt', 'enabling-groups.tt']) {
+    const lay = layout(parse(readFileSync(join(examplesDir, f), 'utf8')));
+    const frames = Object.values(lay.boxes).filter((b) => b.kind === 'frame');
+    const band = frames.filter((b) => Math.abs(b.y - frames[0].y) < 1).sort((a, b) => a.x - b.x);
+    for (let i = 0; i < band.length - 1; i++) {
+      assert.equal(band[i + 1].x - (band[i].x + band[i].w), 32, `${f}: ${band[i].node.id}|${band[i + 1].node.id}`);
+    }
+  }
 });
 
 // ── owner feedback on PR #28: enabling-label plate, on-shape collab text, subsystem overlap ──

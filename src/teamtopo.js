@@ -458,7 +458,7 @@ function ellipsize(text, maxWidth, fontSize) {
 const L = {
   laneH: 48, laneGap: 14, platH: 56, platGap: 14, lanesToPlat: 64,
   subW: 112, subH: 56, enW: 68, wedgeW: 64, slotGap: 22, labelMin: 170,
-  pad: 24, frameTop: 26, frameBottom: 36, bandGap: 44, sideGap: 32, minW: 240,
+  pad: 24, frameTop: 26, frameBottom: 36, bandGap: 44, sideGap: 32, crossedGap: 64, minW: 240,
   margin: 32, lineH: 1.25, noteFs: 11, titleH: 40, flowH: 46, legendH: 64, labelFs: 11,
   leaderGap: 6, topClear: 8, railH: 26, railGap: 10, tipClear: 26, wedgeInset: 8,
   chipW: 26, chipH: 14, chipGap: 4, teamLegendH: 30,
@@ -781,7 +781,22 @@ function structure(children, model, forcedW = 0) {
     const { blockW } = wrapBlock(it.label, wedgeLabelTextMax(WEDGE.gapMax));
     return wedgeLabelSpan(blockW + WEDGE.platePad);
   };
-  const topGaps = topLays.slice(0, -1).map((l, i) => xaasLabelGap(l.node.id, topLays[i + 1].node.id));
+  // #39: an interaction with one end inside each of two adjacent sibling frames has
+  // only the gap between them to live in, and at the flat sideGap the frames read as
+  // touching and the shape crossing them as squeezed. Any crossed boundary therefore
+  // opens to at least L.crossedGap, whether or not the edge carries a label (a label
+  // wide enough to need more still gets more, via xaasLabelGap above); an uncrossed
+  // boundary keeps the flat sideGap. Only the two frames the interaction actually ends
+  // in widen — a wedge that reaches over an intervening frame is no better off for
+  // opening the boundaries it merely flies across.
+  const idsWithin = (node) => { const ids = new Set(); walk(node, (n) => ids.add(n.id)); return ids; };
+  const crossed = (A, B) => model.interactions.some((it) =>
+    (A.has(it.from) && B.has(it.to)) || (B.has(it.from) && A.has(it.to)));
+  const topIds = topLays.map((l) => idsWithin(l.node));
+  const topGaps = topLays.slice(0, -1).map((l, i) => {
+    const gap = xaasLabelGap(l.node.id, topLays[i + 1].node.id);
+    return crossed(topIds[i], topIds[i + 1]) ? Math.max(gap, L.crossedGap) : gap;
+  });
   const topBandW = topLays.reduce((a, l) => a + l.w, 0) + topGaps.reduce((a, g) => a + g, 0);
   let botLays = botFrames.map((c) => frame(c, model));
   // slot columns always get their own room beside a band of child frames
