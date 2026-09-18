@@ -1038,6 +1038,41 @@ function rankOf(node) {
 }
 
 /**
+ * #38: split one provider's same-label X-as-a-Service interactions into the runs
+ * that can honestly share a single sweep — consumers on adjacent rows of the lane /
+ * platform stack, with no unrelated row between them. Consumers outside that stack
+ * (a subsystem or an enabling bar) each keep a run of their own.
+ *
+ * `anchored` says the run starts on the row next to the provider, so its wedge can
+ * keep its base on the provider itself; an unanchored run would have to cross rows
+ * it does not serve to get there, so its wedge covers the run alone and a stem
+ * joins it back to the provider (see layout()).
+ *
+ * Returns [{ its, anchored }] — one entry per wedge to draw.
+ */
+function contiguousRuns(its, stackRow) {
+  const runs = [];
+  const rows = its.filter((it) => stackRow.has(it.to)).sort((a, b) => stackRow.get(a.to) - stackRow.get(b.to));
+  for (const it of rows) {
+    const open = runs[runs.length - 1];
+    // `<= 1` and not `=== row - 1`: two interactions can land on the same row (a current
+    // and a [soon] one between the same pair), and a repeated row continues the run
+    // rather than starting a second, overlapping one.
+    const gap = open ? stackRow.get(it.to) - stackRow.get(open.its[open.its.length - 1].to) : Infinity;
+    if (gap <= 1) open.its.push(it);
+    else runs.push({ its: [it] });
+  }
+  for (const run of runs) {
+    const provider = stackRow.get(run.its[0].from);
+    const first = stackRow.get(run.its[0].to);
+    const last = stackRow.get(run.its[run.its.length - 1].to);
+    run.anchored = provider === undefined || (provider < first ? first === provider + 1 : last === provider - 1);
+  }
+  for (const it of its) if (!stackRow.has(it.to)) runs.push({ its: [it], anchored: true });
+  return runs;
+}
+
+/**
  * Structural layout of one frame's children (relative coordinates).
  * Returns { w, h, items, slots, lanesRange } where items are lanes, platform bars and
  * child frames, and slots reserve x positions for the overlays placed later.
@@ -1092,8 +1127,19 @@ function structure(children, model, forcedW = 0) {
     if (!wedgeGroups.has(key)) wedgeGroups.set(key, []);
     wedgeGroups.get(key).push(it);
   }
-  // a wedge that covers several teams gets a wider base
-  const wedgeSlots = [...wedgeGroups.values()].map((its) => ({ kind: 'wedge', its, w: L.wedgeW + Math.min(3, its.length - 1) * 28 }));
+  // #38: the vertical stack a wedge can sweep — lanes top to bottom, then the
+  // platform bars beneath them. Overlays (subsystems, enabling bars) sit outside it.
+  const stackRow = new Map([...lanes, ...plats].map((n, i) => [n.id, i]));
+  // #38: one provider's wedges only collapse into a single sweep when the consumers
+  // sit next to each other in that stack; otherwise each contiguous run gets its own
+  // wedge, so no sweep implies coverage of a lane it has no relationship with.
+  // A wedge that covers several teams gets a wider base.
+  const wedgeSlots = [];
+  for (const its of wedgeGroups.values()) {
+    for (const run of contiguousRuns(its, stackRow)) {
+      wedgeSlots.push({ kind: 'wedge', its: run.its, anchored: run.anchored, w: L.wedgeW + Math.min(3, run.its.length - 1) * 28 });
+    }
+  }
   const rightSlots = [
     ...barSubs.map((node) => ({ kind: 'sub', node, w: L.subW })),
     ...barEnab.map((node) => ({ kind: 'en', node, w: L.enW })),
@@ -1281,7 +1327,7 @@ export function textVerticalExtent(box) {
  * `layout()`. Returns:
  *   { kind: 'boundary',
  *     marker: [{x,y},{x,y},{x,y}],                          // chevron triangle
- *     label: null | { lines, plate: {x,y,w,h}, cx, cy } }   // optional label plate
+ *     label: null | { lines, plate: {x,y,w,h}, x, y, plateW, plateH } }   // optional label plate
  */
 function boundaryGeo(P, Q, inter) {
   const top = P.y < Q.y ? P : Q;
@@ -1310,7 +1356,14 @@ function boundaryGeo(P, Q, inter) {
       const leftCx = cx - hw - 8 - plateW / 2;
       plateCx = leftCx >= spanX0 ? leftCx : plateCx;
     }
-    label = { lines, plate: { x: plateCx - plateW / 2, y: plateCy - plateH / 2, w: plateW, h: plateH }, cx: plateCx, cy: plateCy };
+    // #38: x/y/plateW/plateH are the names the shared canvas grow+shift pass in layout()
+    // looks for. This label used to carry only cx/cy, so that pass read `label.x` as
+    // undefined and poisoned the canvas bounds into NaN. One position, one name — a
+    // separate cx/cy would go stale the moment the canvas shifts.
+    label = {
+      lines, plate: { x: plateCx - plateW / 2, y: plateCy - plateH / 2, w: plateW, h: plateH },
+      x: plateCx, y: plateCy, plateW, plateH,
+    };
   }
   return { kind: 'boundary', marker, label };
 }
@@ -1549,6 +1602,18 @@ export function layout(model, opts = {}) {
         }
       }
       const f = facing(P, Q, xOverride);
+      // #38: an unanchored run does not start on the row next to the provider, so a
+      // base on the provider would sweep grey over the rows in between — rows this
+      // provider does not serve. Start the wedge at the run's own near edge and join
+      // it back to the provider with a thin stem, which reads as a connector rather
+      // than as coverage.
+      let stem = null;
+      if (slot && slot.anchored === false && f.axis === 'v') {
+        const near = group.map((i) => boxes[i.to]).reduce((n, b) => (Math.abs(center(b).y - pc.y) < Math.abs(center(n).y - pc.y) ? b : n));
+        const edge = P.y < near.y ? near.y : near.y + near.h;
+        stem = { x: f.from.x, y1: f.from.y, y2: edge };
+        f.from = { x: f.from.x, y: edge };
+      }
       if (Q.kind !== 'frame') {
         // the point reaches the far edge of a team, so the wedge covers it
         if (f.axis === 'v') f.to = { x: f.to.x, y: P.y < Q.y ? Q.y + Q.h : Q.y };
@@ -1606,7 +1671,7 @@ export function layout(model, opts = {}) {
           label = { x: f.from.x + ux * along, y: f.from.y + uy * along, text, lines, plateW, plateH };
         }
       }
-      edges.push({ inter, inters: group, geo: { kind: 'wedge', points, label, leader, axis: f.axis } });
+      edges.push({ inter, inters: group, geo: { kind: 'wedge', points, label, leader, stem, axis: f.axis } });
     } else if (inter.mode === 'collaboration' && intersect(P, Q)) {
       const small = P.w * P.h <= Q.w * Q.h ? P : Q;
       const text = inter.label || 'Collaboration';
@@ -1749,6 +1814,7 @@ export function layout(model, opts = {}) {
   for (const b of Object.values(boxes)) { grow(b.x, b.y); grow(b.x + b.w, b.y + b.h); }
   for (const { geo } of edges) {
     for (const p of geo.points || []) grow(p.x, p.y);
+    for (const p of geo.marker || []) grow(p.x, p.y);   // #38: the boundary chevron is geometry too
     if (geo.rect) { grow(geo.rect.x, geo.rect.y); grow(geo.rect.x + geo.rect.w, geo.rect.y + geo.rect.h); }
     if (geo.label) {
       if (geo.label.plateW != null) {
@@ -1772,9 +1838,12 @@ export function layout(model, opts = {}) {
     for (const b of Object.values(boxes)) { shift(b); if (b.labelZone) { b.labelZone[0] += padL; b.labelZone[1] += padL; } }
     for (const { geo } of edges) {
       for (const p of geo.points || []) shift(p);
+      for (const p of geo.marker || []) shift(p);
       if (geo.rect) shift(geo.rect);
+      if (geo.label && geo.label.plate) shift(geo.label.plate);   // boundary labels carry their own plate rect
       if (geo.label) shift(geo.label);
       if (geo.leader) { geo.leader.x += padL; geo.leader.y1 += padT; geo.leader.y2 += padT; }
+      if (geo.stem) { geo.stem.x += padL; geo.stem.y1 += padT; geo.stem.y2 += padT; }
     }
     maxX += padL; maxY += padT;
   }
@@ -2003,6 +2072,15 @@ function edgeSVG({ inter, inters, geo }, lay, T, prefix) {
   const soon = inter.soon ? { opacity: 0.55, 'stroke-dasharray': '5 4' } : {};
   switch (geo.kind) {
     case 'wedge':
+      // #38: the stem of a wedge that starts away from its provider — a connector
+      // back to it, drawn under the wedge so the sweep itself stays the strong shape.
+      if (geo.stem) {
+        parts.push(el('line', {
+          x1: geo.stem.x, y1: geo.stem.y1, x2: geo.stem.x, y2: geo.stem.y2,
+          stroke: T.xaas.text, 'stroke-width': 2, 'stroke-linecap': 'round',
+          opacity: inter.soon ? 0.35 : 0.55, 'stroke-dasharray': inter.soon ? '5 4' : null,
+        }));
+      }
       parts.push(el('polygon', { points: pts(geo.points), fill: T.xaas.fill, stroke: inter.soon ? T.xaas.text : T.xaas.stroke, 'stroke-width': 1, 'stroke-linejoin': 'round', ...soon }));
       if (geo.leader) parts.push(el('line', { x1: geo.leader.x, y1: geo.leader.y1, x2: geo.leader.x, y2: geo.leader.y2, stroke: T.xaas.stroke, 'stroke-width': 1.5, 'stroke-dasharray': '3 3' }));
       parts.push(plateLabelSVG(geo.label, T.xaas.text, T.xaas.plate));
@@ -2038,7 +2116,7 @@ function edgeSVG({ inter, inters, geo }, lay, T, prefix) {
       parts.push(el('polygon', { points: pts(geo.marker), fill: T.xaas.fill, stroke: inter.soon ? T.xaas.text : T.xaas.stroke, 'stroke-width': 1, 'stroke-linejoin': 'round', ...soon }));
       if (geo.label) {
         parts.push(el('rect', { x: geo.label.plate.x, y: geo.label.plate.y, width: geo.label.plate.w, height: geo.label.plate.h, fill: T.bg }));
-        parts.push(textBlock(geo.label.lines, geo.label.cx, geo.label.cy, L.labelFs, T.xaas.text));
+        parts.push(textBlock(geo.label.lines, geo.label.x, geo.label.y, L.labelFs, T.xaas.text));
       }
       break;
   }

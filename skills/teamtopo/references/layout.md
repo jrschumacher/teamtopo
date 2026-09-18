@@ -33,9 +33,15 @@ the same rules, recursively:
    instead — see rule 8b.
 6. **Wedges.** Every other X-as-a-Service is a grey wedge: wide base on the provider,
    point reaching the far edge of the consumer. A fan-out (`infra --> a, b, c` on one
-   line, or several lines with the same provider and label) is one wedge that reaches
-   the farthest consumer and covers the ones between, with a wider base. Wedges from a
-   platform bar up to lanes get a reserved column on the left of the lane labels. The
+   line, or several lines with the same provider and label) collapses into one wider
+   wedge covering the consumers between — but only while they are a **contiguous run**
+   of the lane/platform stack. Consumers with an unrelated lane between them get one
+   wedge each, so such a wedge never sweeps a lane the provider does not serve; a run
+   that does not start next to its provider keeps its own width and is joined back to
+   the provider by a thin stem. This covers providers that are themselves a lane or a
+   platform bar in the frame; a subsystem or enabling provider, and consumers outside
+   that stack, keep the older "reach the farthest, cover what's between" geometry. Wedges from a platform bar up to lanes get a reserved
+   column on the left of the lane labels. The
    one exception: a single-target X-as-a-Service between two platform bars that stack
    directly adjacent (nothing between them) draws no wedge — the stack already shows
    the layering. A small chevron marks the shared boundary instead, with the label (if
@@ -108,9 +114,11 @@ the same rules, recursively:
 - **A platform grouping is a `platform { }` block.** Its inner streams are lanes inside
   the bar; wedges from them to the outer lanes (`k8s --> mobile, web`) are drawn like
   any other platform wedge.
-- **Many wedges to the top lanes get busy.** When a platform provides to many lanes,
-  prefer one fan-out line (`core --> a, b, c, d`) over one line per consumer; it draws
-  as one wide wedge instead of four.
+- **Many wedges to the top lanes get busy.** A platform that provides to every lane
+  above it draws as one wide wedge rather than four. Consumers that are not next to
+  each other in the stack keep a wedge per run whichever way you write them, so
+  declaring the lanes a platform serves next to each other keeps the picture calm —
+  and honest, since a wedge only ever covers lanes the provider actually serves.
 - **Labels wrap; ids do not draw.** Only labels appear in the SVG. Keep labels short
   (two or three words); the lane height grows to fit long ones. Use `note=` for detail.
 - **Long labels on enabling bars rotate.** If a label does not fit across the narrow
