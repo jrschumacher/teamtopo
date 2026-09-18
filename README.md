@@ -231,10 +231,14 @@ Team Topologies book, so the domain does most of the work:
 3. **Wedges.** Every other X-as-a-Service is a grey wedge with its wide base on the
    provider and its point reaching the far edge of the consumer, so the wedge covers
    it. A fan-out (`infra --> a, b, c`) collapses into one wedge with a wider base, as
-   in the book — but only over a *contiguous run* of consumers, so a wedge never
+   in the book — but only over a *contiguous run* of consumers, so such a wedge never
    sweeps across a lane the provider has no relationship with. `infra --> a, c` draws
    two wedges, not one covering `b`; and a run that does not start next to its
    provider is joined back to it by a thin stem instead of widening to reach it.
+   This applies to providers that are themselves a lane or a platform bar in the same
+   frame. A subsystem or enabling provider, and consumers that sit outside that
+   lane/platform stack, still take the older "reach the farthest, cover what's
+   between" geometry.
    Wedges from a platform to lanes get a reserved column on the left of the lane
    labels, so they can pass through intermediate lanes. Wedges between frames pick a
    free column in the horizontal overlap of the two boxes. The one exception: a

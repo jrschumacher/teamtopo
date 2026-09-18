@@ -674,7 +674,11 @@ function contiguousRuns(its, stackRow) {
   const rows = its.filter((it) => stackRow.has(it.to)).sort((a, b) => stackRow.get(a.to) - stackRow.get(b.to));
   for (const it of rows) {
     const open = runs[runs.length - 1];
-    if (open && stackRow.get(open.its[open.its.length - 1].to) === stackRow.get(it.to) - 1) open.its.push(it);
+    // `<= 1` and not `=== row - 1`: two interactions can land on the same row (a current
+    // and a [soon] one between the same pair), and a repeated row continues the run
+    // rather than starting a second, overlapping one.
+    const gap = open ? stackRow.get(it.to) - stackRow.get(open.its[open.its.length - 1].to) : Infinity;
+    if (gap <= 1) open.its.push(it);
     else runs.push({ its: [it] });
   }
   for (const run of runs) {
@@ -942,7 +946,7 @@ export function textVerticalExtent(box) {
  * `layout()`. Returns:
  *   { kind: 'boundary',
  *     marker: [{x,y},{x,y},{x,y}],                          // chevron triangle
- *     label: null | { lines, plate: {x,y,w,h}, cx, cy } }   // optional label plate
+ *     label: null | { lines, plate: {x,y,w,h}, x, y, plateW, plateH } }   // optional label plate
  */
 function boundaryGeo(P, Q, inter) {
   const top = P.y < Q.y ? P : Q;
@@ -971,7 +975,14 @@ function boundaryGeo(P, Q, inter) {
       const leftCx = cx - hw - 8 - plateW / 2;
       plateCx = leftCx >= spanX0 ? leftCx : plateCx;
     }
-    label = { lines, plate: { x: plateCx - plateW / 2, y: plateCy - plateH / 2, w: plateW, h: plateH }, cx: plateCx, cy: plateCy };
+    // #38: x/y/plateW/plateH are the names the shared canvas grow+shift pass in layout()
+    // looks for. This label used to carry only cx/cy, so that pass read `label.x` as
+    // undefined and poisoned the canvas bounds into NaN. One position, one name — a
+    // separate cx/cy would go stale the moment the canvas shifts.
+    label = {
+      lines, plate: { x: plateCx - plateW / 2, y: plateCy - plateH / 2, w: plateW, h: plateH },
+      x: plateCx, y: plateCy, plateW, plateH,
+    };
   }
   return { kind: 'boundary', marker, label };
 }
@@ -1422,6 +1433,7 @@ export function layout(model, opts = {}) {
   for (const b of Object.values(boxes)) { grow(b.x, b.y); grow(b.x + b.w, b.y + b.h); }
   for (const { geo } of edges) {
     for (const p of geo.points || []) grow(p.x, p.y);
+    for (const p of geo.marker || []) grow(p.x, p.y);   // #38: the boundary chevron is geometry too
     if (geo.rect) { grow(geo.rect.x, geo.rect.y); grow(geo.rect.x + geo.rect.w, geo.rect.y + geo.rect.h); }
     if (geo.label) {
       if (geo.label.plateW != null) {
@@ -1445,7 +1457,9 @@ export function layout(model, opts = {}) {
     for (const b of Object.values(boxes)) { shift(b); if (b.labelZone) { b.labelZone[0] += padL; b.labelZone[1] += padL; } }
     for (const { geo } of edges) {
       for (const p of geo.points || []) shift(p);
+      for (const p of geo.marker || []) shift(p);
       if (geo.rect) shift(geo.rect);
+      if (geo.label && geo.label.plate) shift(geo.label.plate);   // boundary labels carry their own plate rect
       if (geo.label) shift(geo.label);
       if (geo.leader) { geo.leader.x += padL; geo.leader.y1 += padT; geo.leader.y2 += padT; }
       if (geo.stem) { geo.stem.x += padL; geo.stem.y1 += padT; geo.stem.y2 += padT; }
@@ -1721,7 +1735,7 @@ function edgeSVG({ inter, inters, geo }, lay, T, prefix) {
       parts.push(el('polygon', { points: pts(geo.marker), fill: T.xaas.fill, stroke: inter.soon ? T.xaas.text : T.xaas.stroke, 'stroke-width': 1, 'stroke-linejoin': 'round', ...soon }));
       if (geo.label) {
         parts.push(el('rect', { x: geo.label.plate.x, y: geo.label.plate.y, width: geo.label.plate.w, height: geo.label.plate.h, fill: T.bg }));
-        parts.push(textBlock(geo.label.lines, geo.label.cx, geo.label.cy, L.labelFs, T.xaas.text));
+        parts.push(textBlock(geo.label.lines, geo.label.x, geo.label.y, L.labelFs, T.xaas.text));
       }
       break;
   }

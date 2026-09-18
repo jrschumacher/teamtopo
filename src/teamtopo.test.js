@@ -1021,6 +1021,35 @@ test('#38: each split wedge carries its own label plate', () => {
   assert.equal((render(src).match(/>api</g) || []).length, 2, 'both plates carry the label text');
 });
 
+test('#38: a repeated consumer row continues its run instead of splitting it', () => {
+  // a current and a [soon] interaction between the same pair both land on that row;
+  // the run must stay one sweep, not two overlapping ones covering l1 twice.
+  const lay = layout(parse(`teamTopology
+    stream l0
+    stream l1
+    stream l2
+    platform p
+    p --> l0, l1, l2 : api
+    p --> l1 : api [soon]`));
+  const wedges = lay.edges.filter((e) => e.geo.kind === 'wedge');
+  assert.equal(wedges.length, 1, 'one sweep over the contiguous run, despite the repeated row');
+  assert.equal(wedges[0].geo.stem, null, 'the run reaches the platform, so no stem');
+  assert.equal(wedges[0].geo.points[0].y, lay.boxes.p.y, 'base still on the provider');
+});
+
+test('#38: a labelled boundary marker keeps the canvas finite', () => {
+  // splitting a fan-out can route a single-target run into the #27/#34 boundary branch,
+  // whose label carried no x/plateW and poisoned the canvas bounds into NaN.
+  for (const src of [
+    'teamTopology\nplatform p0\nplatform p1\np1 --> p0 : api',
+    'teamTopology\nstream l0\nplatform p0\nplatform p1\np0 --> l0 : api\np0 --> p1 : api',
+  ]) {
+    const lay = layout(parse(src));
+    assert.ok(Number.isFinite(lay.width) && Number.isFinite(lay.height), `finite canvas for: ${src}`);
+    assert.ok(!/NaN/.test(render(src)), `no NaN in the rendered SVG for: ${src}`);
+  }
+});
+
 test('#38: a contiguous, complete fan-out keeps today\'s single wide sweep', () => {
   // ecommerce's `infra --> checkout, search, accounts` and value-streams'
   // `core --> storefront, fulfilment, catalog, invoicing` both reach every row between

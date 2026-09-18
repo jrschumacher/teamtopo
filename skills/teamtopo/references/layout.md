@@ -36,9 +36,11 @@ the same rules, recursively:
    line, or several lines with the same provider and label) collapses into one wider
    wedge covering the consumers between — but only while they are a **contiguous run**
    of the lane/platform stack. Consumers with an unrelated lane between them get one
-   wedge each, so no wedge ever sweeps a lane the provider does not serve; a run that
-   does not start next to its provider keeps its own width and is joined back to the
-   provider by a thin stem. Wedges from a platform bar up to lanes get a reserved
+   wedge each, so such a wedge never sweeps a lane the provider does not serve; a run
+   that does not start next to its provider keeps its own width and is joined back to
+   the provider by a thin stem. This covers providers that are themselves a lane or a
+   platform bar in the frame; a subsystem or enabling provider, and consumers outside
+   that stack, keep the older "reach the farthest, cover what's between" geometry. Wedges from a platform bar up to lanes get a reserved
    column on the left of the lane labels. The
    one exception: a single-target X-as-a-Service between two platform bars that stack
    directly adjacent (nothing between them) draws no wedge — the stack already shows
