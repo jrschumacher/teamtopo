@@ -27,7 +27,7 @@
 		"@cloudflare/workers-types": "5.20260829.1",
 		"eslint": "10.9.1",
 		"eslint-config-prettier": "10.1.8",
-		"happy-dom": "20.11.15",
+		"happy-dom": "21.0.4",
 		"prettier": "3.9.6",
 		"typescript": "5.9.3",
 		"typescript-eslint": "8.68.0",
